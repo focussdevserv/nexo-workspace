@@ -15,6 +15,13 @@
       "when": 1790200000000,
       "tag": "0001_billing",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790210000000,
+      "tag": "0002_workspace_records",
+      "breakpoints": true
     }
   ]
 }

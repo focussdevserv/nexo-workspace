@@ -2,11 +2,7 @@ import React, { useState } from 'react';
 import { ArrowRight, Check, CheckCircle2, CircleDollarSign, Clock3, Copy, FileText, MessageCircle, Paperclip, Send, Settings2, ShieldCheck, X } from 'lucide-react';
 import './client-portal.css';
 
-const clientList = [
-  { id: 'clinica-vidamais', name: 'Clínica VidaMais', contact: 'Camila Oliveira', initials: 'CV', project: 'Site institucional', progress: 68, delivery: '28 set 2026', document: 'Nova homepage', payment: 'R$ 800,00', due: '10 out 2026', tone: 'rose' },
-  { id: 'novaera-imoveis', name: 'NovaEra Imóveis', contact: 'Rafael Costa', initials: 'RC', project: 'Landing page de lançamentos', progress: 42, delivery: '12 out 2026', document: 'Página de imóveis', payment: 'R$ 1.600,00', due: '22 out 2026', tone: 'blue' },
-  { id: 'doce-ponto', name: 'Doce Ponto', contact: 'Juliana Martins', initials: 'JM', project: 'Identidade visual', progress: 84, delivery: '02 out 2026', document: 'Aplicações da marca', payment: 'R$ 1.250,00', due: '16 out 2026', tone: 'lilac' },
-];
+const clientList = [];
 const VISIBILITY_KEY = 'nexo.portal.visibility.v1';
 const ACTIVITY_KEY = 'nexo.portal.activity.v1';
 const APPROVAL_KEY = 'nexo.portal.approvals.v1';
@@ -14,13 +10,14 @@ function readJSON(key, fallback) { try { return JSON.parse(localStorage.getItem(
 function saveJSON(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* storage is best effort for this front-end preview */ } }
 
 export function ClientPortalAdmin({ notify }) {
-  const [clientId, setClientId] = useState(clientList[0].id);
+  const [clientId, setClientId] = useState('');
   const [visibilityByClient, setVisibilityByClient] = useState(() => readJSON(VISIBILITY_KEY, {}));
   const [customizing, setCustomizing] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [messageOpen, setMessageOpen] = useState(false);
   const [message, setMessage] = useState('');
-  const client = clientList.find((item) => item.id === clientId) || clientList[0];
+  const client = clientList.find((item) => item.id === clientId);
+  if (!client) return <section className="cp-empty-state"><h2>Nenhum cliente disponível no portal</h2><p>Cadastre clientes e configure a publicação do portal para compartilhar acessos reais.</p></section>;
   const visibility = { project: true, files: true, payments: true, support: true, ...(visibilityByClient[clientId] || {}) };
   const approvalState = readJSON(APPROVAL_KEY, {})[clientId] || 'Aguardando revisão';
   const activity = readJSON(ACTIVITY_KEY, {})[clientId] || [
@@ -67,7 +64,8 @@ export function ClientPortalAdmin({ notify }) {
 
 export function PublicClientPortal({ slug }) {
   const client = clientList.find((item) => item.id === slug);
-  const activeClient = client || clientList[0];
+  if (!client) return <main className="cp-empty-state"><h1>Portal indisponível</h1><p>Este link não corresponde a um portal publicado.</p></main>;
+  const activeClient = client;
   const [message, setMessage] = useState('');
   const [toast, setToast] = useState('');
   const [status, setStatus] = useState(() => readJSON(APPROVAL_KEY, {})[activeClient.id] || 'Aguardando revisão');

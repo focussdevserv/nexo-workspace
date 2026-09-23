@@ -1,18 +1,13 @@
 import React, { useMemo, useState } from 'react';
+import { useWorkspaceRecords } from '../lib/workspace-api.js';
 import { Check, Mail, MoreHorizontal, Pencil, Plus, Search, ShieldCheck, Trash2, UserRound, Users, X } from 'lucide-react';
 import './team.css';
 
-const KEY = 'nexo.workspace.team.v1';
-const seed = [
-  { id: 'gs', name: 'Gustavo Silva', email: 'gustavo@nexo.agency', role: 'Proprietário', title: 'Direção e desenvolvimento', initials: 'GS', tone: 'teal', load: 78, projects: 4, status: 'Ativo' },
-  { id: 'am', name: 'Ana Martins', email: 'ana@nexo.agency', role: 'Membro da equipe', title: 'Design e conteúdo', initials: 'AM', tone: 'lilac', load: 64, projects: 3, status: 'Ativo' },
-  { id: 'lc', name: 'Lucas Costa', email: 'lucas@nexo.agency', role: 'Membro da equipe', title: 'Desenvolvimento', initials: 'LC', tone: 'blue', load: 89, projects: 5, status: 'Ativo' },
-  { id: 'rn', name: 'Rafaela Nunes', email: 'rafaela@nexo.agency', role: 'Membro da equipe', title: 'Atendimento e mídia', initials: 'RN', tone: 'rose', load: 52, projects: 2, status: 'Ativo' },
-];
-function readTeam() { try { const value = JSON.parse(localStorage.getItem(KEY) || 'null'); return Array.isArray(value) ? value : seed; } catch { return seed; } }
+
+
 
 export default function TeamScreen({ notify }) {
-  const [people, setPeople] = useState(readTeam);
+  const { records: people, create, update, remove: deleteRecord } = useWorkspaceRecords('team');
   const [filter, setFilter] = useState('Todos');
   const [query, setQuery] = useState('');
   const [dialog, setDialog] = useState(false);
@@ -22,7 +17,7 @@ export default function TeamScreen({ notify }) {
   const pendingCount = people.filter((person) => person.status === 'Convite pendente').length;
   const averageLoad = activeCount ? Math.round(people.filter((person) => person.status === 'Ativo').reduce((sum, person) => sum + Number(person.load || 0), 0) / activeCount) : 0;
   const visible = useMemo(() => people.filter((person) => (filter === 'Todos' || person.status === filter) && `${person.name} ${person.email} ${person.title}`.toLowerCase().includes(query.toLowerCase())), [people, filter, query]);
-  const persist = (next) => { setPeople(next); try { localStorage.setItem(KEY, JSON.stringify(next)); } catch { notify('Não foi possível salvar a equipe neste navegador.'); } };
+  const persist = async (next) => { try { for (const person of next) { const old = people.find((item) => item.id === person.id); const payload = Object.fromEntries(Object.entries(person).filter(([key]) => !['id','createdAt','updatedAt'].includes(key))); if (!old) await create(payload); else if (JSON.stringify(old) !== JSON.stringify(person)) await update(person.id, payload); } for (const old of people) if (!next.some((person) => person.id === old.id)) await deleteRecord(old.id); } catch (error) { window.dispatchEvent(new CustomEvent('nexo:workspace-error', { detail: error.message })); } };
   const openNew = () => { setEditing(null); setDraft({ name: '', email: '', role: 'Membro da equipe', title: '', load: '0' }); setDialog(true); };
   const openEdit = (person) => { setEditing(person.id); setDraft({ name: person.name, email: person.email, role: person.role, title: person.title, load: String(person.load) }); setDialog(true); };
   const savePerson = (event) => {
@@ -35,7 +30,7 @@ export default function TeamScreen({ notify }) {
       notify('Dados e permissões atualizados.');
     } else {
       const next = [{ id: globalThis.crypto?.randomUUID?.() || `person-${Date.now()}`, name, email, role: draft.role, title: draft.title.trim() || draft.role, initials: name.split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase(), tone: 'blue', load: Number(draft.load) || 0, projects: 0, status: 'Convite pendente' }, ...people];
-      persist(next); notify(`Convite preparado para ${email}. O envio será conectado ao backend.`);
+      persist(next); notify(`Cadastro salvo para ${email}. O convite por e-mail ainda não foi enviado.`);
     }
     setDialog(false);
   };
@@ -47,9 +42,9 @@ export default function TeamScreen({ notify }) {
   const remove = (person) => {
     if (person.role === 'Proprietário') { notify('O proprietário principal não pode ser removido.'); return; }
     if (!window.confirm(`Remover ${person.name} da equipe?`)) return;
-    persist(people.filter((entry) => entry.id !== person.id)); notify(`${person.name} foi removido da lista.`);
+    persist(people.filter((entry) => entry.id !== person.id)); notify(`${person.name} foi removido da equipe.`);
   };
-  const resend = (person) => notify(`Convite para ${person.email} preparado para reenvio. O envio será conectado ao backend.`);
+  const resend = (person) => notify('Envio de convite por e-mail ainda não está conectado.');
 
   return <div className="team-module">
     <section className="team-summary"><TeamStat icon={Users} label="Pessoas ativas" value={String(activeCount).padStart(2, '0')} detail="com acesso ao workspace" /><TeamStat icon={Mail} label="Convites pendentes" value={String(pendingCount).padStart(2, '0')} detail="aguardando entrada" /><TeamStat icon={UserRound} label="Carga média" value={`${averageLoad}%`} detail="capacidade registrada" /></section>

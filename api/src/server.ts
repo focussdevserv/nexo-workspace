@@ -7,11 +7,11 @@ import rateLimit from '@fastify/rate-limit';
 import argon2 from 'argon2';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { resolve } from 'node:path';
-import { and, asc, desc, eq, ilike, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, ilike, isNull, or, sql } from 'drizzle-orm';
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { db, pool } from './db/index.js';
-import { activityEvents, billingOrders, billingSubscriptions, clients, organizations, users } from './db/schema.js';
+import { activityEvents, billingOrders, billingSubscriptions, clients, organizations, users, workspaceRecords } from './db/schema.js';
 
 const env = z.object({
   PORT: z.coerce.number().int().positive().default(3001),
@@ -53,6 +53,16 @@ const clientSchema = z.object({
   notes: z.string().trim().max(5000).nullish(),
   tags: z.array(z.string().trim().min(1).max(40)).max(30).optional(),
 });
+const workspaceResource = z.enum([
+  'leads', 'clients', 'companies', 'contacts', 'proposals', 'services', 'contracts',
+  'projects', 'tasks', 'events', 'approvals', 'files', 'hours', 'inbox',
+  'tickets', 'site-assets', 'monitors', 'expenses', 'revenues', 'finance-accounts',
+  'goals', 'team', 'repositories', 'automations',
+]);
+const workspaceDataSchema = z.record(z.string().trim().min(1).max(100), z.unknown()).refine((data) => {
+  const forbidden = /password|secret|token|apikey|accesskey|privatekey/i;
+  return Object.keys(data).every((key) => !forbidden.test(key)) && JSON.stringify(data).length <= 64_000;
+}, 'O registro contém um campo privado ou excede o limite permitido.');
 const paymentOrderSchema = z.object({
   clientId: z.string().uuid().optional(),
   clientName: z.string().trim().min(2).max(180),
@@ -389,6 +399,59 @@ app.delete('/api/clients/:id', { preHandler: app.authenticate }, async (request,
     return rows;
   });
   if (!updated) return reply.code(404).send({ error: 'not_found', message: 'Cliente não encontrado.' });
+  return reply.code(204).send();
+});
+
+app.get('/api/workspace/:resource', { preHandler: app.authenticate }, async (request, reply) => {
+  const params = z.object({ resource: workspaceResource }).safeParse(request.params);
+  const query = z.object({ limit: z.coerce.number().int().min(1).max(200).default(100), offset: z.coerce.number().int().min(0).default(0) }).safeParse(request.query);
+  if (!params.success || !query.success) return reply.code(400).send({ error: 'validation_error', message: 'Recurso ou paginação inválidos.' });
+  const where = and(eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, params.data.resource), isNull(workspaceRecords.archivedAt));
+  const [rows, count] = await Promise.all([
+    db.select().from(workspaceRecords).where(where).orderBy(desc(workspaceRecords.updatedAt)).limit(query.data.limit).offset(query.data.offset),
+    db.select({ count: sql<number>`count(*)::int` }).from(workspaceRecords).where(where),
+  ]);
+  return { data: rows.map((row) => ({ ...row.data, id: row.id, createdAt: row.createdAt, updatedAt: row.updatedAt })), pagination: { ...query.data, total: count[0]?.count ?? 0 } };
+});
+
+app.post('/api/workspace/:resource', { preHandler: app.authenticate }, async (request, reply) => {
+  const params = z.object({ resource: workspaceResource }).safeParse(request.params);
+  const body = parseBody(z.object({ data: workspaceDataSchema }), request.body, reply);
+  if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Recurso inválido.' });
+  if (!body) return;
+  const [saved] = await db.transaction(async (tx) => {
+    const created = await tx.insert(workspaceRecords).values({ organizationId: request.user.organizationId, createdBy: request.user.sub, resource: params.data.resource, data: body.data }).returning();
+    await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: params.data.resource, entityId: created[0]!.id, action: 'created', payload: { label: body.data.name ?? body.data.title ?? body.data.clientName ?? '' } });
+    return created;
+  });
+  return reply.code(201).send({ data: { ...saved!.data, id: saved!.id, createdAt: saved!.createdAt, updatedAt: saved!.updatedAt } });
+});
+
+app.patch('/api/workspace/:resource/:id', { preHandler: app.authenticate }, async (request, reply) => {
+  const params = z.object({ resource: workspaceResource, id: z.string().uuid() }).safeParse(request.params);
+  const body = parseBody(z.object({ data: workspaceDataSchema }).refine((value) => Object.keys(value.data).length > 0), request.body, reply);
+  if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Recurso ou identificador inválidos.' });
+  if (!body) return;
+  const updated = await db.transaction(async (tx) => {
+    const [current] = await tx.select().from(workspaceRecords).where(and(eq(workspaceRecords.id, params.data.id), eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, params.data.resource), isNull(workspaceRecords.archivedAt))).limit(1);
+    if (!current) return undefined;
+    const [saved] = await tx.update(workspaceRecords).set({ data: { ...current.data, ...body.data }, updatedAt: new Date() }).where(eq(workspaceRecords.id, current.id)).returning();
+    await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: params.data.resource, entityId: current.id, action: 'updated', payload: { fields: Object.keys(body.data) } });
+    return saved;
+  });
+  if (!updated) return reply.code(404).send({ error: 'not_found', message: 'Registro não encontrado.' });
+  return { data: { ...updated.data, id: updated.id, createdAt: updated.createdAt, updatedAt: updated.updatedAt } };
+});
+
+app.delete('/api/workspace/:resource/:id', { preHandler: app.authenticate }, async (request, reply) => {
+  const params = z.object({ resource: workspaceResource, id: z.string().uuid() }).safeParse(request.params);
+  if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Recurso ou identificador inválidos.' });
+  const [archived] = await db.transaction(async (tx) => {
+    const rows = await tx.update(workspaceRecords).set({ archivedAt: new Date(), updatedAt: new Date() }).where(and(eq(workspaceRecords.id, params.data.id), eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, params.data.resource), isNull(workspaceRecords.archivedAt))).returning({ id: workspaceRecords.id });
+    if (rows[0]) await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: params.data.resource, entityId: rows[0].id, action: 'archived', payload: {} });
+    return rows;
+  });
+  if (!archived) return reply.code(404).send({ error: 'not_found', message: 'Registro não encontrado.' });
   return reply.code(204).send();
 });
 

@@ -92,6 +92,20 @@ export const billingSubscriptions = pgTable('billing_subscriptions', {
   uniqueIndex('billing_subscriptions_mp_id_unique').on(table.mpSubscriptionId),
 ]);
 
+export const workspaceRecords = pgTable('workspace_records', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  organizationId: uuid('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
+  resource: text('resource').notNull(),
+  data: jsonb('data').$type<Record<string, unknown>>().default({}).notNull(),
+  createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  archivedAt: timestamp('archived_at', { withTimezone: true }),
+}, (table) => [
+  index('workspace_records_org_resource_updated_idx').on(table.organizationId, table.resource, table.updatedAt),
+  index('workspace_records_org_resource_created_idx').on(table.organizationId, table.resource, table.createdAt),
+]);
+
 export const organizationsRelations = relations(organizations, ({ many }) => ({ users: many(users), clients: many(clients) }));
 export const usersRelations = relations(users, ({ one }) => ({ organization: one(organizations, { fields: [users.organizationId], references: [organizations.id] }) }));
 export const clientsRelations = relations(clients, ({ one }) => ({ organization: one(organizations, { fields: [clients.organizationId], references: [organizations.id] }) }));

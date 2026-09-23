@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Activity, AlertCircle, ArrowDownLeft, ArrowUpRight, BadgeCheck, Bell, CalendarClock,
   Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, CircleDollarSign, Copy,
@@ -13,69 +13,41 @@ import './automations.css';
 import './subscriptions.css';
 import './billing.css';
 import { PaymentConsole } from './PaymentScreens.jsx';
+import { apiRequest, useWorkspaceRecords } from '../lib/workspace-api.js';
 
 function useStoredArray(key, fallback) {
-  const [value, setValue] = useState(() => { try { const saved = JSON.parse(localStorage.getItem(key) || 'null'); return Array.isArray(saved) ? saved : fallback; } catch { return fallback; } });
-  const persist = (nextOrUpdater) => setValue((current) => { const next = typeof nextOrUpdater === 'function' ? nextOrUpdater(current) : nextOrUpdater; try { localStorage.setItem(key, JSON.stringify(next)); } catch {} return next; });
+  const resources = { 'nexo.finance.receitas.v1': 'revenues', 'nexo.finance.despesas.v1': 'expenses', 'nexo.finance.accounts.v1': 'finance-accounts', 'nexo.support.conversations.v1': 'inbox', 'nexo.support.tickets.v1': 'tickets', 'nexo.sites.assets.v1': 'site-assets', 'nexo.sites.monitors.v1': 'monitors' };
+  const resource = resources[key];
+  const path = key === 'nexo.billing.v1' ? '/api/billing/orders' : `/api/workspace/${resource}`;
+  const [value, setValue] = useState([]);
+  const ref = useRef(value);
+  useEffect(() => { let active = true; apiRequest(path).then((result) => { if (active) { ref.current = result.data || []; setValue(ref.current); } }).catch((error) => window.dispatchEvent(new CustomEvent('nexo:workspace-error', { detail: error.message }))); return () => { active = false; }; }, [path]);
+  const persist = (nextOrUpdater) => {
+    const previous = ref.current; const next = typeof nextOrUpdater === 'function' ? nextOrUpdater(previous) : nextOrUpdater; ref.current = next; setValue(next);
+    if (!resource) { window.dispatchEvent(new CustomEvent('nexo:workspace-error', { detail: 'Este tipo de registro exige a tela de cobrança Mercado Pago.' })); return next; }
+    const oldById = new Map(previous.map((item) => [String(item.id), item])); const newById = new Map(next.map((item) => [String(item.id), item]));
+    const clean = (item) => Object.fromEntries(Object.entries(item).filter(([field]) => !['id','createdAt','updatedAt'].includes(field)));
+    Promise.all([
+      ...next.filter((item) => !oldById.has(String(item.id))).map(async (item) => { const saved = await apiRequest(`/api/workspace/${resource}`, { method: 'POST', body: JSON.stringify({ data: clean(item) }) }); ref.current = ref.current.map((row) => String(row.id) === String(item.id) ? saved.data : row); setValue(ref.current); }),
+      ...next.filter((item) => oldById.has(String(item.id)) && JSON.stringify(clean(item)) !== JSON.stringify(clean(oldById.get(String(item.id))))).map((item) => apiRequest(`/api/workspace/${resource}/${item.id}`, { method: 'PATCH', body: JSON.stringify({ data: clean(item) }) })),
+      ...previous.filter((item) => !newById.has(String(item.id))).map((item) => apiRequest(`/api/workspace/${resource}/${item.id}`, { method: 'DELETE' })),
+    ]).catch((error) => window.dispatchEvent(new CustomEvent('nexo:workspace-error', { detail: error.message })));
+    return next;
+  };
   return [value, persist];
 }
 
-const financeRows = {
-  receitas: [
-    ['REC-0248', 'Clínica VidaMais', 'Gestão de conteúdo · mensalidade', '22 set 2026', 'R$ 4.800,00', 'Recebida'],
-    ['REC-0247', 'NovaEra Imóveis', 'Desenvolvimento de landing page', '20 set 2026', 'R$ 7.500,00', 'Recebida'],
-    ['REC-0246', 'Studio Movimento', 'Campanhas Google Ads', '18 set 2026', 'R$ 2.400,00', 'Pendente'],
-    ['REC-0245', 'Doce Ponto', 'Identidade visual · parcela 2/3', '16 set 2026', 'R$ 1.250,00', 'Atrasada'],
-    ['REC-0244', 'Ateliê Aurora', 'Manutenção do site', '14 set 2026', 'R$ 890,00', 'Recebida'],
-  ],
-  despesas: [
-    ['DES-0132', 'Google Workspace', 'Ferramentas e software', '21 set 2026', 'R$ 328,00', 'Paga'],
-    ['DES-0131', 'Estúdio Raro', 'Freelancer · direção de arte', '19 set 2026', 'R$ 1.800,00', 'Pendente'],
-    ['DES-0130', 'Cloudflare', 'Infraestrutura', '17 set 2026', 'R$ 96,40', 'Paga'],
-    ['DES-0129', 'Contabilidade Lima', 'Serviços contábeis', '15 set 2026', 'R$ 650,00', 'Pendente'],
-  ],
-  cobrancas: [
-    ['COB-0248', 'Clínica VidaMais', 'Mensalidade · outubro', '30 set 2026', 'R$ 4.800,00', 'Aguardando'],
-    ['COB-0247', 'NovaEra Imóveis', 'Entrega de projeto', '25 set 2026', 'R$ 3.750,00', 'Enviada'],
-    ['COB-0246', 'Studio Movimento', 'Gestão de campanhas', '18 set 2026', 'R$ 2.400,00', 'Vencida'],
-    ['COB-0245', 'Doce Ponto', 'Identidade visual · parcela 2/3', '16 set 2026', 'R$ 1.250,00', 'Enviada'],
-  ],
-};
+const financeRows = { receitas: [], despesas: [], cobrancas: [] };
 
-const subscriptions = [
-  ['Clínica VidaMais', 'Conteúdo e redes sociais', 'R$ 4.800,00', 'Todo dia 5', 'Ativa'],
-  ['Ateliê Aurora', 'Hospedagem + manutenção', 'R$ 890,00', 'Todo dia 12', 'Ativa'],
-  ['Studio Movimento', 'Gestão de tráfego', 'R$ 2.400,00', 'Todo dia 18', 'Pagamento pendente'],
-  ['NovaEra Imóveis', 'Suporte e otimização', 'R$ 1.600,00', 'Todo dia 22', 'Ativa'],
-];
+const subscriptions = [];
 
-const initialMessages = [
-  { name: 'Camila Oliveira', company: 'Clínica VidaMais', initials: 'CO', time: '13:12', text: 'Perfeito! Podemos seguir com o layout. Me envia o cronograma atualizado?', unread: 2, color: 'green' },
-  { name: 'Rafael Costa', company: 'NovaEra Imóveis', initials: 'RC', time: '12:48', text: 'Conseguiu revisar as alterações da página inicial?', unread: 1, color: 'blue' },
-  { name: 'Juliana Martins', company: 'Doce Ponto', initials: 'JM', time: '11:36', text: 'Obrigada, vou validar com a equipe e te retorno.', unread: 0, color: 'rose' },
-  { name: 'Thiago Mendes', company: 'Studio Movimento', initials: 'TM', time: 'Ontem', text: 'Pode me mandar a previsão da próxima campanha?', unread: 0, color: 'amber' },
-];
+const initialMessages = [];
 
-const initialTickets = [
-  ['#NX-184', 'Formulário do site não envia', 'Clínica VidaMais', 'Alta', 'Em andamento', 'há 18 min'],
-  ['#NX-183', 'Ajustar apontamento de DNS', 'NovaEra Imóveis', 'Média', 'Aberto', 'há 1 h'],
-  ['#NX-182', 'Atualizar banner da campanha', 'Studio Movimento', 'Baixa', 'Aguardando cliente', 'há 3 h'],
-  ['#NX-181', 'E-mail de confirmação não chega', 'Doce Ponto', 'Alta', 'Resolvido', 'ontem'],
-];
+const initialTickets = [];
 
-const assets = [
-  { name: 'clinica-vidamais.com.br', client: 'Clínica VidaMais', type: 'Domínio + hospedagem', renewal: '12 out 2026', health: 'Em dia', icon: Globe2 },
-  { name: 'novaer a imoveis.com.br'.replace(' ', ''), client: 'NovaEra Imóveis', type: 'Domínio', renewal: '28 out 2026', health: 'Em dia', icon: Globe2 },
-  { name: 'studiomovimento.com.br', client: 'Studio Movimento', type: 'Hospedagem', renewal: '02 out 2026', health: 'Renova em 9 dias', icon: HardDrive },
-  { name: 'doceponto.com.br', client: 'Doce Ponto', type: 'Domínio + hospedagem', renewal: '18 nov 2026', health: 'Em dia', icon: Globe2 },
-];
+const assets = [];
 
-const monitors = [
-  { name: 'nexo.agency', detail: 'Site institucional', status: 'Operacional', uptime: '99,98%', latency: '184 ms', color: 'ok' },
-  { name: 'clinica-vidamais.com.br', detail: 'Clínica VidaMais', status: 'Operacional', uptime: '99,92%', latency: '246 ms', color: 'ok' },
-  { name: 'novaer a imoveis.com.br'.replace(' ', ''), detail: 'NovaEra Imóveis', status: 'Instabilidade', uptime: '98,41%', latency: '1.240 ms', color: 'warn' },
-  { name: 'api.nexo.agency', detail: 'API principal', status: 'Operacional', uptime: '99,99%', latency: '92 ms', color: 'ok' },
-];
+const monitors = [];
 
 const integrations = [
   { name: 'Mercado Pago', detail: 'Cobranças, pagamentos e recorrências', icon: CreditCard, color: 'mercado', fields: [['accessToken', 'Access token', true], ['publicKey', 'Public key', false]] },
@@ -88,12 +60,7 @@ const integrations = [
   { name: 'Sentry', detail: 'Erros e incidentes das aplicações', icon: AlertCircle, color: 'sentry', fields: [['dsn', 'Project DSN', false], ['authToken', 'Auth token', true]] },
 ];
 
-const initialAutomations = [
-  { name: 'Novo lead do site', detail: 'Cria contato no CRM e avisa o responsável', trigger: 'Formulário recebido', last: 'há 12 min', active: true },
-  { name: 'Lembrete de cobrança', detail: 'Envia aviso antes do vencimento', trigger: '3 dias antes do vencimento', last: 'hoje, 09:00', active: true },
-  { name: 'Reunião confirmada', detail: 'Envia confirmação e cria tarefa de preparação', trigger: 'Evento criado no Calendar', last: 'ontem, 16:32', active: true },
-  { name: 'Alerta de site fora do ar', detail: 'Abre ticket e notifica operações', trigger: 'Falha no monitoramento', last: 'há 2 dias', active: false },
-];
+const initialAutomations = [];
 
 const pageInfo = {
   financeiro: ['Financeiro', 'Uma visão do que entra, sai e precisa de atenção.'],
@@ -162,7 +129,7 @@ function FinanceOverview({ notify, onCreate }) {
   const [revenues] = useStoredArray('nexo.finance.receitas.v1', financeRows.receitas);
   const [expenses] = useStoredArray('nexo.finance.despesas.v1', financeRows.despesas);
   const [billing] = useStoredArray('nexo.billing.v1', billingSeed);
-  const [accounts] = useStoredArray('nexo.finance.accounts.v1', [{ balance: 24680.4 }, { balance: 3780 }]);
+  const [accounts] = useStoredArray('nexo.finance.accounts.v1', []);
   const parseAmount = (value) => Number(String(value ?? '').replace(/[^\d,]/g, '').replace(',', '.')) || 0;
   const sumRows = (rows) => rows.reduce((sum, row) => sum + parseAmount(Array.isArray(row) ? row[4] : row.amount), 0);
   const totalBalance = accounts.reduce((sum, account) => sum + Number(account.balance || 0), 0);
@@ -170,8 +137,8 @@ function FinanceOverview({ notify, onCreate }) {
   const recent = [...revenues.map((row) => [row[0], row[1], row[3], `+ ${row[4]}`, row[5]]), ...expenses.map((row) => [row[0], row[1], row[3], `− ${row[4]}`, row[5]])].slice(0, 8);
   return <>
     <div className="ns-metrics ns-metrics-four"><Metric label="Saldo registrado" value={money(totalBalance)} note={`${accounts.length} contas locais`} icon={Wallet} /><Metric label="Receitas cadastradas" value={money(sumRows(revenues))} note={`${revenues.length} lançamentos`} icon={ArrowDownLeft} /><Metric label="Despesas cadastradas" value={money(sumRows(expenses))} note={`${expenses.length} lançamentos`} icon={ArrowUpRight} /><Metric label="A receber" value={money(openBills.reduce((sum, bill) => sum + Number(bill.amount || 0), 0))} note={`${openBills.length} cobranças abertas`} icon={Clock3} /></div>
-    <div className="ns-finance-grid"><section className="ns-panel ns-cash-panel"><div className="ns-panel-title"><div><h2>Fluxo de caixa</h2><p>Entradas e saídas · últimos 6 meses</p></div><button type="button" className="ns-select" onClick={() => notify('Período atualizado')}>Últimos 6 meses <ChevronDown size={14} /></button></div><div className="ns-chart-legend"><span><i className="income-dot" />Receitas</span><span><i className="expense-dot" />Despesas</span></div><div className="ns-chart"><div className="ns-chart-grid"><i /><i /><i /><i /></div><div className="ns-bars">{[['Abr', 48, 25], ['Mai', 66, 35], ['Jun', 58, 28], ['Jul', 78, 42], ['Ago', 72, 31], ['Set', 92, 39]].map(([month, incoming, outgoing]) => <div className="ns-bar-group" key={month}><div className="ns-bar-pair"><i style={{ height: `${incoming}%` }} /><i style={{ height: `${outgoing}%` }} /></div><small>{month}</small></div>)}</div></div></section>
-      <section className="ns-panel ns-attention"><div className="ns-panel-title"><div><h2>Precisa de atenção</h2><p>Itens que pedem uma ação</p></div><Bell size={17} /></div><button onClick={() => navigateTo('Cobranças')} type="button"><span className="ns-attention-icon orange"><Clock3 size={16} /></span><span><b>1 cobrança vencida</b><small>Doce Ponto · R$ 1.250,00</small></span><ChevronRight size={16} /></button><button onClick={() => navigateTo('Despesas')} type="button"><span className="ns-attention-icon blue"><FileText size={16} /></span><span><b>2 despesas aguardando</b><small>Total de R$ 2.450,00</small></span><ChevronRight size={16} /></button><button onClick={() => navigateTo('Assinaturas')} type="button"><span className="ns-attention-icon green"><RefreshCw size={16} /></span><span><b>1 assinatura pendente</b><small>Studio Movimento</small></span><ChevronRight size={16} /></button></section></div>
+    <div className="ns-finance-grid"><section className="ns-panel ns-cash-panel"><div className="ns-panel-title"><div><h2>Fluxo de caixa</h2><p>Entradas e saídas · últimos 6 meses</p></div><span className="ns-select">Dados cadastrados</span></div><div className="ns-chart-legend"><span><i className="income-dot" />Receitas</span><span><i className="expense-dot" />Despesas</span></div><div className="ns-chart-empty">Cadastre receitas e despesas para visualizar o fluxo de caixa.</div></section>
+      <section className="ns-panel ns-attention"><div className="ns-panel-title"><div><h2>Precisa de atenção</h2><p>Itens que pedem uma ação</p></div><Bell size={17} /></div>{openBills.length ? <button onClick={() => navigateTo('Cobranças')} type="button"><span className="ns-attention-icon orange"><Clock3 size={16} /></span><span><b>{openBills.length} cobrança(s) em aberto</b><small>Veja os vencimentos e pagamentos registrados.</small></span><ChevronRight size={16} /></button> : <p className="ns-empty">Nenhuma cobrança em aberto.</p>}</section></div>
     <div className="ns-section-heading"><div><h2>Movimentações recentes</h2><p>Últimas entradas e saídas registradas</p></div><button type="button" className="ns-text-button" onClick={() => navigateTo('Receitas')}>Ver receitas <ChevronRight size={15} /></button></div>
     <DataTable columns={['Descrição', 'Cliente / categoria', 'Data', 'Valor', 'Status']} rows={recent} search onAction={notify} />
   </>;
@@ -179,30 +146,25 @@ function FinanceOverview({ notify, onCreate }) {
 
 function Accounts({ notify }) {
   const key = 'nexo.finance.accounts.v1';
-  const defaults = [
-    { name: 'Conta principal', bank: 'Nubank · Agência 0001', balance: 24680.40, color: 'purple', icon: Wallet },
-    { name: 'Conta de recebimentos', bank: 'Mercado Pago', balance: 3780.00, color: 'blue', icon: CircleDollarSign },
-  ];
-  const [accounts, setAccounts] = useState(() => { try { const saved = JSON.parse(localStorage.getItem(key) || 'null'); return Array.isArray(saved) ? saved : defaults; } catch { return defaults; } });
-  const [transactions, setTransactions] = useState(() => { try { return JSON.parse(localStorage.getItem(`${key}.transactions`) || 'null') || [
-    ['REC-0248', 'Conta principal', '22 set 2026', '+ R$ 4.800,00', 'Recebida'], ['DES-0132', 'Conta principal', '21 set 2026', '− R$ 328,00', 'Paga'], ['REC-0247', 'Mercado Pago', '20 set 2026', '+ R$ 7.500,00', 'Recebida'],
-  ]; } catch { return []; } });
+  const defaults = [];
+  const [accounts, setAccounts] = useStoredArray(key, defaults);
+  const [transactions, setTransactions] = useState(() => { try { return JSON.parse(localStorage.getItem(`${key}.transactions`) || 'null') || []; } catch { return []; } });
   const [modal, setModal] = useState(false);
   const [editing, setEditing] = useState(null);
   const [selected, setSelected] = useState('Todas');
   const [draft, setDraft] = useState({ name: '', bank: '', balance: '0' });
-  const saveList = (next) => { setAccounts(next); localStorage.setItem(key, JSON.stringify(next)); };
-  const saveTransactionList = (next) => { setTransactions(next); localStorage.setItem(`${key}.transactions`, JSON.stringify(next)); };
+  const saveList = (next) => { setAccounts(next);  };
+  const saveTransactionList = (next) => { setTransactions(next);  };
   const openNew = () => { setEditing(null); setDraft({ name: '', bank: '', balance: '0' }); setModal(true); };
   const openEdit = (account) => { setEditing(account.name); setDraft({ name: account.name, bank: account.bank, balance: String(account.balance) }); setModal(true); };
-  const save = (event) => { event.preventDefault(); if (!draft.name.trim() || !draft.bank.trim()) return; const entry = { name: draft.name.trim(), bank: draft.bank.trim(), balance: Number(draft.balance) || 0, color: editing ? accounts.find((a) => a.name === editing)?.color || 'green' : 'green', icon: Wallet }; saveList(editing ? accounts.map((a) => a.name === editing ? entry : a) : [...accounts, entry]); setModal(false); notify(editing ? 'Conta atualizada.' : 'Conta criada como registro local.'); };
+  const save = (event) => { event.preventDefault(); if (!draft.name.trim() || !draft.bank.trim()) return; const entry = { name: draft.name.trim(), bank: draft.bank.trim(), balance: Number(draft.balance) || 0, color: editing ? accounts.find((a) => a.name === editing)?.color || 'green' : 'green', icon: Wallet }; saveList(editing ? accounts.map((a) => a.name === editing ? entry : a) : [...accounts, entry]); setModal(false); notify(editing ? 'Conta atualizada no workspace.' : 'Conta cadastrada no workspace.'); };
   const remove = (account) => { if (!window.confirm(`Remover ${account.name}? As movimentações registradas nela também serão removidas.`)) return; saveList(accounts.filter((a) => a.name !== account.name)); saveTransactionList(transactions.filter((row) => row[1] !== account.name)); notify('Conta removida localmente.'); };
   const exportCsv = () => { const csv = [['Conta', 'Instituição', 'Saldo'], ...accounts.map((a) => [a.name, a.bank, a.balance])].map((row) => row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(';')).join('\n'); const url = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' })); const link = document.createElement('a'); link.href = url; link.download = 'nexo-contas.csv'; link.click(); URL.revokeObjectURL(url); notify('CSV das contas exportado.'); };
   const visibleTransactions = transactions.filter((row) => selected === 'Todas' || row[1] === selected);
   const total = accounts.reduce((sum, account) => sum + Number(account.balance), 0);
   const actionRows = visibleTransactions.map((row) => [row[0], row[1], row[2], row[3], row[4]]);
   return <><div className="ns-metrics ns-metrics-three"><Metric label="Saldo total registrado" value={money(total)} note={`${accounts.length} contas`} icon={Wallet} /><Metric label="Contas conectadas" value="0" note="Nenhum provedor conectado" icon={Link2} /><Metric label="Movimentações" value={String(transactions.length).padStart(2, '0')} note="Registros locais" icon={Activity} /></div><div className="ns-section-heading"><div><h2>Suas contas</h2><p>Cadastre contas e acompanhe saldos e movimentações.</p></div><button className="ns-primary" type="button" onClick={openNew}><Plus size={15} />Adicionar conta</button></div><div className="ns-account-grid">{accounts.map((account) => <article className="ns-account-card" key={account.name}><div className="ns-account-head"><span className={`ns-bank-icon ${account.color}`}><Wallet size={19} /></span><div className="ns-account-actions"><IconButton label={`Editar ${account.name}`} onClick={() => openEdit(account)}><Pencil size={15} /></IconButton><IconButton label={`Remover ${account.name}`} onClick={() => remove(account)}><Trash2 size={15} /></IconButton></div></div><small>{account.name}</small><b>{money(Number(account.balance))}</b><span>{account.bank}</span><button type="button" onClick={() => setSelected(account.name)}>Ver movimentações <ChevronRight size={15} /></button></article>)}<button type="button" className="ns-add-account" onClick={openNew}><span><Plus size={18} /></span><b>Adicionar conta</b><small>Registre uma conta e saldo inicial</small></button></div><div className="ns-section-heading"><div><h2>Movimentações recentes</h2><p>{selected === 'Todas' ? 'Entradas e saídas das contas' : `Movimentações de ${selected}`} <button className="ns-link-button" onClick={() => setSelected('Todas')}>Ver todas</button></p></div><button className="ns-text-button" type="button" onClick={exportCsv}>Exportar <ExternalLink size={14} /></button></div><DataTable columns={['Lançamento', 'Conta', 'Data', 'Valor', 'Status']} rows={actionRows} search onAction={notify} />
-    <div className="ns-info-note"><ShieldCheck size={17} /><span>Saldos são registros de demonstração. Conexão bancária e sincronização com Mercado Pago serão configuradas no backend.</span></div>
+    <div className="ns-info-note"><ShieldCheck size={17} /><span>O saldo é informado manualmente; esta tela não se conecta a bancos nem sincroniza transações.</span></div>
     {modal && <div className="ns-integration-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setModal(false); }}><form className="ns-integration-modal" onSubmit={save}><header><span className="ns-integration-logo mercado"><Wallet size={18} /></span><div><h2>{editing ? 'Editar conta' : 'Adicionar conta'}</h2><p>Informe os dados para o controle local.</p></div><button type="button" aria-label="Fechar" onClick={() => setModal(false)}><X size={17} /></button></header><div className="ns-integration-fields"><label>Nome da conta<input autoFocus required value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="Ex.: Conta principal" /></label><label>Banco ou instituição<input required value={draft.bank} onChange={(e) => setDraft({ ...draft, bank: e.target.value })} placeholder="Ex.: Nubank" /></label><label>Saldo inicial<input type="number" step="0.01" value={draft.balance} onChange={(e) => setDraft({ ...draft, balance: e.target.value })} /></label></div><div className="ns-integration-modal-note"><ShieldCheck size={15} />Nenhuma conexão bancária é iniciada por este formulário.</div><footer><button className="ns-secondary" type="button" onClick={() => setModal(false)}>Cancelar</button><button className="ns-primary" type="submit"><Check size={14} />Salvar conta</button></footer></form></div>}</>;
 }
 
@@ -214,7 +176,7 @@ function Subscriptions({ notify }) {
   const [modal, setModal] = useState(false);
   const [editing, setEditing] = useState(null);
   const [draft, setDraft] = useState({ client: '', service: '', amount: '', cycle: 'Mensal', dueDay: '10', method: 'Pix' });
-  const persist = (next) => { setItems(next); try { localStorage.setItem(key, JSON.stringify(next)); } catch { notify('Não foi possível salvar as assinaturas neste navegador.'); } };
+  const persist = (next) => { setItems(next); try {  } catch { notify('Não foi possível salvar as assinaturas neste navegador.'); } };
   const active = items.filter((item) => item.status === 'Ativa');
   const mrr = active.reduce((sum, item) => sum + Number(item.amount) * (item.cycle === 'Anual' ? 1 / 12 : item.cycle === 'Trimestral' ? 1 / 3 : 1), 0);
   const pending = items.filter((item) => item.status === 'Pagamento pendente').length;
@@ -243,12 +205,7 @@ function Subscriptions({ notify }) {
   </>;
 }
 
-const billingSeed = [
-  { id: 'COB-0248', client: 'Clínica VidaMais', description: 'Mensalidade · outubro', due: '2026-09-30', amount: 4800, status: 'Aguardando', method: 'Pix', recurrence: 'Não recorrente', link: '' },
-  { id: 'COB-0247', client: 'NovaEra Imóveis', description: 'Entrega de projeto', due: '2026-09-25', amount: 3750, status: 'Enviada', method: 'Pix', recurrence: 'Não recorrente', link: '' },
-  { id: 'COB-0246', client: 'Studio Movimento', description: 'Gestão de campanhas', due: '2026-09-18', amount: 2400, status: 'Vencida', method: 'Boleto', recurrence: 'Mensal', link: '' },
-  { id: 'COB-0245', client: 'Doce Ponto', description: 'Identidade visual · parcela 2/3', due: '2026-09-16', amount: 1250, status: 'Enviada', method: 'Pix', recurrence: 'Não recorrente', link: '' },
-];
+const billingSeed = [];
 
 function BillingScreen({ notify }) {
   const storageKey = 'nexo.billing.v1';
@@ -351,7 +308,7 @@ function Sites({ page, notify }) {
   const rows = visible.map((asset) => [asset.name, asset.client, asset.type, asset.renewal, asset.health]);
   const [expanded, setExpanded] = useState('');
   const [monitorsState, setMonitorsState] = useStoredArray('nexo.sites.monitors.v1', monitors);
-  if (page === 'monitoramento') return <><div className="ns-metrics ns-metrics-three"><Metric label="Serviços monitorados" value="4" note="Todos os checks ativos" icon={Activity} /><Metric label="Disponibilidade média" value="99,58%" note="Últimos 30 dias" icon={TrendingUp} /><Metric label="Incidentes abertos" value="1" note="NovaEra Imóveis" icon={AlertCircle} /></div><div className="ns-monitor-list">{monitorsState.map((item, index) => <article className="ns-monitor-row" key={item.name}><span className={`ns-monitor-pulse ${item.color}`}><i /></span><span className="ns-monitor-main"><b>{item.name}</b><small>{item.detail}</small></span><span className={`ns-monitor-status ${item.color}`}>{item.status}</span><span className="ns-monitor-data"><small>Disponibilidade</small><b>{item.uptime}</b></span><span className="ns-monitor-data"><small>Resposta</small><b>{item.latency}</b></span><IconButton label="Atualizar verificação" onClick={() => { setMonitorsState((current) => current.map((entry, i) => i === index ? { ...entry, latency: 'Verificando…' } : entry)); window.setTimeout(() => setMonitorsState((current) => current.map((entry, i) => i === index ? { ...entry, latency: item.latency } : entry)), 800); notify(`Verificação iniciada: ${item.name}`); }}><RefreshCw size={15} /></IconButton></article>)}</div><div className="ns-info-note"><ShieldCheck size={17} /><span>Os indicadores são demonstrativos. Configure um serviço de uptime para receber dados reais.</span></div></>;
+  if (page === 'monitoramento') return <><div className="ns-metrics ns-metrics-three"><Metric label="Sites cadastrados" value={String(monitorsState.length)} note="neste workspace" icon={Activity} /><Metric label="Disponibilidade" value="—" note="sem provedor conectado" icon={TrendingUp} /><Metric label="Incidentes" value={String(monitorsState.filter((item) => item.status === 'Offline').length)} note="dos checks registrados" icon={AlertCircle} /></div><div className="ns-monitor-list">{monitorsState.map((item) => <article className="ns-monitor-row" key={item.id}><span className="ns-monitor-pulse"><i /></span><span className="ns-monitor-main"><b>{item.name || item.url}</b><small>{item.url || item.detail}</small></span><span className="ns-monitor-status">{item.status || 'Sem verificação'}</span><span className="ns-monitor-data"><small>Última verificação</small><b>{item.checkedAt ? new Date(item.checkedAt).toLocaleString('pt-BR') : '—'}</b></span><span className="ns-monitor-data"><small>Disponibilidade</small><b>{item.uptime || '—'}</b></span></article>)}{monitorsState.length === 0 && <div className="ns-empty-history">Nenhum site monitorado. Cadastre um domínio e conecte um provedor de uptime em Integrações.</div>}</div><div className="ns-info-note"><ShieldCheck size={17} /><span>Não há verificações automáticas ativas nesta conta. Os indicadores só serão exibidos depois de conectar um serviço de monitoramento.</span><button type="button" onClick={() => navigateTo('Integrações')}>Ver integrações</button></div></>;
   return <><div className="ns-metrics ns-metrics-three"><Metric label="Ativos cadastrados" value={String(visible.length).padStart(2, '0')} note="Entre sites, domínios e hospedagens" icon={Globe2} /><Metric label="Renovações em 30 dias" value={String(visible.filter((item) => item.health.includes('Renova')).length)} note="Confira as datas cadastradas" icon={CalendarClock} /><Metric label="Tudo em dia" value={`${visible.filter((item) => item.health === 'Em dia').length} de ${visible.length}`} note="Sem pendências de renovação" icon={BadgeCheck} /></div><div className="ns-assets-list">{visible.map((asset) => { const Icon = asset.type.toLowerCase().includes('hospedagem') ? HardDrive : Globe2; return <article className="ns-asset-row" key={asset.name}><span className="ns-asset-icon"><Icon size={19} /></span><span className="ns-asset-main"><b>{asset.name}</b><small>{asset.client}</small></span><span className="ns-asset-type">{asset.type}</span><span className="ns-asset-renew"><small>Renovação</small><b>{asset.renewal}</b></span><Status>{asset.health}</Status><IconButton label={`Detalhes de ${asset.name}`} onClick={() => setExpanded(expanded === asset.name ? '' : asset.name)}><ChevronDown size={16} /></IconButton>{expanded === asset.name && <div className="ns-asset-detail"><span>Responsável <b>Equipe Nexo</b></span><span>DNS <b>Gerenciado</b></span><span>Renovação automática <b>Não configurada</b></span><button type="button" onClick={() => { if (!window.confirm(`Remover ${asset.name} dos ativos locais?`)) return; setAssetsState((current) => current.filter((entry) => entry.name !== asset.name)); notify('Ativo removido.'); }}>Remover <Trash2 size={13} /></button></div>}</article>; })}</div><div className="ns-page-bottom"><span><Cloud size={15} /> Cadastro local de sites, domínios e hospedagens</span><button className="ns-secondary" type="button" onClick={() => setAssetModal(true)}><Plus size={15} />Adicionar ativo</button></div><div className="ns-info-note"><ShieldCheck size={17} /><span>Monitoramento de uptime, SSL e renovações reais exige integração no backend.</span></div>{assetModal && <div className="ns-integration-modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) setAssetModal(false); }}><form className="ns-integration-modal" onSubmit={addAsset}><header><span className="ns-integration-logo google"><Globe2 size={18} /></span><div><h2>Adicionar ativo</h2><p>Registre um domínio, hospedagem ou site do cliente.</p></div><button type="button" aria-label="Fechar" onClick={() => setAssetModal(false)}><X size={17} /></button></header><div className="ns-integration-fields"><label>Domínio ou nome<input required autoFocus value={assetDraft.name} onChange={(e) => setAssetDraft({ ...assetDraft, name: e.target.value })} placeholder="exemplo.com.br" /></label><label>Cliente<input required value={assetDraft.client} onChange={(e) => setAssetDraft({ ...assetDraft, client: e.target.value })} placeholder="Nome do cliente" /></label><label>Tipo<select value={assetDraft.type} onChange={(e) => setAssetDraft({ ...assetDraft, type: e.target.value })}><option>Domínio + hospedagem</option><option>Domínio</option><option>Hospedagem</option><option>Site</option></select></label><label>Próxima renovação<input type="date" value={assetDraft.renewal} onChange={(e) => setAssetDraft({ ...assetDraft, renewal: e.target.value })} /></label></div><div className="ns-integration-modal-note"><ShieldCheck size={15} />Cadastro local; nenhuma consulta ou renovação será feita automaticamente.</div><footer><button className="ns-secondary" type="button" onClick={() => setAssetModal(false)}>Cancelar</button><button className="ns-primary" type="submit"><Check size={14} />Salvar ativo</button></footer></form></div>}</>;
 }
 
@@ -393,7 +350,7 @@ function Integrations({ notify }) {
 }
 
 function Automations({ notify }) {
-  const [items, setItems] = useState(() => { try { const saved = JSON.parse(localStorage.getItem('nexo.automations') || 'null'); return Array.isArray(saved) ? saved : initialAutomations; } catch { return initialAutomations; } });
+  const { records: items, create, update, remove: deleteRecord } = useWorkspaceRecords('automations');
   const [form, setForm] = useState(false);
   const [editing, setEditing] = useState(null);
   const [draft, setDraft] = useState({ name: '', detail: '', trigger: 'Novo lead recebido', action: 'Criar tarefa de follow-up' });
@@ -401,25 +358,25 @@ function Automations({ notify }) {
   const [showRuns, setShowRuns] = useState(false);
   const triggers = ['Novo lead recebido', 'Cobrança próxima do vencimento', 'Pagamento confirmado', 'Projeto concluído', 'Projeto atrasado', 'Novo ticket criado', 'Aprovação solicitada'];
   const actions = ['Criar tarefa de follow-up', 'Enviar e-mail ao cliente', 'Enviar WhatsApp ao responsável', 'Atualizar etapa do CRM', 'Criar cobrança', 'Abrir ticket de suporte', 'Notificar equipe'];
-  const persist = (next) => { setItems(next); try { localStorage.setItem('nexo.automations', JSON.stringify(next)); } catch { notify('Não foi possível salvar as automações neste navegador.'); } };
+  const persist = async (next, old = []) => { try { const existing = new Map(old.map((item) => [item.id, item])); for (const item of next) { const previous = existing.get(item.id); if (previous) await update(item.id, item); else if (!item.id) await create(item); else if (!old.some((row) => row.id === item.id)) await create(Object.fromEntries(Object.entries(item).filter(([key]) => key !== 'id'))); } for (const item of old) if (!next.some((row) => row.id === item.id)) await deleteRecord(item.id); } catch (error) { notify(error.message || 'Não foi possível salvar a automação.'); } };
   const openNew = () => { setEditing(null); setDraft({ name: '', detail: '', trigger: triggers[0], action: actions[0] }); setForm(true); };
-  const openEdit = (item, index) => { setEditing(index); setDraft({ name: item.name, detail: item.detail, trigger: item.trigger, action: item.action || actions[0] }); setForm(true); };
-  const saveDraft = (event) => {
+  const openEdit = (item) => { setEditing(item.id); setDraft({ name: item.name, detail: item.detail, trigger: item.trigger, action: item.action || actions[0] }); setForm(true); };
+  const saveDraft = async (event) => {
     event.preventDefault();
     if (!draft.name.trim()) { notify('Informe um nome para a automação.'); return; }
-    const entry = { ...draft, name: draft.name.trim(), detail: draft.detail.trim() || `${draft.trigger} → ${draft.action}`, last: editing === null ? 'Nunca executada' : items[editing].last, active: editing === null ? false : items[editing].active };
-    const next = editing === null ? [entry, ...items] : items.map((item, index) => index === editing ? entry : item);
-    persist(next); setForm(false); notify(editing === null ? 'Automação criada como rascunho.' : 'Automação atualizada.');
+    const entry = { ...draft, name: draft.name.trim(), detail: draft.detail.trim() || `${draft.trigger} → ${draft.action}`, active: editing === null ? false : items.find((item) => item.id === editing)?.active || false };
+    const next = editing === null ? [entry, ...items] : items.map((item) => item.id === editing ? { ...item, ...entry } : item);
+    await persist(next, items); setForm(false); notify(editing === null ? 'Rascunho salvo no workspace. Ativação requer integração n8n.' : 'Rascunho atualizado no workspace.');
   };
-  const toggle = (index) => { const next = items.map((item, i) => i === index ? { ...item, active: !item.active } : item); persist(next); notify(`Automação ${items[index].active ? 'pausada' : 'ativada'}.`); };
-  const duplicate = (item) => { const copy = { ...item, name: `${item.name} (cópia)`, active: false, last: 'Nunca executada' }; persist([copy, ...items]); notify('Cópia criada como rascunho.'); };
-  const remove = (index) => { if (!window.confirm(`Excluir a automação “${items[index].name}”?`)) return; persist(items.filter((_, i) => i !== index)); notify('Automação excluída.'); };
-  const runTest = (item) => { const run = { name: item.name, time: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }), result: 'Teste visual concluído · nenhuma ação externa foi executada' }; setRuns((current) => [run, ...current].slice(0, 8)); setShowRuns(true); notify(`Simulação executada: ${item.name}.`); };
+  const toggle = () => notify('A execução real depende de conectar e validar o n8n em Integrações.');
+  const duplicate = async (item) => { try { const { id, ...copy } = item; await create({ ...copy, name: `${item.name} (cópia)`, active: false }); notify('Cópia salva como rascunho.'); } catch (error) { notify(error.message); } };
+  const remove = async (item) => { if (!window.confirm(`Excluir a automação “${item.name}”?`)) return; try { await deleteRecord(item.id); notify('Automação removida.'); } catch (error) { notify(error.message); } };
+
   return <>
     <div className="ns-metrics ns-metrics-three"><Metric label="Automações ativas" value={String(items.filter((item) => item.active).length).padStart(2, '0')} note={`${items.length} fluxos cadastrados`} icon={Sparkles} /><Metric label="Simulações nesta sessão" value={String(runs.length).padStart(2, '0')} note="Nenhuma ação externa executada" icon={Activity} /><Metric label="Modo de execução" value="Rascunho" note="Integração n8n pendente" icon={Clock3} /></div>
     <div className="ns-section-heading"><div><h2>Fluxos de trabalho</h2><p>Configure gatilhos e ações para as rotinas da agência.</p></div><div className="ns-automation-head-actions"><button type="button" className="ns-secondary" onClick={() => setShowRuns((value) => !value)}><Clock3 size={14} />Histórico ({runs.length})</button><button type="button" className="ns-primary" onClick={openNew}><Plus size={15} />Nova automação</button></div></div>
     {form && <div className="ns-integration-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setForm(false); }}><form className="ns-integration-modal ns-automation-modal" onSubmit={saveDraft}><header><span className="ns-integration-logo sign"><Sparkles size={18} /></span><div><h2>{editing === null ? 'Nova automação' : 'Editar automação'}</h2><p>Defina o evento e a resposta desejada.</p></div><button type="button" aria-label="Fechar" onClick={() => setForm(false)}><X size={17} /></button></header><div className="ns-integration-fields"><label>Nome<input autoFocus required maxLength="70" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="Ex.: Avisar sobre novo ticket" /></label><label>Descrição<input value={draft.detail} onChange={(event) => setDraft({ ...draft, detail: event.target.value })} placeholder="O que esta automação fará?" /></label><label>Quando isso acontecer<select value={draft.trigger} onChange={(event) => setDraft({ ...draft, trigger: event.target.value })}>{triggers.map((item) => <option key={item}>{item}</option>)}</select></label><label>Então fazer<select value={draft.action} onChange={(event) => setDraft({ ...draft, action: event.target.value })}>{actions.map((item) => <option key={item}>{item}</option>)}</select></label></div><div className="ns-integration-modal-note"><ShieldCheck size={15} />Salvo como regra de interface. O n8n ainda não será acionado.</div><footer><button type="button" className="ns-secondary" onClick={() => setForm(false)}>Cancelar</button><button type="submit" className="ns-primary"><Check size={14} />{editing === null ? 'Criar rascunho' : 'Salvar alterações'}</button></footer></form></div>}
-    <div className="ns-automation-list">{items.map((item, index) => <article className="ns-automation-row" key={`${item.name}-${index}`}><span className={`ns-flow-icon ${item.active ? 'active' : ''}`}><Sparkles size={18} /></span><span className="ns-flow-main"><b>{item.name}</b><small>{item.detail}</small></span><span className="ns-flow-trigger"><small>Quando</small><b>{item.trigger}</b></span><span className="ns-flow-run"><small>Então</small><b>{item.action || 'Ação não configurada'}</b></span><button type="button" className={`ns-toggle ${item.active ? 'on' : ''}`} role="switch" aria-checked={item.active} aria-label={`${item.active ? 'Desativar' : 'Ativar'} ${item.name}`} onClick={() => toggle(index)}><i /></button><div className="ns-automation-row-actions"><IconButton label={`Testar ${item.name}`} onClick={() => runTest(item)}><Play size={15} /></IconButton><IconButton label={`Editar ${item.name}`} onClick={() => openEdit(item, index)}><Pencil size={15} /></IconButton><IconButton label={`Duplicar ${item.name}`} onClick={() => duplicate(item)}><Copy size={15} /></IconButton><IconButton label={`Excluir ${item.name}`} onClick={() => remove(index)}><Trash2 size={15} /></IconButton></div></article>)}</div>
+    <div className="ns-automation-list">{items.map((item, index) => <article className="ns-automation-row" key={`${item.name}-${index}`}><span className={`ns-flow-icon ${item.active ? 'active' : ''}`}><Sparkles size={18} /></span><span className="ns-flow-main"><b>{item.name}</b><small>{item.detail}</small></span><span className="ns-flow-trigger"><small>Quando</small><b>{item.trigger}</b></span><span className="ns-flow-run"><small>Então</small><b>{item.action || 'Ação não configurada'}</b></span><button type="button" className={`ns-toggle ${item.active ? 'on' : ''}`} role="switch" aria-checked={item.active} aria-label={`${item.active ? 'Desativar' : 'Ativar'} ${item.name}`} onClick={toggle} disabled title="Ative após conectar o n8n"><i /></button><div className="ns-automation-row-actions"><IconButton label="Configurar n8n" onClick={() => navigateTo('Integrações')}><Play size={15} /></IconButton><IconButton label={`Editar ${item.name}`} onClick={() => openEdit(item, index)}><Pencil size={15} /></IconButton><IconButton label={`Duplicar ${item.name}`} onClick={() => duplicate(item)}><Copy size={15} /></IconButton><IconButton label={`Excluir ${item.name}`} onClick={() => remove(item)}><Trash2 size={15} /></IconButton></div></article>)}</div>
     {showRuns && <section className="ns-automation-history"><div className="ns-section-heading"><div><h2>Histórico desta sessão</h2><p>Simulações executadas enquanto esta tela está aberta.</p></div><button className="ns-link-button" onClick={() => setRuns([])}>Limpar histórico</button></div>{runs.length ? runs.map((run, index) => <div className="ns-run-row" key={`${run.name}-${index}`}><CheckCircle2 size={15} /><b>{run.name}</b><span>{run.result}</span><time>{run.time}</time></div>) : <p className="ns-empty-history">Nenhuma simulação executada nesta sessão.</p>}</section>}
     <div className="ns-info-note"><Sparkles size={17} /><span>Você pode criar e revisar regras aqui. Ativar e testar são ações simuladas; o n8n será conectado depois que o backend estiver pronto.</span></div>
   </>;

@@ -1,26 +1,18 @@
 import React, { useMemo, useState } from 'react';
+import { useWorkspaceRecords } from '../lib/workspace-api.js';
 import { Activity, ArrowDown, ArrowUp, Check, CircleDollarSign, Clock3, Flag, Pencil, Plus, Target, Trash2, TrendingUp, Users, X } from 'lucide-react';
 import './goals.css';
 
-const KEY = 'nexo.workspace.goals.v1';
-const seed = [
-  { id: 'revenue', name: 'Receita fechada', group: 'Financeiro', current: 0, target: 25000, unit: 'BRL', period: 'month', color: 'green' },
-  { id: 'leads', name: 'Novos clientes', group: 'Comercial', current: 0, target: 6, unit: 'number', period: 'month', color: 'blue' },
-  { id: 'projects', name: 'Projetos entregues', group: 'Projetos', current: 0, target: 8, unit: 'number', period: 'month', color: 'violet' },
-];
 const icons = { Financeiro: CircleDollarSign, Comercial: Users, Projetos: Flag, Operação: Activity };
 const money = (value) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 }).format(Number(value) || 0);
 const number = (value) => new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 1 }).format(Number(value) || 0);
-function readGoals() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(KEY) || 'null');
-    if (Array.isArray(saved) && saved.length) return saved;
-  } catch { /* use initial goal templates */ }
-  return seed;
-}
+
 
 export default function GoalsScreen({ notify }) {
-  const [goals, setGoals] = useState(readGoals);
+  const { records: savedGoals, create, update, remove: deleteRecord } = useWorkspaceRecords('goals');
+  const [draftGoals, setDraftGoals] = useState(null);
+  const goals = draftGoals || savedGoals;
+  const setGoals = (value) => setDraftGoals((current) => typeof value === 'function' ? value(current || savedGoals) : value);
   const [period, setPeriod] = useState('month');
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -33,12 +25,16 @@ export default function GoalsScreen({ notify }) {
   const achieved = visibleGoals.filter((goal) => Number(goal.current) >= Number(goal.target)).length;
   const revenue = visibleGoals.filter((goal) => goal.unit === 'BRL').reduce((sum, goal) => sum + Number(goal.current), 0);
 
-  const save = (nextGoals = goals) => {
+  const save = async (nextGoals = goals) => {
     try {
-      localStorage.setItem(KEY, JSON.stringify(nextGoals));
-      setGoals(nextGoals); setDirty(false); setSavedAt(new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }));
-      notify('Metas salvas neste navegador.');
-    } catch { notify('Não foi possível salvar as metas neste navegador.'); }
+      for (const goal of nextGoals) {
+        const existing = savedGoals.find((item) => item.id === goal.id);
+        const payload = Object.fromEntries(Object.entries(goal).filter(([key]) => !['id','createdAt','updatedAt'].includes(key)));
+        if (!existing) await create(payload); else if (JSON.stringify(existing) !== JSON.stringify(goal)) await update(goal.id, payload);
+      }
+      for (const old of savedGoals) if (!nextGoals.some((goal) => goal.id === old.id)) await deleteRecord(old.id);
+      setDraftGoals(null); setDirty(false); setSavedAt(new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })); notify('Metas salvas no workspace.');
+    } catch (error) { window.dispatchEvent(new CustomEvent('nexo:workspace-error', { detail: error.message })); }
   };
   const openNew = () => { setEditing(null); setFormError(''); setForm({ name: '', group: 'Comercial', current: '0', target: '', unit: 'number' }); setShowForm(true); };
   const openEdit = (goal) => { setEditing(goal.id); setFormError(''); setForm({ name: goal.name, group: goal.group, current: String(goal.current), target: String(goal.target), unit: goal.unit }); setShowForm(true); };

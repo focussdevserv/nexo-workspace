@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Activity, AlertCircle, ArrowUpRight, Check, CheckCircle2, Copy, CreditCard, ExternalLink, KeyRound, LoaderCircle, LockKeyhole, Plus, RefreshCw, ShieldCheck, X } from 'lucide-react';
 import './payments.css';
 
