@@ -56,7 +56,7 @@ const clientSchema = z.object({
 const workspaceResource = z.enum([
   'leads', 'clients', 'companies', 'contacts', 'proposals', 'services', 'contracts',
   'projects', 'tasks', 'events', 'approvals', 'files', 'hours', 'inbox',
-  'tickets', 'site-assets', 'monitors', 'expenses', 'revenues', 'finance-accounts',
+  'tickets', 'site-assets', 'monitors', 'expenses', 'revenues', 'finance-accounts', 'finance-transactions',
   'goals', 'team', 'repositories', 'automations', 'settings',
 ]);
 const workspaceDataSchema = z.record(z.string().trim().min(1).max(100), z.unknown()).refine((data) => {
