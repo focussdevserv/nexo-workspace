@@ -82,6 +82,7 @@ function WorkScreen({ page }) {
   const [events, setEvents] = useLocalState('nexo.work.events.v1', eventsSeed);
   const [approvals, setApprovals] = useLocalState('nexo.work.approvals.v1', approvalsSeed);
   const [files, setFiles] = useLocalState('nexo.work.files.v1', filesSeed);
+  const [hours, setHours] = useLocalState('nexo.work.hours.v1', []);
   const [hoursPeriod, setHoursPeriod] = useState('Esta semana');
   const [fileQuery, setFileQuery] = useState('');
   const [fileType, setFileType] = useState('Todos');
@@ -91,9 +92,27 @@ function WorkScreen({ page }) {
   const [composer, setComposer] = useState('');
   const uploadRef = useRef(null);
   const [draft, setDraft] = useState({ title: '', client: '', project: '', due: '', assignee: '', time: '16:30', detail: '', priority: 'Normal' });
-  const [timerRunning, setTimerRunning] = useState(() => localStorage.getItem('nexo.timer.running') === 'true');
-  const [timerSeconds, setTimerSeconds] = useState(() => Number(localStorage.getItem('nexo.timer.seconds') || 0));
-  useEffect(() => { if (!timerRunning) return undefined; const timer = window.setInterval(() => setTimerSeconds((seconds) => { const next = seconds + 1; localStorage.setItem('nexo.timer.seconds', String(next)); return next; }), 1000); return () => window.clearInterval(timer); }, [timerRunning]);
+  const [timerNow, setTimerNow] = useState(Date.now());
+  const activeTimer = hours.find((item) => item.status === 'running');
+  const timerRunning = Boolean(activeTimer);
+  const timerSeconds = activeTimer ? Math.max(0, Math.floor((timerNow - new Date(activeTimer.startedAt).getTime()) / 1000)) : 0;
+  useEffect(() => {
+    if (!activeTimer) return undefined;
+    const timer = window.setInterval(() => setTimerNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [activeTimer?.id]);
+  const toggleTimer = () => {
+    const now = new Date();
+    if (!activeTimer) {
+      const id = globalThis.crypto?.randomUUID?.() || `timer-${Date.now()}`;
+      setHours([...hours, { id, title: selectedTask?.title || 'Tempo sem tarefa', taskId: selectedTask?.id || null, project: selectedTask?.project || '', client: selectedTask?.client || '', startedAt: now.toISOString(), status: 'running' }]);
+      notify('Cronômetro iniciado e sincronizado com o workspace.');
+      return;
+    }
+    const elapsed = Math.max(0, Math.floor((now.getTime() - new Date(activeTimer.startedAt).getTime()) / 1000));
+    setHours((current) => current.map((item) => item.id === activeTimer.id ? { ...item, endedAt: now.toISOString(), seconds: elapsed, hours: Number((elapsed / 3600).toFixed(2)), status: 'completed' } : item));
+    notify('Tempo registrado no workspace.');
+  };
   const timerLabel = `${String(Math.floor(timerSeconds / 3600)).padStart(2, '0')}:${String(Math.floor(timerSeconds % 3600 / 60)).padStart(2, '0')}:${String(timerSeconds % 60).padStart(2, '0')}`;
   const today = new Date();
   const monthDate = new Date(today.getFullYear(), today.getMonth() + calendarOffset, 1);
@@ -147,7 +166,6 @@ function WorkScreen({ page }) {
   const decideApproval = (id, status) => {
     const approval = approvals.find((item) => item.id === id);
     setApprovals((current) => current.map((item) => item.id === id ? { ...item, status, decidedAt: new Date().toISOString() } : item));
-    try { const events = JSON.parse(localStorage.getItem('nexo.workflow.events') || '[]'); localStorage.setItem('nexo.workflow.events', JSON.stringify([{ type: 'aprovacao', title: `${approval?.title || 'Entrega'} · ${status}`, client: approval?.client || '', at: new Date().toISOString() }, ...events])); } catch {}
     notify(status === 'Aprovado' ? 'Material aprovado.' : 'Pedido de ajuste enviado.');
   };
   const updateProject = (project, patch) => {
@@ -182,7 +200,7 @@ function WorkScreen({ page }) {
 
     {key === 'horas' && <>
       <section className="hours-overview"><div className="hours-total"><div><span className="eyebrow">CRONÔMETRO {timerRunning ? '· EM ANDAMENTO' : ''}</span><strong className="running-timer">{timerLabel}</strong><small>{timerRunning ? 'Registrando tempo para Site institucional' : 'Tempo desta sessão neste navegador'}</small></div><div className="hours-ring"><div><strong>{Math.min(100, Math.round(timerSeconds / 1440))}%</strong><small>meta diária</small></div></div></div><div className="hours-stat"><span className="hours-stat-icon blue"><Timer size={17} /></span><div><small>Faturáveis nesta sessão</small><strong>{Math.floor(timerSeconds / 3600)}h {Math.floor(timerSeconds % 3600 / 60)}m</strong><em>Registro local</em></div></div><div className="hours-stat"><span className="hours-stat-icon lime"><Activity size={17} /></span><div><small>Projetos ativos</small><strong>{projects.filter((project) => project.status !== 'Concluído').length} projetos</strong><em>em acompanhamento</em></div></div><label className="period-select"><span>Período</span><select value={hoursPeriod} onChange={(e) => setHoursPeriod(e.target.value)}><option>Esta semana</option><option>Semana passada</option><option>Este mês</option></select><ChevronDown size={14} /></label></section>
-      <section className="work-panel hours-panel"><div className="panel-section-heading"><div><h2>Horas por projeto</h2><p>Distribuição do tempo · {hoursPeriod.toLowerCase()}</p></div><button className="work-button work-button-quiet" onClick={() => { const csv = 'Projeto;Cliente;Horas\n'; const url = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv' })); const link = document.createElement('a'); link.href = url; link.download = 'nexo-horas.csv'; link.click(); URL.revokeObjectURL(url); notify('Relatório de horas exportado.'); }}><Download size={15} /> Exportar</button></div><div className="hours-table"><div className="hours-table-head"><span>Projeto</span><span>Responsável</span><span>Horas</span><span>Progresso</span><span>Último registro</span></div>{[].map((row) => <div className="hours-row" key={row.project}><div className="hours-project"><span className="file-icon file-folder"><Folder size={16} /></span><span><b>{row.project}</b><small>{row.client}</small></span></div><span className="task-owner"><Avatar name={row.initials} />{row.initials}</span><strong>{row.hours}</strong><div className="hours-bar"><i style={{ width: `${row.pct * 2.2}%` }} /><small>{row.pct}%</small></div><span className="hours-last">{row.last}</span></div>)}</div><button className={`start-timer ${timerRunning ? 'timer-active' : ''}`} onClick={() => { const next = !timerRunning; setTimerRunning(next); localStorage.setItem('nexo.timer.running', String(next)); notify(next ? 'Cronômetro iniciado nesta sessão.' : `Sessão de ${timerLabel} encerrada; registro ainda não enviado ao servidor.`); }}><span><Timer size={17} /></span><b>{timerRunning ? `Parar cronômetro · ${timerLabel}` : 'Iniciar cronômetro'}</b><small>{selectedTask?.title || 'Selecione uma tarefa para vincular o tempo'}</small><ArrowRight size={16} /></button></section>
+      <section className="work-panel hours-panel"><div className="panel-section-heading"><div><h2>Horas por projeto</h2><p>Registros concluídos · {hoursPeriod.toLowerCase()}</p></div><button className="work-button work-button-quiet" onClick={() => { const completed = hours.filter((item) => item.status === 'completed'); const csv = ['Projeto;Cliente;Tarefa;Horas;Início;Fim', ...completed.map((item) => [item.project, item.client, item.title, item.hours || 0, item.startedAt, item.endedAt].join(';'))].join('\n'); const url = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv' })); const link = document.createElement('a'); link.href = url; link.download = 'horas-workspace.csv'; link.click(); URL.revokeObjectURL(url); notify('Relatório exportado com os registros do workspace.'); }}><Download size={15} /> Exportar</button></div><div className="hours-table"><div className="hours-table-head"><span>Projeto</span><span>Responsável</span><span>Horas</span><span>Progresso</span><span>Último registro</span></div>{hours.filter((item) => item.status === 'completed').map((row) => <div className="hours-row" key={row.id}><div className="hours-project"><span className="file-icon file-folder"><Folder size={16} /></span><span><b>{row.project || 'Sem projeto'}</b><small>{row.client || 'Sem cliente'} · {row.title}</small></span></div><span className="task-owner">Workspace</span><strong>{Number(row.hours || 0).toFixed(2)}h</strong><div className="hours-bar"><i style={{ width: '100%' }} /><small>Registrado</small></div><span className="hours-last">{row.endedAt ? new Date(row.endedAt).toLocaleString('pt-BR') : '—'}</span></div>)}{!hours.some((item) => item.status === 'completed') && <div className="work-empty-state">Nenhum tempo registrado ainda.</div>}</div><button className={`start-timer ${timerRunning ? 'timer-active' : ''}`} onClick={toggleTimer}><span><Timer size={17} /></span><b>{timerRunning ? `Parar cronômetro · ${timerLabel}` : 'Iniciar cronômetro'}</b><small>{selectedTask?.title || 'Selecione uma tarefa para vincular o tempo'}</small><ArrowRight size={16} /></button></section>
     </>}
 
     {key === 'aprovacoes' && <>

@@ -5,10 +5,10 @@ import {
   ShieldCheck, SlidersHorizontal, Upload, UserRound, Users, Webhook,
 } from 'lucide-react';
 import './settings.css';
+import { apiRequest, useWorkspaceRecords } from '../lib/workspace-api.js';
 
-const STORAGE_KEY = 'nexo.workspace.settings.v1';
 const defaults = {
-  workspace: { agency: 'Nexo Agência', timezone: 'America/Sao_Paulo', weekStart: 'monday', currency: 'BRL', dateFormat: 'dd/MM/yyyy', language: 'pt-BR', fiscalName: '', document: '', email: '', phone: '', website: '', address: '' },
+  workspace: { agency: '', timezone: 'America/Sao_Paulo', weekStart: 'monday', currency: 'BRL', dateFormat: 'dd/MM/yyyy', language: 'pt-BR', fiscalName: '', document: '', email: '', phone: '', website: '', address: '' },
   preferences: { compact: false, dark: false, startPage: 'Meu Dia', showCompleted: false, confirmDelete: true },
   notifications: { taskDue: true, overdue: true, newLead: true, proposal: true, payment: true, weekly: true, email: true, browser: false, whatsapp: false, quietHours: false, quietStart: '20:00', quietEnd: '08:00' },
   permissions: { role: 'member', invitePolicy: 'admin', allowClientPortal: true, require2fa: false, sessionDays: '30' },
@@ -35,50 +35,43 @@ const integrations = [
   { name: 'Sentry', type: 'Monitoramento', detail: 'Erros e saúde das aplicações', icon: 'SE' },
 ];
 
-function loadSettings() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
-    return Object.fromEntries(Object.entries(defaults).map(([key, value]) => [key, { ...value, ...(saved[key] || {}) }]));
-  } catch { return structuredClone(defaults); }
-}
-
 export default function SettingsScreen({ notify }) {
-  const [settings, setSettings] = useState(loadSettings);
+  const { records, create, update: updateRecord } = useWorkspaceRecords('settings');
+  const savedSettings = records.find((item) => item.key === 'workspace-preferences');
+  const [settings, setSettings] = useState(structuredClone(defaults));
   const [active, setActive] = useState('workspace');
   const [dirty, setDirty] = useState(false);
-  const [savedAt, setSavedAt] = useState(localStorage.getItem(`${STORAGE_KEY}.savedAt`) || '');
-  const [integrationsState, setIntegrationsState] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(`${STORAGE_KEY}.integrations`) || '{}'); } catch { return {}; }
-  });
+  const [savedAt, setSavedAt] = useState('');
+  const [integrationsState, setIntegrationsState] = useState({});
   const fileRef = useRef(null);
-
+  useEffect(() => {
+    if (!savedSettings) return;
+    setSettings(Object.fromEntries(Object.entries(defaults).map(([key, value]) => [key, { ...value, ...(savedSettings.settings?.[key] || {}) }])));
+    setSavedAt(savedSettings.savedAt || '');
+    setDirty(false);
+  }, [savedSettings?.id, savedSettings?.updatedAt]);
+  const refreshIntegrationStatus = async () => {
+    try { const { data } = await apiRequest('/api/integrations/status'); setIntegrationsState(Object.fromEntries(data.map((item) => [item.name, item.configured]))); }
+    catch (error) { notify(error.message || 'Could not load integration status.'); }
+  };
+  useEffect(() => { refreshIntegrationStatus(); }, []);
   useEffect(() => {
     const onBeforeUnload = (event) => { if (dirty) { event.preventDefault(); event.returnValue = ''; } };
     window.addEventListener('beforeunload', onBeforeUnload);
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
   }, [dirty]);
-
-  const update = (group, field, value) => {
-    setSettings((current) => ({ ...current, [group]: { ...current[group], [field]: value } }));
-    setDirty(true);
-  };
-  const save = () => {
+  const update = (group, field, value) => { setSettings((current) => ({ ...current, [group]: { ...current[group], [field]: value } })); setDirty(true); };
+  const save = async () => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
-      localStorage.setItem(`${STORAGE_KEY}.integrations`, JSON.stringify(integrationsState));
       const timestamp = new Date().toISOString();
-      localStorage.setItem(`${STORAGE_KEY}.savedAt`, timestamp);
-      setSavedAt(timestamp);
-      setDirty(false);
-      notify('Configurações salvas neste navegador.');
-    } catch { notify('Não foi possível salvar. Verifique o espaço disponível no navegador.'); }
+      const payload = { key: 'workspace-preferences', settings, savedAt: timestamp };
+      if (savedSettings) await updateRecord(savedSettings.id, payload); else await create(payload);
+      setSavedAt(timestamp); setDirty(false); notify('Workspace preferences saved.');
+    } catch (error) { notify(error.message || 'Could not save preferences to the server.'); }
   };
-  const toggleIntegration = (name) => {
-    setIntegrationsState((current) => ({ ...current, [name]: !current[name] }));
-    setDirty(true);
-  };
+  const toggleIntegration = (name) => { window.dispatchEvent(new CustomEvent('nexo:navigate', { detail: 'Integrações' })); notify(`${name}: configure credentials on the server to change its status.`); };
   const exportData = () => {
-    const payload = { version: 1, exportedAt: new Date().toISOString(), settings, integrations: integrationsState };
+    const payload = { version: 1, exportedAt: new Date().toISOString(), settings };
     const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }));
     const link = document.createElement('a');
     link.href = url; link.download = `nexo-configuracoes-${new Date().toISOString().slice(0, 10)}.json`; link.click();
@@ -92,7 +85,6 @@ export default function SettingsScreen({ notify }) {
       const payload = JSON.parse(await file.text());
       if (!payload.settings || typeof payload.settings !== 'object') throw new Error('invalid');
       setSettings(Object.fromEntries(Object.entries(defaults).map(([key, value]) => [key, { ...value, ...(payload.settings[key] || {}) }])));
-      setIntegrationsState(payload.integrations || {});
       setDirty(true);
       notify('Configurações importadas. Salve para aplicar.');
     } catch { notify('Esse arquivo não contém uma exportação válida do Nexo.'); }
@@ -100,7 +92,7 @@ export default function SettingsScreen({ notify }) {
   };
   const reset = () => {
     if (!window.confirm('Restaurar todas as configurações para os valores iniciais?')) return;
-    setSettings(structuredClone(defaults)); setIntegrationsState({}); setDirty(true);
+    setSettings(structuredClone(defaults)); setDirty(true);
     notify('Valores iniciais carregados. Salve para confirmar.');
   };
   const activeSection = sections.find((item) => item.id === active);
@@ -113,7 +105,7 @@ export default function SettingsScreen({ notify }) {
     </aside>
 
     <section className="settings-main">
-      <div className="settings-main-head"><div><span className="settings-overline">PREFERÊNCIAS DO WORKSPACE</span><h2>{activeSection.label}</h2><p>{activeSection.hint}. As alterações ficam salvas neste navegador.</p></div><div className="settings-head-actions"><span className={`settings-save-state ${dirty ? 'pending' : ''}`}><i />{dirty ? 'Alterações não salvas' : savedAt ? `Salvo às ${new Date(savedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}` : 'Tudo atualizado'}</span><button className="admin-primary" onClick={save}><Check size={15} /> Salvar alterações</button></div></div>
+      <div className="settings-main-head"><div><span className="settings-overline">PREFERÊNCIAS DO WORKSPACE</span><h2>{activeSection.label}</h2><p>{activeSection.hint}. As preferências sincronizam com o servidor ao salvar.</p></div><div className="settings-head-actions"><span className={`settings-save-state ${dirty ? 'pending' : ''}`}><i />{dirty ? 'Alterações não salvas' : savedAt ? `Salvo às ${new Date(savedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}` : 'Tudo atualizado'}</span><button className="admin-primary" onClick={save}><Check size={15} /> Salvar alterações</button></div></div>
 
       {active === 'workspace' && <>
         <SettingsCard title="Preferências gerais" description="Ajuste como o workspace organiza datas, valores e páginas." icon={SlidersHorizontal}><div className="settings-fields">
@@ -148,7 +140,7 @@ export default function SettingsScreen({ notify }) {
         <SettingsCard title="Meios de pagamento aceitos" description="Selecione os métodos que sua agência pretende oferecer." icon={Database}><SettingToggle title="Pix" detail="Pagamento instantâneo via Mercado Pago." value={settings.billing.pix} onChange={(v) => update('billing', 'pix', v)} /><SettingToggle title="Boleto bancário" detail="Cobrança com vencimento e confirmação automática." value={settings.billing.boleto} onChange={(v) => update('billing', 'boleto', v)} /><SettingToggle title="Cartão de crédito" detail="Pagamento à vista ou parcelado, conforme configuração do provedor." value={settings.billing.card} onChange={(v) => update('billing', 'card', v)} /><SettingToggle title="Renovar assinaturas automaticamente" detail="Requer uma integração de pagamentos ativa." value={settings.billing.autoRenew} onChange={(v) => update('billing', 'autoRenew', v)} /></SettingsCard><div className="settings-callout"><LockKeyhole size={17} /><span><b>Dados de pagamento protegidos</b><small>Chaves e tokens do Mercado Pago serão guardados no servidor quando a API estiver conectada.</small></span></div>
       </>}
 
-      {active === 'integrations' && <><div className="settings-integrations-intro"><div><h3>Conecte as ferramentas que sua agência já usa</h3><p>As conexões reais exigem credenciais e configuração segura no servidor.</p></div><button className="admin-secondary" onClick={() => notify('Verificação de integrações disponível após configurar o servidor.')}>Verificar conexões</button></div><div className="settings-integration-grid">{integrations.map((item) => <article className="settings-integration" key={item.name}><div className="integration-head"><span className="integration-logo">{item.icon}</span><span className={`integration-status ${integrationsState[item.name] ? 'connected' : ''}`}><i />{integrationsState[item.name] ? 'Configurada' : 'Não conectada'}</span></div><h3>{item.name}</h3><small>{item.type}</small><p>{item.detail}</p><button className="admin-secondary" onClick={() => toggleIntegration(item.name)}>{integrationsState[item.name] ? 'Marcar desconectada' : 'Preparar conexão'}</button></article>)}</div><div className="settings-callout"><KeyRound size={17} /><span><b>Segredos não ficam no navegador</b><small>O estado acima é apenas organizacional. A conexão com APIs será concluída quando configurarmos variáveis de ambiente e endpoints no VPS.</small></span></div></>}
+      {active === 'integrations' && <><div className="settings-integrations-intro"><div><h3>Conecte as ferramentas que sua agência já usa</h3><p>As conexões reais exigem credenciais e configuração segura no servidor.</p></div><button className="admin-secondary" onClick={refreshIntegrationStatus}>Verificar conexões</button></div><div className="settings-integration-grid">{integrations.map((item) => <article className="settings-integration" key={item.name}><div className="integration-head"><span className="integration-logo">{item.icon}</span><span className={`integration-status ${integrationsState[item.name] ? 'connected' : ''}`}><i />{integrationsState[item.name] ? 'Configurada' : 'Não conectada'}</span></div><h3>{item.name}</h3><small>{item.type}</small><p>{item.detail}</p><button className="admin-secondary" onClick={() => toggleIntegration(item.name)}>Gerenciar conexões</button></article>)}</div><div className="settings-callout"><KeyRound size={17} /><span><b>Segredos não ficam no navegador</b><small>O estado acima é apenas organizacional. A conexão com APIs será concluída quando configurarmos variáveis de ambiente e endpoints no VPS.</small></span></div></>}
 
       {active === 'security' && <>
         <SettingsCard title="Proteção da conta" description="Controles para reduzir acessos indevidos." icon={ShieldCheck}><SettingToggle title="Exigir autenticação em dois fatores" detail="Recomendado para todos os usuários com acesso financeiro." value={settings.permissions.require2fa} onChange={(v) => update('permissions', 'require2fa', v)} /><div className="settings-fields"><Field label="Encerrar sessão após"><select value={settings.permissions.sessionDays} onChange={(e) => update('permissions', 'sessionDays', e.target.value)}><option value="7">7 dias</option><option value="14">14 dias</option><option value="30">30 dias</option><option value="90">90 dias</option></select></Field></div></SettingsCard>

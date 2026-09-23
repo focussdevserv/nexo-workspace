@@ -57,7 +57,7 @@ const workspaceResource = z.enum([
   'leads', 'clients', 'companies', 'contacts', 'proposals', 'services', 'contracts',
   'projects', 'tasks', 'events', 'approvals', 'files', 'hours', 'inbox',
   'tickets', 'site-assets', 'monitors', 'expenses', 'revenues', 'finance-accounts',
-  'goals', 'team', 'repositories', 'automations',
+  'goals', 'team', 'repositories', 'automations', 'settings',
 ]);
 const workspaceDataSchema = z.record(z.string().trim().min(1).max(100), z.unknown()).refine((data) => {
   const forbidden = /password|secret|token|apikey|accesskey|privatekey/i;
@@ -158,6 +158,17 @@ app.get('/api/health', async (_request, reply) => {
   try { await pool.query('select 1'); return { status: 'ok', database: 'connected', timestamp: new Date().toISOString() }; }
   catch { return reply.code(503).send({ status: 'degraded', database: 'unavailable' }); }
 });
+
+app.get('/api/integrations/status', { preHandler: app.authenticate }, async () => ({ data: [
+  { name: 'Mercado Pago', configured: Boolean(env.MERCADOPAGO_ACCESS_TOKEN) },
+  { name: 'Evolution API', configured: Boolean(process.env.EVOLUTION_API_URL && process.env.EVOLUTION_API_KEY) },
+  { name: 'WAHA', configured: Boolean(process.env.WAHA_API_URL && process.env.WAHA_API_KEY) },
+  { name: 'Resend', configured: Boolean(process.env.RESEND_API_KEY) },
+  { name: 'Google Workspace', configured: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) },
+  { name: 'GitHub', configured: Boolean(process.env.GITHUB_TOKEN) },
+  { name: 'n8n', configured: Boolean(process.env.N8N_WEBHOOK_URL) },
+  { name: 'Sentry', configured: Boolean(process.env.SENTRY_DSN) },
+] }));
 
 app.post('/api/auth/register', { config: { rateLimit: { max: 5, timeWindow: '1 hour' } } }, async (request, reply) => {
   const body = parseBody(registerSchema, request.body, reply); if (!body) return;
