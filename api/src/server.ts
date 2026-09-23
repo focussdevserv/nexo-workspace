@@ -21,6 +21,8 @@ const env = z.object({
   BOOTSTRAP_TOKEN: z.string().default(''),
   MERCADOPAGO_ACCESS_TOKEN: z.string().optional(),
   MERCADOPAGO_WEBHOOK_SECRET: z.string().optional(),
+  WAHA_API_URL: z.string().url().optional(),
+  WAHA_API_KEY: z.string().min(32).optional(),
 }).parse(process.env);
 
 const app = Fastify({ logger: true, bodyLimit: 1024 * 1024, trustProxy: process.env.TRUST_PROXY === 'true' });
@@ -118,6 +120,22 @@ async function mercadoPago<T = Record<string, unknown>>(path: string, init: Requ
   return payload as T;
 }
 
+async function wahaRequest<T = Record<string, unknown>>(path: string, init: RequestInit = {}): Promise<T> {
+  if (!env.WAHA_API_URL || !env.WAHA_API_KEY) throw Object.assign(new Error('waha_not_configured'), { statusCode: 503 });
+  const response = await fetch(`${env.WAHA_API_URL.replace(/\/$/, '')}${path}`, {
+    ...init,
+    signal: AbortSignal.timeout(15_000),
+    headers: { 'X-Api-Key': env.WAHA_API_KEY, Accept: 'application/json', 'Content-Type': 'application/json', ...(init.headers ?? {}) },
+  });
+  const raw = await response.text();
+  const payload = raw ? (() => { try { return JSON.parse(raw); } catch { return raw; } })() : {};
+  if (!response.ok) {
+    app.log.warn({ statusCode: response.status, path }, 'WAHA request failed');
+    throw Object.assign(new Error('waha_request_failed'), { statusCode: response.status === 404 ? 404 : 502 });
+  }
+  return payload as T;
+}
+
 function paymentDetailsFromOrder(order: Record<string, any>) {
   const payment = order.transactions?.payments?.[0] ?? {};
   const method = payment.payment_method ?? {};
@@ -159,10 +177,84 @@ app.get('/api/health', async (_request, reply) => {
   catch { return reply.code(503).send({ status: 'degraded', database: 'unavailable' }); }
 });
 
+const wahaSessionName = (row: typeof workspaceRecords.$inferSelect) => String(row.data.name || '');
+async function findOwnedWahaSession(organizationId: string, id: string) {
+  const [row] = await db.select().from(workspaceRecords).where(and(
+    eq(workspaceRecords.id, id), eq(workspaceRecords.organizationId, organizationId),
+    eq(workspaceRecords.resource, 'whatsapp-sessions'), isNull(workspaceRecords.archivedAt),
+  )).limit(1);
+  return row;
+}
+
+app.get('/api/integrations/waha/sessions', { preHandler: app.authenticate }, async (request, reply) => {
+  if (!env.WAHA_API_URL || !env.WAHA_API_KEY) return reply.code(503).send({ error: 'waha_not_configured', message: 'WAHA ainda não está configurada no servidor.' });
+  const owned = await db.select().from(workspaceRecords).where(and(eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'whatsapp-sessions'), isNull(workspaceRecords.archivedAt))).orderBy(desc(workspaceRecords.createdAt));
+  const remote = await wahaRequest<Array<Record<string, any>>>('/api/sessions');
+  const byName = new Map(remote.map((session) => [String(session.name || ''), session]));
+  return { data: owned.map((row) => {
+    const session = byName.get(wahaSessionName(row));
+    const number = String(session?.me?.id || '').split('@').at(0)?.split(':').at(0) || '';
+    return { id: row.id, label: row.data.label, status: String(session?.status || 'NOT_FOUND'), number, engine: session?.engine || 'NOWEB', createdAt: row.createdAt };
+  }) };
+});
+
+app.post('/api/integrations/waha/sessions', { preHandler: app.authenticate, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
+  const body = parseBody(z.object({ label: z.string().trim().min(2).max(80) }), request.body, reply); if (!body) return;
+  if (!env.WAHA_API_URL || !env.WAHA_API_KEY) return reply.code(503).send({ error: 'waha_not_configured', message: 'WAHA ainda não está configurada no servidor.' });
+  const slug = body.label.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 24) || 'whatsapp';
+  const sessionName = `org-${request.user.organizationId.replaceAll('-', '').slice(0, 8)}-${slug}-${randomUUID().slice(0, 8)}`;
+  try {
+    await wahaRequest('/api/sessions', { method: 'POST', body: JSON.stringify({ name: sessionName, start: false }) });
+    await wahaRequest(`/api/sessions/${encodeURIComponent(sessionName)}/start`, { method: 'POST', body: '{}' });
+    const [row] = await db.insert(workspaceRecords).values({ organizationId: request.user.organizationId, resource: 'whatsapp-sessions', data: { name: sessionName, label: body.label.trim() }, createdBy: request.user.sub }).returning();
+    if (!row) throw new Error('waha_session_record_not_created');
+    await db.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'whatsapp-session', entityId: row.id, action: 'created', payload: { label: body.label.trim() } });
+    return reply.code(201).send({ data: { id: row.id, label: body.label.trim(), status: 'SCAN_QR_CODE' } });
+  } catch (error) {
+    try { await wahaRequest(`/api/sessions/${encodeURIComponent(sessionName)}`, { method: 'DELETE' }); } catch { /* preserve the original failure */ }
+    const statusCode = Number((error as { statusCode?: number }).statusCode) || 502;
+    return reply.code(statusCode).send({ error: 'waha_session_create_failed', message: 'WAHA não conseguiu iniciar esta sessão. Verifique o serviço e tente novamente.' });
+  }
+});
+
+app.get('/api/integrations/waha/sessions/:id/qr', { preHandler: app.authenticate }, async (request, reply) => {
+  const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
+  if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Sessão inválida.' });
+  const row = await findOwnedWahaSession(request.user.organizationId, params.data.id);
+  if (!row) return reply.code(404).send({ error: 'not_found', message: 'Sessão não encontrada.' });
+  try {
+    const qr = await wahaRequest<{ mimetype?: string; data?: string }>(`/api/${encodeURIComponent(wahaSessionName(row))}/auth/qr?format=image`);
+    return { data: qr.data ? { mimetype: qr.mimetype || 'image/png', image: qr.data } : null };
+  } catch (error) {
+    if ((error as { statusCode?: number }).statusCode === 404) return { data: null };
+    throw error;
+  }
+});
+
+app.post('/api/integrations/waha/sessions/:id/:action', { preHandler: app.authenticate }, async (request, reply) => {
+  const params = z.object({ id: z.string().uuid(), action: z.enum(['start', 'stop', 'restart', 'logout']) }).safeParse(request.params);
+  if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Ação ou sessão inválida.' });
+  const row = await findOwnedWahaSession(request.user.organizationId, params.data.id);
+  if (!row) return reply.code(404).send({ error: 'not_found', message: 'Sessão não encontrada.' });
+  await wahaRequest(`/api/sessions/${encodeURIComponent(wahaSessionName(row))}/${params.data.action}`, { method: 'POST', body: '{}' });
+  return { data: { id: row.id, action: params.data.action, status: params.data.action === 'stop' ? 'STOPPED' : params.data.action === 'logout' ? 'SCAN_QR_CODE' : 'STARTING' } };
+});
+
+app.delete('/api/integrations/waha/sessions/:id', { preHandler: app.authenticate }, async (request, reply) => {
+  const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
+  if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Sessão inválida.' });
+  const row = await findOwnedWahaSession(request.user.organizationId, params.data.id);
+  if (!row) return reply.code(404).send({ error: 'not_found', message: 'Sessão não encontrada.' });
+  await wahaRequest(`/api/sessions/${encodeURIComponent(wahaSessionName(row))}`, { method: 'DELETE' }).catch((error) => { if ((error as { statusCode?: number }).statusCode !== 404) throw error; });
+  await db.update(workspaceRecords).set({ archivedAt: new Date(), updatedAt: new Date() }).where(eq(workspaceRecords.id, row.id));
+  await db.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'whatsapp-session', entityId: row.id, action: 'deleted', payload: { label: row.data.label } });
+  return reply.code(204).send();
+});
+
 app.get('/api/integrations/status', { preHandler: app.authenticate }, async () => ({ data: [
   { name: 'Mercado Pago', configured: Boolean(env.MERCADOPAGO_ACCESS_TOKEN) },
   { name: 'Evolution API', configured: Boolean(process.env.EVOLUTION_API_URL && process.env.EVOLUTION_API_KEY) },
-  { name: 'WAHA', configured: Boolean(process.env.WAHA_API_URL && process.env.WAHA_API_KEY) },
+  { name: 'WAHA', configured: Boolean(env.WAHA_API_URL && env.WAHA_API_KEY) },
   { name: 'Resend', configured: Boolean(process.env.RESEND_API_KEY) },
   { name: 'Google Workspace', configured: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) },
   { name: 'GitHub', configured: Boolean(process.env.GITHUB_TOKEN) },

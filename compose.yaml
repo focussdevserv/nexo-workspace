@@ -14,12 +14,16 @@ services:
       APP_ORIGIN: ${APP_ORIGIN:-https://focussdev.space}
       MERCADOPAGO_ACCESS_TOKEN: ${MERCADOPAGO_ACCESS_TOKEN:-}
       MERCADOPAGO_WEBHOOK_SECRET: ${MERCADOPAGO_WEBHOOK_SECRET:-}
+      WAHA_API_URL: http://waha:3000
+      WAHA_API_KEY: ${WAHA_API_KEY:?Configure WAHA_API_KEY in Coolify}
       TRUST_PROXY: "true"
     expose:
       - "3001"
     depends_on:
       postgres:
         condition: service_healthy
+      waha:
+        condition: service_started
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 20s
@@ -44,6 +48,20 @@ services:
       timeout: 5s
       retries: 5
 
+  waha:
+    image: devlikeapro/waha:noweb-2026.9.1
+    restart: unless-stopped
+    environment:
+      WAHA_API_KEY: ${WAHA_API_KEY:?Configure WAHA_API_KEY in Coolify}
+      WAHA_DASHBOARD_ENABLED: "false"
+      WHATSAPP_SWAGGER_ENABLED: "false"
+      WAHA_PRINT_QR: "false"
+      WHATSAPP_DEFAULT_ENGINE: NOWEB
+    expose:
+      - "3000"
+    volumes:
+      - waha_sessions:/app/.sessions
+
   postgres:
     image: postgres:17-alpine
     restart: unless-stopped
@@ -63,3 +81,4 @@ services:
 
 volumes:
   nexo_postgres:
+  waha_sessions:

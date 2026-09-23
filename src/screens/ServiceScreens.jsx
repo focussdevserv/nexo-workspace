@@ -352,6 +352,60 @@ function Integrations({ notify }) {
     <div className="ns-info-note"><ShieldCheck size={17} /><span>Este status confirma somente a presen?a das credenciais no servidor. Uma conex?o s? ser? considerada ativa quando o teste real do provedor estiver implementado.</span></div>
   </>;
 }
+
+function WahaSessions({ notify }) {
+  const [sessions, setSessions] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [newOpen, setNewOpen] = useState(false);
+  const [label, setLabel] = useState('');
+  const [selected, setSelected] = useState(null);
+  const [qr, setQr] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const refresh = async () => {
+    try { const result = await apiRequest('/api/integrations/waha/sessions'); setSessions(result.data || []); setError(''); }
+    catch (err) { setError(err.message || 'Não foi possível carregar as sessões WAHA.'); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { refresh(); const timer = window.setInterval(refresh, 5000); return () => window.clearInterval(timer); }, []);
+  const loadQr = async (id) => {
+    try { const result = await apiRequest(`/api/integrations/waha/sessions/${id}/qr`); setQr(result.data?.image ? `data:${result.data.mimetype};base64,${result.data.image}` : ''); }
+    catch (err) { setQr(''); setError(err.message || 'Não foi possível gerar o QR Code.'); }
+  };
+  useEffect(() => {
+    if (!selected) return undefined;
+    loadQr(selected);
+    const timer = window.setInterval(() => loadQr(selected), 12000);
+    return () => window.clearInterval(timer);
+  }, [selected]);
+  const createSession = async (event) => {
+    event.preventDefault(); if (!label.trim()) return;
+    setBusy(true);
+    try { const result = await apiRequest('/api/integrations/waha/sessions', { method: 'POST', body: JSON.stringify({ label: label.trim() }) }); setSessions((items) => [result.data, ...items]); setSelected(result.data.id); setQr(''); setNewOpen(false); setLabel(''); notify('Sessão criada. Escaneie o QR Code pelo WhatsApp do celular.'); }
+    catch (err) { setError(err.message || 'Não foi possível criar a sessão WAHA.'); }
+    finally { setBusy(false); }
+  };
+  const perform = async (item, action) => {
+    if (action === 'delete' && !window.confirm(`Apagar a conexão “${item.label}”? Isso desconecta o WhatsApp e remove esta sessão do servidor.`)) return;
+    if (action === 'logout' && !window.confirm(`Desconectar “${item.label}”? Será necessário ler um novo QR Code para conectar novamente.`)) return;
+    setBusy(true); setError('');
+    try {
+      if (action === 'delete') { await apiRequest(`/api/integrations/waha/sessions/${item.id}`, { method: 'DELETE' }); setSessions((rows) => rows.filter((row) => row.id !== item.id)); if (selected === item.id) { setSelected(null); setQr(''); } notify('Sessão apagada.'); }
+      else { await apiRequest(`/api/integrations/waha/sessions/${item.id}/${action}`, { method: 'POST', body: '{}' }); if (['start', 'restart', 'logout'].includes(action)) { setSelected(item.id); setQr(''); } await refresh(); notify(action === 'stop' ? 'Sessão pausada; o vínculo do celular foi preservado.' : action === 'logout' ? 'WhatsApp desconectado. Leia o novo QR para vincular novamente.' : 'Sessão WAHA atualizada.'); }
+    } catch (err) { setError(err.message || 'A WAHA não concluiu esta ação.'); }
+    finally { setBusy(false); }
+  };
+  const statusLabel = (status) => ({ WORKING: 'Conectado', SCAN_QR_CODE: 'Aguardando QR Code', STARTING: 'Iniciando', STOPPED: 'Pausado', FAILED: 'Falhou', NOT_FOUND: 'Sessão não encontrada' }[status] || status || 'Status desconhecido');
+  const connected = sessions.filter((item) => item.status === 'WORKING').length;
+  return <>
+    <div className="ns-metrics ns-metrics-three"><Metric label="Números cadastrados" value={String(sessions.length)} note="Sessões neste workspace" icon={Smartphone} /><Metric label="Conectados" value={String(connected)} note="WhatsApp pronto para uso" icon={MessageCircle} /><Metric label="Precisam de ação" value={String(sessions.filter((item) => item.status !== 'WORKING').length)} note="QR, pausa ou reconexão" icon={AlertCircle} /></div>
+    <div className="ns-section-heading"><div><h2>Conexões WhatsApp</h2><p>Adicione vários números, conecte pelo QR e controle cada sessão.</p></div><button className="ns-primary" type="button" onClick={() => setNewOpen(true)}><Plus size={15} />Adicionar número</button></div>
+    {error && <div className="dashboard-data-error" role="alert">{error}<button type="button" onClick={() => setError('')} aria-label="Fechar">×</button></div>}
+    {loading ? <div className="ns-empty-history">Carregando sessões do servidor…</div> : sessions.length === 0 ? <div className="ns-empty-history">Nenhum número conectado. Adicione um para gerar o primeiro QR Code.</div> : <div className="ns-integration-grid">{sessions.map((item) => <article className="ns-integration-card" key={item.id}><div className="ns-integration-top"><span className="ns-integration-logo whatsapp"><Smartphone size={20} /></span><span className={`ns-connection-badge ${item.status === 'WORKING' ? 'configured' : ''}`}><i />{statusLabel(item.status)}</span></div><h3>{item.label}</h3><p>{item.number || 'Número aparecerá depois da leitura do QR Code'} · {item.engine}</p><div className="ns-integration-actions">{item.status !== 'WORKING' && <button type="button" disabled={busy} onClick={() => { setSelected(item.id); if (item.status === 'STOPPED' || item.status === 'NOT_FOUND') perform(item, 'start'); }}><Smartphone size={14} />{selected === item.id && qr ? 'QR Code aberto' : 'Conectar / QR Code'}</button>}{item.status === 'WORKING' ? <button type="button" disabled={busy} onClick={() => perform(item, 'stop')}>Pausar</button> : item.status === 'STOPPED' && <button type="button" disabled={busy} onClick={() => perform(item, 'start')}>Retomar</button>}{item.status === 'WORKING' && <button type="button" disabled={busy} onClick={() => perform(item, 'logout')}>Desconectar</button>}<button type="button" className="ns-link-button danger" disabled={busy} onClick={() => perform(item, 'delete')}><Trash2 size={14} />Apagar</button></div>{selected === item.id && item.status !== 'WORKING' && <div className="ns-waha-qr">{qr ? <img src={qr} alt={`QR Code de conexão para ${item.label}`} /> : <span>Aguardando QR Code… ele se atualiza enquanto esta janela estiver aberta.</span>}<small>WhatsApp no celular → Dispositivos conectados → Conectar dispositivo</small></div>}</article>)}</div>}
+    <div className="ns-info-note"><ShieldCheck size={17} /><span>“Pausar” mantém o vínculo salvo. “Desconectar” encerra o vínculo do WhatsApp e pede nova leitura do QR. “Apagar” remove a sessão e seus dados no WAHA.</span></div>
+    {newOpen && <div className="ns-integration-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setNewOpen(false); }}><form className="ns-integration-modal" onSubmit={createSession}><header><span className="ns-integration-logo whatsapp"><Smartphone size={18} /></span><div><h2>Adicionar número WhatsApp</h2><p>Cria uma sessão independente para este número.</p></div><button type="button" aria-label="Fechar" onClick={() => setNewOpen(false)}><X size={17} /></button></header><div className="ns-integration-fields"><label>Nome para identificar o número<input autoFocus required minLength="2" maxLength="80" value={label} onChange={(event) => setLabel(event.target.value)} placeholder="Ex.: Comercial FocussDev" /></label></div><div className="ns-integration-modal-note"><ShieldCheck size={15} />Após criar, o QR Code será gerado aqui. Cada número usa uma sessão WAHA independente.</div><footer><button type="button" className="ns-secondary" onClick={() => setNewOpen(false)}>Cancelar</button><button type="submit" className="ns-primary" disabled={busy}><Plus size={14} />{busy ? 'Criando…' : 'Criar e gerar QR'}</button></footer></form></div>}
+  </>;
+}
 function Automations({ notify }) {
   const { records: items, create, update, remove: deleteRecord } = useWorkspaceRecords('automations');
   const [form, setForm] = useState(false);
@@ -398,7 +452,8 @@ export function ServiceScreen({ page }) {
   else if (['receitas', 'despesas'].includes(currentPage)) activeContent = <FinanceList page={currentPage} notify={notify} />;
   else if (currentPage === 'contas') activeContent = <Accounts notify={notify} />;
   else if (currentPage === 'assinaturas') activeContent = <PaymentConsole kind="subscriptions" notify={notify} />;
-  else if (currentPage === 'caixa_entrada' || currentPage === 'whatsapp') activeContent = <Inbox notify={notify} forceWhatsapp={currentPage === 'whatsapp'} />;
+  else if (currentPage === 'caixa_entrada') activeContent = <Inbox notify={notify} />;
+  else if (currentPage === 'whatsapp') activeContent = <WahaSessions notify={notify} />;
   else if (currentPage === 'tickets') activeContent = <Tickets notify={notify} />;
   else if (['sites', 'dominios', 'hospedagens', 'monitoramento'].includes(currentPage)) activeContent = <Sites page={currentPage} notify={notify} />;
   else if (currentPage === 'integracoes') activeContent = <Integrations notify={notify} />;
