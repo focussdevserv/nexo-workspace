@@ -1,0 +1,12 @@
+node_modules/
+dist/
+api/node_modules/
+api/dist/
+api/.env
+.env
+.env.*
+!.env.example
+!api/.env.example
+*.log
+.playwright-cli/
+.playwright-mcp/

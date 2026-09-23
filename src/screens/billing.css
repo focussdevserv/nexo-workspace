@@ -1,0 +1,24 @@
+.ns-billing-panel{overflow:hidden}
+.ns-billing-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 15px;border-bottom:1px solid var(--ns-line)}
+.ns-billing-toolbar .ns-filter-tabs{display:flex;gap:3px;flex-wrap:wrap}
+.ns-billing-toolbar .ns-filter-tabs button{padding:7px 9px;border:0;border-radius:7px;background:transparent;color:#788393;font-size:10px}
+.ns-billing-toolbar .ns-filter-tabs button.selected{background:#edf2f8;color:#263b58;font-weight:650}
+.ns-billing-toolbar .ns-search{width:min(260px,38vw)}
+.ns-billing-table td{vertical-align:middle}
+.ns-billing-description{display:block;margin-top:4px;color:#919aa7;font-size:9px}
+.ns-billing-actions{display:flex;align-items:center;justify-content:flex-end;gap:3px;white-space:nowrap}
+.ns-billing-actions .ns-icon-button{width:29px;height:29px}
+.ns-billing-actions .ns-icon-button:disabled{opacity:.38;cursor:not-allowed}
+.ns-table-footer>span:last-child{color:#929baa;font-size:9px}
+.ns-billing-bottom{display:grid;grid-template-columns:minmax(250px,.8fr) minmax(350px,1.2fr);gap:14px;margin-top:16px;align-items:start}
+.ns-billing-bottom>.ns-info-note{margin:0}
+.ns-billing-activity{padding:15px}
+.ns-billing-activity .ns-panel-title{margin-bottom:8px}
+.ns-billing-activity-row{display:flex;align-items:center;gap:9px;padding:10px 0;border-top:1px solid #f0f2f4;color:#348454;font-size:10px}
+.ns-billing-activity-row>span{flex:1;color:#3d4654}
+.ns-billing-activity-row small{display:block;margin-top:3px;color:#9099a6;font-size:9px}
+.ns-billing-activity-row time{color:#9099a6;font-size:9px}
+.ns-billing-activity .ns-empty-history{padding:4px 0 0}
+.ns-billing-modal .ns-integration-fields{grid-template-columns:1fr 1fr}
+@media(max-width:850px){.ns-billing-toolbar{align-items:stretch;flex-direction:column}.ns-billing-toolbar .ns-search{width:100%}.ns-billing-bottom{grid-template-columns:1fr}.ns-billing-table{min-width:850px}}
+@media(max-width:540px){.ns-billing-modal .ns-integration-fields{grid-template-columns:1fr}.ns-billing-actions{justify-content:flex-start}}
