@@ -12,6 +12,8 @@ services:
       JWT_SECRET: ${JWT_SECRET:?Defina JWT_SECRET no Coolify}
       BOOTSTRAP_TOKEN: ${BOOTSTRAP_TOKEN:?Defina BOOTSTRAP_TOKEN no Coolify}
       APP_ORIGIN: ${APP_ORIGIN:-https://focussdev.space}
+      MERCADOPAGO_ACCESS_TOKEN: ${MERCADOPAGO_ACCESS_TOKEN:-}
+      MERCADOPAGO_WEBHOOK_SECRET: ${MERCADOPAGO_WEBHOOK_SECRET:-}
       TRUST_PROXY: "true"
     expose:
       - "3001"
@@ -28,6 +30,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        VITE_MERCADOPAGO_PUBLIC_KEY: ${VITE_MERCADOPAGO_PUBLIC_KEY:-}
     restart: unless-stopped
     expose:
       - "80"

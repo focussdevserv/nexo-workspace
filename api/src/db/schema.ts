@@ -1,5 +1,5 @@
 import { relations } from 'drizzle-orm';
-import { boolean, index, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import { boolean, index, jsonb, numeric, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 
 export const organizations = pgTable('organizations', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -46,6 +46,51 @@ export const activityEvents = pgTable('activity_events', {
   payload: jsonb('payload').$type<Record<string, unknown>>().default({}).notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [index('activity_org_created_idx').on(table.organizationId, table.createdAt)]);
+
+export const billingOrders = pgTable('billing_orders', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  organizationId: uuid('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
+  clientId: uuid('client_id').references(() => clients.id, { onDelete: 'set null' }),
+  createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+  clientName: text('client_name').notNull(),
+  payerEmail: text('payer_email').notNull(),
+  description: text('description').notNull(),
+  amount: numeric('amount', { precision: 12, scale: 2, mode: 'number' }).notNull(),
+  method: text('method').notNull(),
+  status: text('status').default('pending').notNull(),
+  statusDetail: text('status_detail'),
+  mpOrderId: text('mp_order_id'),
+  mpPaymentId: text('mp_payment_id'),
+  paymentDetails: jsonb('payment_details').$type<Record<string, unknown>>().default({}).notNull(),
+  dueAt: timestamp('due_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index('billing_orders_org_created_idx').on(table.organizationId, table.createdAt),
+  uniqueIndex('billing_orders_mp_order_unique').on(table.mpOrderId),
+]);
+
+export const billingSubscriptions = pgTable('billing_subscriptions', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  organizationId: uuid('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
+  clientId: uuid('client_id').references(() => clients.id, { onDelete: 'set null' }),
+  createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+  clientName: text('client_name').notNull(),
+  payerEmail: text('payer_email').notNull(),
+  description: text('description').notNull(),
+  amount: numeric('amount', { precision: 12, scale: 2, mode: 'number' }).notNull(),
+  frequency: text('frequency').notNull(),
+  frequencyInterval: numeric('frequency_interval', { precision: 6, scale: 0, mode: 'number' }).notNull(),
+  status: text('status').default('pending').notNull(),
+  mpSubscriptionId: text('mp_subscription_id'),
+  checkoutUrl: text('checkout_url'),
+  nextPaymentAt: timestamp('next_payment_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index('billing_subscriptions_org_created_idx').on(table.organizationId, table.createdAt),
+  uniqueIndex('billing_subscriptions_mp_id_unique').on(table.mpSubscriptionId),
+]);
 
 export const organizationsRelations = relations(organizations, ({ many }) => ({ users: many(users), clients: many(clients) }));
 export const usersRelations = relations(users, ({ one }) => ({ organization: one(organizations, { fields: [users.organizationId], references: [organizations.id] }) }));

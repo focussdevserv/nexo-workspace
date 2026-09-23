@@ -12,6 +12,7 @@ import './integrations.css';
 import './automations.css';
 import './subscriptions.css';
 import './billing.css';
+import { PaymentConsole } from './PaymentScreens.jsx';
 
 function useStoredArray(key, fallback) {
   const [value, setValue] = useState(() => { try { const saved = JSON.parse(localStorage.getItem(key) || 'null'); return Array.isArray(saved) ? saved : fallback; } catch { return fallback; } });
@@ -433,10 +434,10 @@ export function ServiceScreen({ page }) {
   const headerAction = () => { if (currentPage === 'financeiro') navigateTo('Receitas'); };
   let activeContent;
   if (currentPage === 'financeiro') activeContent = <FinanceOverview notify={notify} />;
-  else if (currentPage === 'cobrancas') activeContent = <BillingScreen notify={notify} />;
+  else if (currentPage === 'cobrancas') activeContent = <PaymentConsole kind="orders" notify={notify} />;
   else if (['receitas', 'despesas'].includes(currentPage)) activeContent = <FinanceList page={currentPage} notify={notify} />;
   else if (currentPage === 'contas') activeContent = <Accounts notify={notify} />;
-  else if (currentPage === 'assinaturas') activeContent = <Subscriptions notify={notify} />;
+  else if (currentPage === 'assinaturas') activeContent = <PaymentConsole kind="subscriptions" notify={notify} />;
   else if (currentPage === 'caixa_entrada' || currentPage === 'whatsapp') activeContent = <Inbox notify={notify} forceWhatsapp={currentPage === 'whatsapp'} />;
   else if (currentPage === 'tickets') activeContent = <Tickets notify={notify} />;
   else if (['sites', 'dominios', 'hospedagens', 'monitoramento'].includes(currentPage)) activeContent = <Sites page={currentPage} notify={notify} />;

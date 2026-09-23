@@ -8,10 +8,10 @@ import argon2 from 'argon2';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { resolve } from 'node:path';
 import { and, asc, desc, eq, ilike, or, sql } from 'drizzle-orm';
-import { timingSafeEqual } from 'node:crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { db, pool } from './db/index.js';
-import { activityEvents, clients, organizations, users } from './db/schema.js';
+import { activityEvents, billingOrders, billingSubscriptions, clients, organizations, users } from './db/schema.js';
 
 const env = z.object({
   PORT: z.coerce.number().int().positive().default(3001),
@@ -19,6 +19,8 @@ const env = z.object({
   JWT_SECRET: z.string().min(32),
   APP_ORIGIN: z.string().default('http://localhost:5173'),
   BOOTSTRAP_TOKEN: z.string().default(''),
+  MERCADOPAGO_ACCESS_TOKEN: z.string().optional(),
+  MERCADOPAGO_WEBHOOK_SECRET: z.string().optional(),
 }).parse(process.env);
 
 const app = Fastify({ logger: true, bodyLimit: 1024 * 1024, trustProxy: process.env.TRUST_PROXY === 'true' });
@@ -51,11 +53,95 @@ const clientSchema = z.object({
   notes: z.string().trim().max(5000).nullish(),
   tags: z.array(z.string().trim().min(1).max(40)).max(30).optional(),
 });
+const paymentOrderSchema = z.object({
+  clientId: z.string().uuid().optional(),
+  clientName: z.string().trim().min(2).max(180),
+  payerEmail: z.string().trim().email().max(254).transform((value) => value.toLowerCase()),
+  description: z.string().trim().min(2).max(250),
+  amount: z.coerce.number().positive().max(1000000),
+  method: z.enum(['pix', 'boleto', 'credit_card', 'debit_card']),
+  identificationType: z.string().trim().max(10).optional(),
+  identificationNumber: z.string().trim().max(30).optional(),
+  cardToken: z.string().trim().min(8).max(300).optional(),
+  paymentMethodId: z.string().trim().max(40).optional(),
+  installments: z.coerce.number().int().min(1).max(24).default(1),
+  address: z.object({
+    zipCode: z.string().trim().min(5).max(12), streetName: z.string().trim().min(2).max(120),
+    streetNumber: z.string().trim().min(1).max(20), neighborhood: z.string().trim().min(2).max(100),
+    city: z.string().trim().min(2).max(100), state: z.string().trim().length(2),
+  }).optional(),
+}).superRefine((value, ctx) => {
+  if (['credit_card', 'debit_card'].includes(value.method) && (!value.cardToken || !value.paymentMethodId)) ctx.addIssue({ code: 'custom', path: ['cardToken'], message: 'Dados seguros do cartão não foram enviados.' });
+  if (value.method === 'boleto' && !value.address) ctx.addIssue({ code: 'custom', path: ['address'], message: 'Endereço completo é obrigatório para emitir boleto.' });
+  if (['credit_card', 'debit_card', 'boleto'].includes(value.method) && (!value.identificationType || !value.identificationNumber)) ctx.addIssue({ code: 'custom', path: ['identificationNumber'], message: 'CPF ou CNPJ do pagador é obrigatório.' });
+});
+const subscriptionSchema = z.object({
+  clientId: z.string().uuid().optional(), clientName: z.string().trim().min(2).max(180),
+  payerEmail: z.string().trim().email().max(254).transform((value) => value.toLowerCase()),
+  description: z.string().trim().min(2).max(250), amount: z.coerce.number().positive().max(1000000),
+  frequency: z.enum(['days', 'months']).default('months'),
+  frequencyInterval: z.coerce.number().int().min(1).max(24).default(1),
+  startAt: z.string().datetime().optional(), endAt: z.string().datetime().optional(),
+});
 
 function parseBody<T>(schema: z.ZodType<T>, body: unknown, reply: FastifyReply): T | undefined {
   const parsed = schema.safeParse(body);
   if (!parsed.success) { reply.code(400).send({ error: 'validation_error', message: 'Confira os campos enviados.', details: parsed.error.flatten().fieldErrors }); return undefined; }
   return parsed.data;
+}
+
+async function mercadoPago<T = Record<string, unknown>>(path: string, init: RequestInit = {}): Promise<T> {
+  if (!env.MERCADOPAGO_ACCESS_TOKEN) throw new Error('mercadopago_not_configured');
+  const response = await fetch(`https://api.mercadopago.com${path}`, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${env.MERCADOPAGO_ACCESS_TOKEN}`,
+      'Content-Type': 'application/json',
+      ...(init.headers ?? {}),
+    },
+  });
+  const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+  if (!response.ok) {
+    app.log.error({ statusCode: response.status, providerError: payload.error ?? payload.message ?? 'unknown' }, 'Mercado Pago request failed');
+    throw Object.assign(new Error('mercadopago_request_failed'), { statusCode: response.status });
+  }
+  return payload as T;
+}
+
+function paymentDetailsFromOrder(order: Record<string, any>) {
+  const payment = order.transactions?.payments?.[0] ?? {};
+  const method = payment.payment_method ?? {};
+  return {
+    orderId: String(order.id ?? ''),
+    status: String(order.status ?? payment.status ?? 'pending'),
+    statusDetail: String(order.status_detail ?? payment.status_detail ?? ''),
+    paymentId: payment.id ? String(payment.id) : null,
+    paymentMethod: String(method.id ?? ''),
+    ticketUrl: method.ticket_url ? String(method.ticket_url) : null,
+    barcode: method.barcode_content ? String(method.barcode_content) : null,
+    digitableLine: method.digitable_line ? String(method.digitable_line) : null,
+    pixCode: method.qr_code ? String(method.qr_code) : null,
+    pixQrCodeBase64: method.qr_code_base64 ? String(method.qr_code_base64) : null,
+    expirationAt: method.expiration_date ? String(method.expiration_date) : null,
+  };
+}
+
+function validMercadoPagoSignature(signature: string | undefined, requestId: string | undefined, dataId: string | undefined) {
+  if (!signature || !env.MERCADOPAGO_WEBHOOK_SECRET) return false;
+  const parts = Object.fromEntries(signature.split(',').map((part) => part.trim().split('=', 2) as [string, string]));
+  if (!parts.ts || !parts.v1) return false;
+  const manifest = `${dataId ? `id:${dataId.toLowerCase()};` : ''}${requestId ? `request-id:${requestId};` : ''}ts:${parts.ts};`;
+  const expected = createHmac('sha256', env.MERCADOPAGO_WEBHOOK_SECRET).update(manifest).digest();
+  let received: Buffer;
+  try { received = Buffer.from(parts.v1, 'hex'); } catch { return false; }
+  return expected.length === received.length && timingSafeEqual(expected, received);
+}
+
+function providerStatus(status: string) {
+  if (['processed', 'authorized'].includes(status)) return 'paid';
+  if (['cancelled', 'canceled', 'rejected', 'expired', 'refunded'].includes(status)) return status === 'refunded' ? 'refunded' : 'cancelled';
+  if (status === 'in_process') return 'processing';
+  return 'pending';
 }
 
 app.get('/api/health', async (_request, reply) => {
@@ -99,6 +185,152 @@ app.get('/api/auth/me', { preHandler: app.authenticate }, async (request, reply)
   if (!user) return reply.code(401).send({ error: 'unauthorized', message: 'Conta indisponível.' });
   const [organization] = await db.select({ id: organizations.id, name: organizations.name }).from(organizations).where(eq(organizations.id, user.organizationId)).limit(1);
   return { user, organization };
+});
+
+app.get('/api/billing/payment-methods', { preHandler: app.authenticate }, async (_request, reply) => {
+  try {
+    const methods = await mercadoPago<Array<Record<string, unknown>>>('/v1/payment_methods');
+    return { data: methods.filter((method) => method.status === 'active').map((method) => ({ id: method.id, name: method.name, paymentType: method.payment_type_id, thumbnail: method.secure_thumbnail ?? method.thumbnail })) };
+  } catch (error) {
+    if (error instanceof Error && error.message === 'mercadopago_not_configured') return reply.code(503).send({ error: 'payment_provider_unavailable', message: 'Mercado Pago ainda não está configurado no servidor.' });
+    return reply.code(502).send({ error: 'payment_methods_unavailable', message: 'Não foi possível consultar os meios de pagamento da conta.' });
+  }
+});
+
+app.get('/api/billing/orders', { preHandler: app.authenticate }, async (request) => {
+  const rows = await db.select().from(billingOrders).where(eq(billingOrders.organizationId, request.user.organizationId)).orderBy(desc(billingOrders.createdAt)).limit(100);
+  return { data: rows };
+});
+
+app.post('/api/billing/orders', { preHandler: app.authenticate, config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {
+  const body = parseBody(paymentOrderSchema, request.body, reply); if (!body) return;
+  if (!env.MERCADOPAGO_ACCESS_TOKEN) return reply.code(503).send({ error: 'payment_provider_unavailable', message: 'Mercado Pago ainda não está configurado no servidor.' });
+  if (body.clientId) {
+    const [client] = await db.select({ id: clients.id }).from(clients).where(and(eq(clients.id, body.clientId), eq(clients.organizationId, request.user.organizationId))).limit(1);
+    if (!client) return reply.code(404).send({ error: 'client_not_found', message: 'Cliente não encontrado nesta empresa.' });
+  }
+  const [invoice] = await db.insert(billingOrders).values({
+    organizationId: request.user.organizationId, clientId: body.clientId, createdBy: request.user.sub,
+    clientName: body.clientName, payerEmail: body.payerEmail, description: body.description,
+    amount: body.amount, method: body.method, status: 'creating',
+  }).returning();
+  const paymentType = body.method === 'pix' ? 'bank_transfer' : body.method === 'boleto' ? 'ticket' : body.method;
+  const paymentMethod: Record<string, unknown> = body.method === 'pix'
+    ? { id: 'pix', type: paymentType }
+    : body.method === 'boleto'
+      ? { id: 'boleto', type: paymentType }
+      : { id: body.paymentMethodId, type: paymentType, token: body.cardToken, installments: body.installments };
+  const payer: Record<string, unknown> = { email: body.payerEmail, first_name: body.clientName };
+  if (body.identificationType && body.identificationNumber) payer.identification = { type: body.identificationType, number: body.identificationNumber.replace(/\D/g, '') };
+  if (body.address) payer.address = { zip_code: body.address.zipCode, street_name: body.address.streetName, street_number: body.address.streetNumber, neighborhood: body.address.neighborhood, city: body.address.city, state: body.address.state.toUpperCase() };
+  try {
+    const order = await mercadoPago<Record<string, any>>('/v1/orders', {
+      method: 'POST', headers: { 'X-Idempotency-Key': randomUUID() },
+      body: JSON.stringify({
+        type: 'online', external_reference: invoice!.id, processing_mode: 'automatic',
+        total_amount: body.amount.toFixed(2), description: body.description, payer,
+        transactions: { payments: [{ amount: body.amount.toFixed(2), payment_method: paymentMethod, ...(body.method === 'pix' ? { expiration_time: 'PT24H' } : {}), ...(body.method === 'boleto' ? { expiration_time: 'P5D' } : {}) }] },
+      }),
+    });
+    const details = paymentDetailsFromOrder(order);
+    const [saved] = await db.update(billingOrders).set({
+      mpOrderId: details.orderId, mpPaymentId: details.paymentId, status: providerStatus(details.status), statusDetail: details.statusDetail,
+      paymentDetails: details as Record<string, unknown>, dueAt: details.expirationAt ? new Date(details.expirationAt) : null, updatedAt: new Date(),
+    }).where(eq(billingOrders.id, invoice!.id)).returning();
+    await db.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'billing_order', entityId: invoice!.id, action: 'created', payload: { method: body.method, amount: body.amount } });
+    return reply.code(201).send({ data: saved });
+  } catch (error) {
+    await db.update(billingOrders).set({ status: 'failed', updatedAt: new Date() }).where(eq(billingOrders.id, invoice!.id));
+    if (error instanceof Error && error.message === 'mercadopago_not_configured') return reply.code(503).send({ error: 'payment_provider_unavailable', message: 'Mercado Pago ainda não está configurado no servidor.' });
+    return reply.code(502).send({ error: 'payment_creation_failed', message: 'O Mercado Pago não conseguiu criar esta cobrança. Confira os dados e tente novamente.' });
+  }
+});
+
+app.get('/api/billing/subscriptions', { preHandler: app.authenticate }, async (request) => {
+  const rows = await db.select().from(billingSubscriptions).where(eq(billingSubscriptions.organizationId, request.user.organizationId)).orderBy(desc(billingSubscriptions.createdAt)).limit(100);
+  return { data: rows };
+});
+
+app.post('/api/billing/subscriptions', { preHandler: app.authenticate, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
+  const body = parseBody(subscriptionSchema, request.body, reply); if (!body) return;
+  if (!env.MERCADOPAGO_ACCESS_TOKEN) return reply.code(503).send({ error: 'payment_provider_unavailable', message: 'Mercado Pago ainda não está configurado no servidor.' });
+  if (body.clientId) {
+    const [client] = await db.select({ id: clients.id }).from(clients).where(and(eq(clients.id, body.clientId), eq(clients.organizationId, request.user.organizationId))).limit(1);
+    if (!client) return reply.code(404).send({ error: 'client_not_found', message: 'Cliente não encontrado nesta empresa.' });
+  }
+  const [subscription] = await db.insert(billingSubscriptions).values({
+    organizationId: request.user.organizationId, clientId: body.clientId, createdBy: request.user.sub,
+    clientName: body.clientName, payerEmail: body.payerEmail, description: body.description,
+    amount: body.amount, frequency: body.frequency, frequencyInterval: body.frequencyInterval, status: 'creating',
+  }).returning();
+  try {
+    const result = await mercadoPago<Record<string, any>>('/preapproval', {
+      method: 'POST', headers: { 'X-Idempotency-Key': randomUUID() },
+      body: JSON.stringify({
+        reason: body.description, external_reference: subscription!.id, payer_email: body.payerEmail,
+        auto_recurring: {
+          frequency: body.frequencyInterval, frequency_type: body.frequency,
+          transaction_amount: body.amount, currency_id: 'BRL',
+          ...(body.startAt ? { start_date: body.startAt } : {}), ...(body.endAt ? { end_date: body.endAt } : {}),
+        },
+        back_url: `${env.APP_ORIGIN.split(',')[0]!.trim()}/financeiro`, status: 'pending',
+      }),
+    });
+    const [saved] = await db.update(billingSubscriptions).set({
+      mpSubscriptionId: String(result.id), checkoutUrl: result.init_point ? String(result.init_point) : null,
+      status: String(result.status ?? 'pending'), nextPaymentAt: result.next_payment_date ? new Date(String(result.next_payment_date)) : null,
+      updatedAt: new Date(),
+    }).where(eq(billingSubscriptions.id, subscription!.id)).returning();
+    await db.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'billing_subscription', entityId: subscription!.id, action: 'created', payload: { frequency: body.frequency, frequencyInterval: body.frequencyInterval, amount: body.amount } });
+    return reply.code(201).send({ data: saved });
+  } catch {
+    await db.update(billingSubscriptions).set({ status: 'failed', updatedAt: new Date() }).where(eq(billingSubscriptions.id, subscription!.id));
+    return reply.code(502).send({ error: 'subscription_creation_failed', message: 'Não foi possível iniciar a assinatura no Mercado Pago.' });
+  }
+});
+
+app.patch('/api/billing/subscriptions/:id/status', { preHandler: app.authenticate }, async (request, reply) => {
+  const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
+  if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Identificador de assinatura inválido.' });
+  const body = parseBody(z.object({ status: z.enum(['authorized', 'paused', 'canceled']) }), request.body, reply); if (!body) return;
+  const [subscription] = await db.select().from(billingSubscriptions).where(and(eq(billingSubscriptions.id, params.data.id), eq(billingSubscriptions.organizationId, request.user.organizationId))).limit(1);
+  if (!subscription) return reply.code(404).send({ error: 'not_found', message: 'Assinatura não encontrada.' });
+  if (!subscription.mpSubscriptionId) return reply.code(409).send({ error: 'subscription_not_started', message: 'A assinatura ainda não foi criada no Mercado Pago.' });
+  try {
+    await mercadoPago(`/preapproval/${encodeURIComponent(subscription.mpSubscriptionId)}`, { method: 'PUT', body: JSON.stringify({ status: body.status }) });
+    const [saved] = await db.update(billingSubscriptions).set({ status: body.status, updatedAt: new Date() }).where(eq(billingSubscriptions.id, subscription.id)).returning();
+    return { data: saved };
+  } catch { return reply.code(502).send({ error: 'subscription_status_update_failed', message: 'Não foi possível atualizar a assinatura no Mercado Pago.' }); }
+});
+
+app.post('/api/integrations/mercadopago/webhook', async (request, reply) => {
+  const query = z.object({ 'data.id': z.string().optional(), type: z.string().optional(), topic: z.string().optional() }).safeParse(request.query);
+  const body = z.object({ type: z.string().optional(), data: z.object({ id: z.union([z.string(), z.number()]).optional() }).optional() }).safeParse(request.body);
+  const dataId = query.success ? query.data['data.id'] : undefined;
+  if (!env.MERCADOPAGO_WEBHOOK_SECRET) return reply.code(503).send({ error: 'webhook_secret_missing' });
+  const signatureHeader = request.headers['x-signature'];
+  const requestIdHeader = request.headers['x-request-id'];
+  if (!validMercadoPagoSignature(Array.isArray(signatureHeader) ? signatureHeader[0] : signatureHeader, Array.isArray(requestIdHeader) ? requestIdHeader[0] : requestIdHeader, dataId)) return reply.code(401).send({ error: 'invalid_signature' });
+  const resourceId = dataId ?? (body.success && body.data.data?.id !== undefined ? String(body.data.data.id) : undefined);
+  const topic = (query.success && (query.data.type ?? query.data.topic)) ?? (body.success ? body.data.type : undefined);
+  if (!resourceId || !env.MERCADOPAGO_ACCESS_TOKEN) return reply.code(200).send({ received: true });
+  try {
+    if (topic === 'order' || topic === 'merchant_order') {
+      const order = await mercadoPago<Record<string, any>>(`/v1/orders/${encodeURIComponent(resourceId)}`);
+      const externalReference = String(order.external_reference ?? '');
+      const details = paymentDetailsFromOrder(order);
+      const [local] = await db.select({ id: billingOrders.id, organizationId: billingOrders.organizationId }).from(billingOrders).where(eq(billingOrders.id, externalReference)).limit(1);
+      if (local) {
+        await db.update(billingOrders).set({ status: providerStatus(details.status), statusDetail: details.statusDetail, mpPaymentId: details.paymentId, paymentDetails: details as Record<string, unknown>, updatedAt: new Date() }).where(eq(billingOrders.id, local.id));
+        await db.insert(activityEvents).values({ organizationId: local.organizationId, entityType: 'billing_order', entityId: local.id, action: 'provider_updated', payload: { status: providerStatus(details.status) } });
+      }
+    } else if (topic === 'subscription_preapproval') {
+      const remote = await mercadoPago<Record<string, any>>(`/preapproval/${encodeURIComponent(resourceId)}`);
+      const externalReference = String(remote.external_reference ?? '');
+      await db.update(billingSubscriptions).set({ status: String(remote.status ?? 'pending'), nextPaymentAt: remote.next_payment_date ? new Date(String(remote.next_payment_date)) : null, updatedAt: new Date() }).where(eq(billingSubscriptions.id, externalReference));
+    }
+    return reply.code(200).send({ received: true });
+  } catch { return reply.code(500).send({ error: 'webhook_processing_failed' }); }
 });
 
 app.get('/api/clients', { preHandler: app.authenticate }, async (request, reply) => {
