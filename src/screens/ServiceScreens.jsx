@@ -245,23 +245,38 @@ function BillingScreen({ notify }) {
 }
 
 function FinanceList({ page, notify }) {
-  const titles = { receitas: ['Lançamento', 'Cliente / descrição', 'Vencimento', 'Valor', 'Status'], despesas: ['Lançamento', 'Fornecedor / categoria', 'Vencimento', 'Valor', 'Status'], cobrancas: ['Cobrança', 'Cliente / descrição', 'Vencimento', 'Valor', 'Status'] };
-  const storageKey = `nexo.finance.${page}.v1`;
-  const [rows, setRows] = useState(() => { try { const saved = JSON.parse(localStorage.getItem(storageKey) || 'null'); return Array.isArray(saved) ? saved : financeRows[page]; } catch { return financeRows[page]; } });
+  const titles = { receitas: ['Lan?amento', 'Cliente / descri??o', 'Data', 'Valor', 'Status'], despesas: ['Lan?amento', 'Fornecedor / categoria', 'Data', 'Valor', 'Status'] };
+  const resourceKey = page === 'despesas' ? 'nexo.finance.despesas.v1' : 'nexo.finance.receitas.v1';
+  const [records, setRecords] = useStoredArray(resourceKey, []);
   const [formOpen, setFormOpen] = useState(false);
   const [name, setName] = useState('');
   const [amount, setAmount] = useState('');
-  const verb = page === 'despesas' ? 'Nova despesa' : page === 'cobrancas' ? 'Nova cobrança' : 'Nova receita';
-  const persist = (next) => { setRows(next); localStorage.setItem(storageKey, JSON.stringify(next)); };
-  const amountNumber = (row) => Number(String(row[4]).replace(/[R$\s.]/g, '').replace(',', '.')) || 0;
-  const submit = (event) => { event.preventDefault(); const value = Number(amount.replace(',', '.')); if (!name.trim() || !value) { notify('Preencha a descrição e um valor válido'); return; } const next = [[`${page.slice(0, 3).toUpperCase()}-${String(Date.now()).slice(-5)}`, name.trim(), 'Lançamento manual', new Date().toLocaleDateString('pt-BR'), money(value), page === 'despesas' ? 'Pendente' : 'Pendente'], ...rows]; persist(next); setName(''); setAmount(''); setFormOpen(false); notify(`${verb} adicionada e salva neste navegador.`); };
-  const doAction = (message) => { const id = message.replace('Opções de ', ''); const target = rows.find((row) => row[0] === id); if (!target) return notify(message); if (window.confirm(`${target[5] === 'Pendente' || target[5] === 'Aguardando' ? 'Marcar como pago/recebido' : 'Remover'} “${target[1]}” (${target[4]})?`)) { if (target[5] === 'Pendente' || target[5] === 'Aguardando') persist(rows.map((row) => row[0] === id ? [...row.slice(0, 5), page === 'despesas' ? 'Paga' : 'Recebida'] : row)); else persist(rows.filter((row) => row[0] !== id)); notify('Lançamento atualizado localmente.'); } };
-  const total = rows.reduce((sum, row) => sum + amountNumber(row), 0);
-  const pending = rows.filter((row) => ['Pendente', 'Aguardando'].includes(row[5]));
-  const delayed = rows.filter((row) => row[5] === 'Atrasada' || row[5] === 'Vencida');
-  return <><div className="ns-metrics ns-metrics-three"><Metric label={page === 'despesas' ? 'Despesas registradas' : 'Receitas registradas'} value={money(total)} note={`${rows.length} lançamentos locais`} icon={page === 'despesas' ? ArrowUpRight : ArrowDownLeft} /><Metric label="Aguardando" value={money(pending.reduce((sum, row) => sum + amountNumber(row), 0))} note={`${pending.length} lançamentos pendentes`} icon={Clock3} /><Metric label="Em atraso" value={money(delayed.reduce((sum, row) => sum + amountNumber(row), 0))} note={`${delayed.length} precisam de atenção`} icon={AlertCircle} /></div>{formOpen && <form className="ns-inline-form" onSubmit={submit}><div><b>{verb}</b><small>Os registros ficam neste navegador</small></div><input aria-label="Descrição ou cliente" required placeholder="Descrição ou cliente" value={name} onChange={(event) => setName(event.target.value)} /><input aria-label="Valor" required type="number" min="0.01" step="0.01" placeholder="Valor (ex.: 850,00)" value={amount} onChange={(event) => setAmount(event.target.value)} /><button className="ns-primary" type="submit"><Check size={15} />Salvar</button><IconButton label="Fechar formulário" onClick={() => setFormOpen(false)}><X size={16} /></IconButton></form>}<DataTable columns={titles[page]} rows={rows} search onAction={doAction} /><div className="ns-page-bottom"><span><ShieldCheck size={15} /> Clique nas opções de um lançamento para baixar ou remover localmente</span><button className="ns-secondary" type="button" onClick={() => setFormOpen((open) => !open)}><Plus size={15} />{verb}</button></div></>;
+  const verb = page === 'despesas' ? 'Nova despesa' : 'Nova receita';
+  const amountNumber = (item) => Number(item.amount) || 0;
+  const moneyRows = records.map((item) => [item.code || item.id, item.description || '', item.date ? new Date(item.date).toLocaleDateString('pt-BR') : '', money(amountNumber(item)), item.status || 'Pendente']);
+  const submit = (event) => {
+    event.preventDefault();
+    const value = Number(amount.replace(',', '.'));
+    if (!name.trim() || !value) { notify('Preencha a descri??o e um valor v?lido.'); return; }
+    const record = { id: globalThis.crypto?.randomUUID?.() || `${page}-${Date.now()}`, code: `${page.slice(0, 3).toUpperCase()}-${String(Date.now()).slice(-5)}`, description: name.trim(), counterparty: name.trim(), category: 'Lan?amento manual', date: new Date().toISOString(), amount: value, status: 'Pendente' };
+    setRecords((current) => [record, ...current]);
+    setName(''); setAmount(''); setFormOpen(false);
+    notify(`${verb} enviada para grava??o no workspace.`);
+  };
+  const doAction = (message) => {
+    const code = message.replace('Op??es de ', '');
+    const target = records.find((item) => (item.code || item.id) === code);
+    if (!target) return notify(message);
+    if (!window.confirm(`${target.status === 'Pendente' ? 'Marcar como pago/recebido' : 'Remover'} ?${target.description}? (${money(amountNumber(target))})?`)) return;
+    if (target.status === 'Pendente') setRecords((current) => current.map((item) => item.id === target.id ? { ...item, status: page === 'despesas' ? 'Paga' : 'Recebida', settledAt: new Date().toISOString() } : item));
+    else setRecords((current) => current.filter((item) => item.id !== target.id));
+    notify('Altera??o enviada para o workspace.');
+  };
+  const total = records.reduce((sum, item) => sum + amountNumber(item), 0);
+  const pending = records.filter((item) => item.status === 'Pendente');
+  const delayed = records.filter((item) => item.status === 'Atrasada' || item.status === 'Vencida');
+  return <><div className="ns-metrics ns-metrics-three"><Metric label={page === 'despesas' ? 'Despesas registradas' : 'Receitas registradas'} value={money(total)} note={`${records.length} lan?amentos no workspace`} icon={page === 'despesas' ? ArrowUpRight : ArrowDownLeft} /><Metric label="Aguardando" value={money(pending.reduce((sum, item) => sum + amountNumber(item), 0))} note={`${pending.length} lan?amentos pendentes`} icon={Clock3} /><Metric label="Em atraso" value={money(delayed.reduce((sum, item) => sum + amountNumber(item), 0))} note={`${delayed.length} precisam de aten??o`} icon={AlertCircle} /></div>{formOpen && <form className="ns-inline-form" onSubmit={submit}><div><b>{verb}</b><small>O registro ser? guardado na conta do workspace.</small></div><input aria-label="Descri??o ou cliente" required placeholder="Descri??o ou cliente" value={name} onChange={(event) => setName(event.target.value)} /><input aria-label="Valor" required type="number" min="0.01" step="0.01" placeholder="Valor (ex.: 850,00)" value={amount} onChange={(event) => setAmount(event.target.value)} /><button className="ns-primary" type="submit"><Check size={15} />Salvar</button><IconButton label="Fechar formul?rio" onClick={() => setFormOpen(false)}><X size={16} /></IconButton></form>}<DataTable columns={titles[page]} rows={moneyRows} search onAction={doAction} /><div className="ns-page-bottom"><span><ShieldCheck size={15} /> Lan?amentos vinculados ao workspace</span><button className="ns-secondary" type="button" onClick={() => setFormOpen((open) => !open)}><Plus size={15} />{verb}</button></div></>;
 }
-
 function Inbox({ notify, forceWhatsapp = false }) {
   const [messages, setMessages] = useStoredArray('nexo.support.conversations.v1', initialMessages);
   const [selected, setSelected] = useState(0);
