@@ -161,7 +161,7 @@ const googleScopes = [
   'https://www.googleapis.com/auth/drive.file',
   'https://www.googleapis.com/auth/gmail.send',
 ];
-const googleRedirectUri = env.GOOGLE_REDIRECT_URI || new URL('/api/integrations/google-calendar/callback', allowedOrigins[0]).toString();
+const googleRedirectUri = env.GOOGLE_REDIRECT_URI || new URL('/api/integrations/google/callback', allowedOrigins[0]).toString();
 const googleTokenEncryptionKey = createHash('sha256').update('nexo-google-token-v1\0').update(env.JWT_SECRET).digest();
 
 function sealGoogleTokens(tokens: GoogleTokenSet) {
@@ -388,7 +388,7 @@ app.get('/api/integrations/google/authorize', { preHandler: app.authenticate, co
   return reply.redirect(url.toString());
 });
 
-app.get('/api/integrations/google-calendar/callback', { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {
+app.get('/api/integrations/google/callback', { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {
   const query = z.object({ code: z.string().optional(), state: z.string().optional(), error: z.string().optional() }).safeParse(request.query);
   const stateCookie = request.cookies.nexo_google_oauth_state;
   reply.clearCookie('nexo_google_oauth_state', { path: '/api/integrations', httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax' });
