@@ -89,6 +89,14 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - Cinco testes unitarios isolados cobrem registros normais, chaves secretas aninhadas, prototype pollution, profundidade/tamanho e valores nao objeto. `npm --prefix api test` passou (5/5). Nenhum teste escreveu no PostgreSQL compartilhado.
 - Proximos riscos que permanecem: integracoes sem prova de fluxo real, automacoes n8n nao gerenciadas pelo produto, uploads/assinatura eletronica ausentes e a revisao completa dos controles no frontend.
 
+## Auditoria funcional de equipe e segurança - 24/09/2026
+
+- A tela autenticada de Integracoes respondeu com dados do backend: Mercado Pago, WAHA e Resend constam como testadas/conectadas; Evolution, Google Workspace, GitHub, n8n e Sentry nao estao configuradas. O indicador geral mostrou zero falhas nos ultimos testes.
+- Identificado que Equipe permitia cadastrar "convites" e alternar supostos acessos sem criar contas ou enviar e-mails; Configuracoes mostrava tres membros ficticios e oferecia controles de papel, 2FA e validade da sessao que nao alteravam a autenticacao.
+- Corrigido: Equipe agora e explicitamente um cadastro operacional para distribuir trabalho, nao concede login, nao promete envio de convite e mostra situacoes do cadastro. Criar/editar/ativar/remover aguarda o resultado real da API antes de confirmar sucesso.
+- Corrigido: Configuracoes descreve o acesso de proprietario unico que o servidor aplica, informa a expiracao real de 8 horas e declara que 2FA nao esta disponivel; removeu contagens inventadas e preferencias de seguranca sem efeito. Exportacao/importacao e armazenamento agora descrevem corretamente que apenas preferencias sao exportadas e que sao persistidas no banco.
+- Build do frontend, compilacao da API, cinco testes unitarios e `git diff --check` passaram. A validacao visual em producao mostrou a tela Integrações legivel em desktop; a versao atualizada de Equipe/Configuracoes aguarda deploy e verificacao no navegador.
+
 ## Implementacao registrada - Google Calendar - 24/09/2026
 
 - Commit `4610773`: endpoints autenticados do Calendar para criar, atualizar com idempotência por event ID e excluir eventos; os tokens Google são obtidos pelo mecanismo OAuth cifrado existente.
