@@ -94,8 +94,10 @@ function WorkScreen({ page }) {
   const [composer, setComposer] = useState('');
   const uploadRef = useRef(null);
   const [uploadingFiles, setUploadingFiles] = useState(false);
+  const [googleDriveEmail, setGoogleDriveEmail] = useState('');
   const [draft, setDraft] = useState({ title: '', client: '', project: '', due: '', assignee: '', time: '16:30', detail: '', priority: 'Normal', syncGoogleCalendar: true, createMeet: false, attendees: '' });
   const [timerNow, setTimerNow] = useState(Date.now());
+  useEffect(() => { let active = true; apiRequest('/api/integrations/status').then((result) => { if (active) setGoogleDriveEmail(result.data?.find((item) => item.provider === 'google')?.accountEmail || ''); }).catch(() => { if (active) setGoogleDriveEmail(''); }); return () => { active = false; }; }, []);
   const activeTimer = hours.find((item) => item.status === 'running');
   const timerRunning = Boolean(activeTimer);
   const timerSeconds = activeTimer ? Math.max(0, Math.floor((timerNow - new Date(activeTimer.startedAt).getTime()) / 1000)) : 0;
@@ -224,7 +226,7 @@ function WorkScreen({ page }) {
     </>}
 
     {key === 'arquivos' && <>
-      <section className="drive-breadcrumb"><button onClick={() => setFileType('Todos')}>Arquivos</button><ChevronRight size={15} /><span>Todos os arquivos</span><span className="drive-space">Armazenamento Google Drive não conectado</span></section>
+      <section className="drive-breadcrumb"><button onClick={() => setFileType('Todos')}>Arquivos</button><ChevronRight size={15} /><span>Todos os arquivos</span><span className="drive-space">{googleDriveEmail ? `Google Drive conectado: ${googleDriveEmail}` : 'Conecte o Google Drive em Integracoes para enviar arquivos'}</span></section>
       <section className="drive-tools"><label className="drive-search"><Search size={16} /><input placeholder="Buscar arquivos e pastas" value={fileQuery} onChange={(e) => setFileQuery(e.target.value)} /><kbd>⌘ K</kbd></label><div className="drive-filters"><SlidersHorizontal size={15} />{['Todos', 'Pastas', 'pdf', 'image', 'sheet'].map((type) => <button key={type} className={fileType === type ? 'active' : ''} onClick={() => setFileType(type)}>{type === 'image' ? 'Imagens' : type === 'sheet' ? 'Planilhas' : type === 'pdf' ? 'PDFs' : type}</button>)}</div><button className="work-button work-button-quiet" onClick={() => notify('Arquivos organizados por data.')}><ArrowDown size={14} /> Recentes</button></section>
       <div className="drive-section-heading"><h2>Acessados recentemente</h2><button onClick={() => setView(view === 'grid' ? 'list' : 'grid')}>{view === 'grid' ? <List size={16} /> : <LayoutGrid size={16} />} {view === 'grid' ? 'Lista' : 'Grade'}</button></div>
       <section className={`drive-grid ${view === 'list' ? 'drive-list' : ''}`}>{visibleFiles.map((file) => <FileCard key={file.id} file={file} onOpen={() => file.url ? window.open(file.url, '_blank', 'noopener,noreferrer') : setSelectedFile(file)} onMenu={() => setSelectedFile(file)} />)}{visibleFiles.length === 0 && <Empty title="Nenhum arquivo encontrado" text="Mude os filtros ou tente outra busca." />}</section>
