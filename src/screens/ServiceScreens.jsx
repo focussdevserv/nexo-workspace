@@ -352,13 +352,25 @@ function Integrations({ notify }) {
     finally { setStatusLoading(false); }
   };
   useEffect(() => { refreshStatus(); }, []);
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const result = url.searchParams.get('google');
+    if (!result) return;
+    url.searchParams.delete('google');
+    const reason = url.searchParams.get('reason');
+    url.searchParams.delete('reason');
+    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
+    if (result === 'connected') notify('Conta Google autorizada com sucesso.');
+    else notify(`Não foi possível conectar o Google (${reason || 'erro de autorização'}). Confira o OAuth e tente novamente.`);
+    refreshStatus(false);
+  }, []);
   const categories = ['Todas', 'Pagamentos', 'WhatsApp', 'E-mail', 'Produtividade', 'Desenvolvimento', 'Automacoes', 'Monitoramento'];
   const setup = {
     'Mercado Pago': { provider: 'mercadopago', vars: ['MERCADOPAGO_ACCESS_TOKEN', 'MERCADOPAGO_WEBHOOK_SECRET'], note: 'O access token fica somente no serviço API. O teste consulta os meios de pagamento sem criar uma cobrança.' },
     'Evolution API': { provider: 'evolution', vars: ['EVOLUTION_API_URL', 'EVOLUTION_API_KEY'], note: 'Informe a URL base da Evolution API e a chave global. O teste lista as instâncias sem exibir a chave.' },
     WAHA: { provider: 'waha', vars: ['WAHA_API_URL', 'WAHA_API_KEY'], note: 'No Coolify, WAHA_API_URL pode apontar para http://waha:3000 quando o serviço está no mesmo Compose.' },
     Resend: { provider: 'resend', vars: ['RESEND_API_KEY'], note: 'O teste consulta os domínios da conta. Ele não envia e-mails.' },
-    'Google Workspace': { provider: 'google', vars: ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET'], note: 'Depois de cadastrar as credenciais no Google Cloud, ainda será preciso concluir o OAuth e autorizar as APIs que deseja usar.' },
+    'Google Workspace': { provider: 'google', vars: ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_REDIRECT_URI'], note: 'Conecte sua conta Google para habilitar Gmail, Calendar, Drive e reuniões Meet. Cadastre no Google Cloud a URI de retorno exibida no servidor.' },
     GitHub: { provider: 'github', vars: ['GITHUB_TOKEN'], note: 'O teste consulta a identidade do token. Use um token com o menor conjunto de permissões necessário.' },
     n8n: { provider: 'n8n', vars: ['N8N_BASE_URL'], note: 'O teste consulta o health check interno. A API usa http://n8n:5678 na rede privada do Compose; nenhum webhook é disparado.' },
     Sentry: { provider: 'sentry', vars: ['SENTRY_DSN'], note: 'O teste não envia um evento artificial ao Sentry, para não criar um incidente falso no projeto.' },
@@ -372,6 +384,18 @@ function Integrations({ notify }) {
       setTestResult({ status: result.data.status, message: result.data.message });
       if (result.data.status === 'connected') await refreshStatus(false);
     } catch (error) { setTestResult({ status: 'error', message: error.message || 'Falha ao testar a conexão.' }); }
+    finally { setTesting(false); }
+  };
+  const authorizeGoogle = () => { window.location.assign('/api/integrations/google/authorize'); };
+  const disconnectGoogle = async () => {
+    if (!window.confirm('Desconectar a conta Google? O Nexo revogará o acesso e removerá os tokens salvos.')) return;
+    setTesting(true); setTestResult(null);
+    try {
+      await apiRequest('/api/integrations/google/disconnect', { method: 'POST', body: '{}' });
+      await refreshStatus(false);
+      setTestResult({ status: 'connected', message: 'Conta Google desconectada e autorização revogada.' });
+      notify('Conta Google desconectada.');
+    } catch (error) { setTestResult({ status: 'error', message: error.message || 'Não foi possível desconectar a conta Google.' }); }
     finally { setTesting(false); }
   };
   const changeConnection = async (item, enabled) => {
@@ -394,6 +418,8 @@ function Integrations({ notify }) {
     if (!state) return statusLoading ? 'Consultando status…' : 'Status indisponível';
     if (!state.configured) return 'Não configurada';
     if (!state.enabled) return 'Desconectada no Nexo';
+    if (item.name === 'Google Workspace' && state.accountEmail) return `Conectada: ${state.accountEmail}`;
+    if (item.name === 'Google Workspace') return 'Autorização necessária';
     if (state.lastTestStatus === 'connected') return 'Conectada no último teste';
     if (state.lastTestStatus === 'setup_required') return 'Configuração incompleta';
     if (state.lastTestStatus === 'error') return 'Falha no último teste';
@@ -412,7 +438,7 @@ function Integrations({ notify }) {
     <div className="ns-integration-filters" role="group" aria-label="Filtrar integracoes">{categories.map((item) => <button type="button" aria-pressed={filter === item} className={filter === item ? 'active' : ''} key={item} onClick={() => setFilter(item)}>{item}</button>)}</div>
     <div className="ns-integration-grid">{visible.map((item) => { const Icon = item.icon; const state = integrationStatus[item.name]; const tone = connectionTone(item); const testedAt = state?.testedAt ? new Date(state.testedAt).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }) : ""; return <article className="ns-integration-card" key={item.name}><div className="ns-integration-top"><span className={`ns-integration-logo ${item.color}`}><Icon size={20} /></span><span className={`ns-connection-badge ${tone}`}><i />{connectionLabel(item)}</span></div><h3>{item.name}</h3><p>{item.detail}</p>{state?.testedAt && <small className="ns-integration-last-test" title={state.lastTestMessage || ""}>?ltimo teste ? {testedAt}</small>}<div className="ns-integration-actions"><button className="ns-integration-configure" type="button" onClick={() => { setConfiguring(item); setTestResult(null); }}><Settings2 size={14} />Detalhes e teste</button>{state?.configured && <button className={`ns-integration-toggle ${state.enabled ? "disconnect" : "reconnect"}`} type="button" disabled={changingConnection === item.name || statusLoading} onClick={() => changeConnection(item, !state.enabled)}>{changingConnection === item.name ? <RefreshCw size={14} className="ns-spinning" /> : state.enabled ? <Unplug size={14} /> : <Check size={14} />}{state.enabled ? "Desconectar" : "Reativar"}</button>}</div></article>; })}</div>
     <div className="ns-info-note"><ShieldCheck size={17} /><span>As chaves ficam no Coolify. Abra cada serviço para ver as variáveis necessárias e testar a conexão no servidor; nenhum segredo é exibido nesta tela.</span></div>
-    {configuring && <div className="ns-integration-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !testing) setConfiguring(null); }}><section className="ns-integration-modal" role="dialog" aria-modal="true" aria-labelledby="integration-dialog-title"><header><span className={`ns-integration-logo ${configuring.color}`}><configuring.icon size={18} /></span><div><h2 id="integration-dialog-title">{configuring.name}</h2><p>{integrationStatus[configuring.name] ? 'Credenciais detectadas no servidor.' : 'Configure as variáveis no Coolify para habilitar este serviço.'}</p></div><button type="button" aria-label="Fechar" onClick={() => !testing && setConfiguring(null)}><X size={17} /></button></header><div className="integration-setup-content"><b>Variáveis necessárias</b><ul>{setup[configuring.name].vars.map((name) => <li key={name}><code>{name}</code></li>)}</ul><p>{setup[configuring.name].note}</p><div className="ns-integration-modal-note"><ShieldCheck size={15} />As chaves permanecem no Coolify e nunca são enviadas ao navegador.</div>{testResult && <div className={`integration-test-result ${testResult.status}`} role="status"><span>{testResult.status === 'connected' ? 'Conexão confirmada' : testResult.status === 'setup_required' ? 'Integração ainda incompleta' : 'Não foi possível conectar'}</span><p>{testResult.message}</p></div>}</div><footer><button type="button" className="ns-secondary" onClick={() => refreshStatus()} disabled={statusLoading}><RefreshCw size={14} />Atualizar status</button><button type="button" className="ns-primary" onClick={testConnection} disabled={testing}><Check size={14} />{testing ? 'Testando...' : 'Testar conexão'}</button></footer></section></div>}
+    {configuring && <div className="ns-integration-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !testing) setConfiguring(null); }}><section className="ns-integration-modal" role="dialog" aria-modal="true" aria-labelledby="integration-dialog-title"><header><span className={`ns-integration-logo ${configuring.color}`}><configuring.icon size={18} /></span><div><h2 id="integration-dialog-title">{configuring.name}</h2><p>{integrationStatus[configuring.name] ? 'Credenciais detectadas no servidor.' : 'Configure as variáveis no Coolify para habilitar este serviço.'}</p></div><button type="button" aria-label="Fechar" onClick={() => !testing && setConfiguring(null)}><X size={17} /></button></header><div className="integration-setup-content"><b>Variáveis necessárias</b><ul>{setup[configuring.name].vars.map((name) => <li key={name}><code>{name}</code></li>)}</ul><p>{setup[configuring.name].note}</p>{configuring.name === 'Google Workspace' && <div className="ns-integration-modal-note"><ShieldCheck size={15} /><span>{integrationStatus['Google Workspace']?.accountEmail ? `Conectada como ${integrationStatus['Google Workspace'].accountEmail}.` : 'Autorize sua conta Google para concluir a conexão.'}</span><p>URI de redirecionamento: {window.location.origin}/api/integrations/google-calendar/callback</p>{integrationStatus['Google Workspace']?.accountEmail ? <button type="button" className="ns-secondary" disabled={testing} onClick={disconnectGoogle}>Desconectar conta Google</button> : <button type="button" className="ns-primary" disabled={testing || !integrationStatus['Google Workspace']?.configured} onClick={authorizeGoogle}>Autorizar conta Google</button>}</div>}<div className="ns-integration-modal-note"><ShieldCheck size={15} />As chaves permanecem no Coolify e nunca são enviadas ao navegador.</div>{testResult && <div className={`integration-test-result ${testResult.status}`} role="status"><span>{testResult.status === 'connected' ? 'Conexão confirmada' : testResult.status === 'setup_required' ? 'Integração ainda incompleta' : 'Não foi possível conectar'}</span><p>{testResult.message}</p></div>}</div><footer><button type="button" className="ns-secondary" onClick={() => refreshStatus()} disabled={statusLoading}><RefreshCw size={14} />Atualizar status</button><button type="button" className="ns-primary" onClick={testConnection} disabled={testing || (configuring.name === 'Google Workspace' && !integrationStatus['Google Workspace']?.accountEmail)}><Check size={14} />{testing ? 'Testando...' : 'Testar conexão'}</button></footer></section></div>}
   </>;
 }
 

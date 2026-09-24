@@ -9,7 +9,7 @@ import argon2 from 'argon2';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { resolve } from 'node:path';
 import { and, asc, desc, eq, ilike, isNull, or, sql } from 'drizzle-orm';
-import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { db, pool } from './db/index.js';
 import { activityEvents, billingOrders, billingSubscriptions, clients, organizations, users, workspaceRecords } from './db/schema.js';
@@ -24,6 +24,9 @@ const env = z.object({
   MERCADOPAGO_WEBHOOK_SECRET: z.string().optional(),
   WAHA_API_URL: z.string().url().optional(),
   WAHA_API_KEY: z.string().min(32).optional(),
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_SECRET: z.string().optional(),
+  GOOGLE_REDIRECT_URI: z.preprocess((value) => value === '' ? undefined : value, z.string().url().optional()),
 }).parse(process.env);
 
 const app = Fastify({ logger: true, bodyLimit: 1024 * 1024, trustProxy: process.env.TRUST_PROXY === 'true' });
@@ -150,6 +153,73 @@ async function wahaRequest<T = Record<string, unknown>>(path: string, init: Requ
 const integrationProviders = ['mercadopago', 'evolution', 'waha', 'resend', 'google', 'github', 'n8n', 'sentry'] as const;
 type IntegrationProvider = typeof integrationProviders[number];
 type IntegrationControl = { provider?: string; enabled?: boolean; lastTestStatus?: string | null; lastTestMessage?: string | null; testedAt?: string | null };
+type GoogleTokenSet = { accessToken: string; refreshToken: string; expiresAt: number; email: string };
+
+const googleScopes = [
+  'openid', 'email', 'profile',
+  'https://www.googleapis.com/auth/calendar.events',
+  'https://www.googleapis.com/auth/drive.file',
+  'https://www.googleapis.com/auth/gmail.send',
+];
+const googleRedirectUri = env.GOOGLE_REDIRECT_URI || new URL('/api/integrations/google-calendar/callback', allowedOrigins[0]).toString();
+const googleTokenEncryptionKey = createHash('sha256').update('nexo-google-token-v1\0').update(env.JWT_SECRET).digest();
+
+function sealGoogleTokens(tokens: GoogleTokenSet) {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', googleTokenEncryptionKey, iv);
+  const encrypted = Buffer.concat([cipher.update(JSON.stringify(tokens), 'utf8'), cipher.final()]);
+  return [iv, cipher.getAuthTag(), encrypted].map((part) => part.toString('base64url')).join('.');
+}
+
+function openGoogleTokens(sealed: string): GoogleTokenSet {
+  const [iv, tag, encrypted] = sealed.split('.').map((part) => Buffer.from(part, 'base64url'));
+  if (!iv || !tag || !encrypted || iv.length !== 12 || tag.length !== 16) throw new Error('google_token_payload_invalid');
+  const decipher = createDecipheriv('aes-256-gcm', googleTokenEncryptionKey, iv);
+  decipher.setAuthTag(tag);
+  return JSON.parse(Buffer.concat([decipher.update(encrypted), decipher.final()]).toString('utf8')) as GoogleTokenSet;
+}
+
+async function findGoogleConnection(organizationId: string) {
+  const [row] = await db.select().from(workspaceRecords).where(and(
+    eq(workspaceRecords.organizationId, organizationId), eq(workspaceRecords.resource, 'integration-secrets'),
+    sql`${workspaceRecords.data}->>'provider' = 'google'`, isNull(workspaceRecords.archivedAt),
+  )).limit(1);
+  return row;
+}
+
+async function saveGoogleConnection(organizationId: string, userId: string, tokens: GoogleTokenSet) {
+  const data = { provider: 'google', sealedTokens: sealGoogleTokens(tokens) };
+  const current = await findGoogleConnection(organizationId);
+  if (current) {
+    await db.update(workspaceRecords).set({ data, updatedAt: new Date() }).where(eq(workspaceRecords.id, current.id));
+  } else {
+    await db.insert(workspaceRecords).values({ organizationId, resource: 'integration-secrets', data, createdBy: userId });
+  }
+}
+
+async function getGoogleTokens(organizationId: string) {
+  const row = await findGoogleConnection(organizationId);
+  const sealed = typeof row?.data.sealedTokens === 'string' ? row.data.sealedTokens : '';
+  return sealed ? openGoogleTokens(sealed) : null;
+}
+
+async function googleAccessToken(organizationId: string, userId: string) {
+  const tokens = await getGoogleTokens(organizationId);
+  if (!tokens) throw Object.assign(new Error('google_authorization_required'), { statusCode: 409 });
+  if (tokens.expiresAt > Date.now() + 60_000) return tokens.accessToken;
+  if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) throw Object.assign(new Error('google_client_not_configured'), { statusCode: 503 });
+  const response = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ client_id: env.GOOGLE_CLIENT_ID, client_secret: env.GOOGLE_CLIENT_SECRET, refresh_token: tokens.refreshToken, grant_type: 'refresh_token' }),
+    signal: AbortSignal.timeout(12_000),
+  });
+  if (!response.ok) throw Object.assign(new Error('google_token_refresh_failed'), { statusCode: 502 });
+  const refreshed = await response.json() as { access_token?: string; expires_in?: number };
+  if (!refreshed.access_token || !refreshed.expires_in) throw Object.assign(new Error('google_token_refresh_invalid'), { statusCode: 502 });
+  const next = { ...tokens, accessToken: refreshed.access_token, expiresAt: Date.now() + refreshed.expires_in * 1000 };
+  await saveGoogleConnection(organizationId, userId, next);
+  return next.accessToken;
+}
 
 function integrationConfigured(provider: IntegrationProvider) {
   return ({
@@ -308,16 +378,95 @@ app.delete('/api/integrations/waha/sessions/:id', { preHandler: app.authenticate
   return reply.code(204).send();
 });
 
+app.get('/api/integrations/google/authorize', { preHandler: app.authenticate, config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
+  if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) return reply.code(503).send({ error: 'google_client_not_configured', message: 'Configure GOOGLE_CLIENT_ID e GOOGLE_CLIENT_SECRET no serviço API do Coolify.' });
+  if (!await isIntegrationEnabled(request.user.organizationId, 'google')) return reply.code(409).send({ error: 'integration_disconnected', message: 'Reative Google Workspace no Nexo antes de autorizar a conta.' });
+  const state = app.jwt.sign({ sub: request.user.sub, organizationId: request.user.organizationId, role: 'owner', purpose: 'google-oauth-state', nonce: randomUUID() }, { expiresIn: '10m' });
+  reply.setCookie('nexo_google_oauth_state', state, { path: '/api/integrations', httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', maxAge: 10 * 60 });
+  const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+  url.search = new URLSearchParams({ client_id: env.GOOGLE_CLIENT_ID, redirect_uri: googleRedirectUri, response_type: 'code', scope: googleScopes.join(' '), access_type: 'offline', include_granted_scopes: 'true', prompt: 'consent', state }).toString();
+  return reply.redirect(url.toString());
+});
+
+app.get('/api/integrations/google-calendar/callback', { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {
+  const query = z.object({ code: z.string().optional(), state: z.string().optional(), error: z.string().optional() }).safeParse(request.query);
+  const stateCookie = request.cookies.nexo_google_oauth_state;
+  reply.clearCookie('nexo_google_oauth_state', { path: '/api/integrations', httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax' });
+  const redirectToApp = (result: string, reason?: string) => {
+    const target = new URL('/', allowedOrigins[0]);
+    target.searchParams.set('google', result);
+    if (reason) target.searchParams.set('reason', reason);
+    return reply.redirect(target.toString());
+  };
+  if (!query.success || !query.data.state || !stateCookie || query.data.state !== stateCookie) return redirectToApp('error', 'state_invalid');
+  let claims: { sub?: string; organizationId?: string; purpose?: string };
+  try { claims = app.jwt.verify<{ sub?: string; organizationId?: string; purpose?: string }>(query.data.state); }
+  catch { return redirectToApp('error', 'state_expired'); }
+  if (claims.purpose !== 'google-oauth-state' || !claims.sub || !claims.organizationId) return redirectToApp('error', 'state_invalid');
+  if (query.data.error || !query.data.code || !env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) return redirectToApp('error', query.data.error === 'access_denied' ? 'consent_denied' : 'oauth_incomplete');
+  try {
+    const [owner] = await db.select({ id: users.id }).from(users).where(and(
+      eq(users.id, claims.sub), eq(users.organizationId, claims.organizationId), eq(users.active, true), eq(users.email, env.OWNER_EMAIL),
+    )).limit(1);
+    if (!owner) return redirectToApp('error', 'owner_required');
+    if (!await isIntegrationEnabled(claims.organizationId, 'google')) return redirectToApp('error', 'integration_disconnected');
+    const exchange = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ code: query.data.code, client_id: env.GOOGLE_CLIENT_ID, client_secret: env.GOOGLE_CLIENT_SECRET, redirect_uri: googleRedirectUri, grant_type: 'authorization_code' }),
+      signal: AbortSignal.timeout(12_000),
+    });
+    if (!exchange.ok) return redirectToApp('error', 'code_exchange_failed');
+    const grant = await exchange.json() as { access_token?: string; refresh_token?: string; expires_in?: number };
+    if (!grant.access_token || !grant.expires_in) return redirectToApp('error', 'token_response_invalid');
+    const existing = await getGoogleTokens(claims.organizationId);
+    const refreshToken = grant.refresh_token || existing?.refreshToken;
+    if (!refreshToken) return redirectToApp('error', 'offline_access_missing');
+    const profileResponse = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', { headers: { Authorization: `Bearer ${grant.access_token}` }, signal: AbortSignal.timeout(12_000) });
+    if (!profileResponse.ok) return redirectToApp('error', 'google_profile_failed');
+    const profile = await profileResponse.json() as { email?: string; email_verified?: boolean };
+    if (!profile.email || !profile.email_verified) return redirectToApp('error', 'google_email_unverified');
+    await saveGoogleConnection(claims.organizationId, claims.sub, { accessToken: grant.access_token, refreshToken, expiresAt: Date.now() + grant.expires_in * 1000, email: profile.email });
+    await saveIntegrationControl(claims.organizationId, claims.sub, 'google', { lastTestStatus: 'connected', lastTestMessage: `Conta Google autorizada: ${profile.email}.`, testedAt: new Date().toISOString() });
+    await db.insert(activityEvents).values({ organizationId: claims.organizationId, actorUserId: claims.sub, entityType: 'integration', action: 'google_authorized', payload: { provider: 'google', email: profile.email } });
+    return redirectToApp('connected');
+  } catch (error) {
+    app.log.warn({ error: error instanceof Error ? error.name : 'unknown' }, 'Google OAuth callback failed');
+    return redirectToApp('error', 'callback_failed');
+  }
+});
+
+app.post('/api/integrations/google/disconnect', { preHandler: app.authenticate, config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
+  const row = await findGoogleConnection(request.user.organizationId);
+  const sealed = typeof row?.data.sealedTokens === 'string' ? row.data.sealedTokens : '';
+  if (sealed) {
+    const tokens = openGoogleTokens(sealed);
+    const response = await fetch('https://oauth2.googleapis.com/revoke', {
+      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ token: tokens.refreshToken }), signal: AbortSignal.timeout(12_000),
+    });
+    if (!response.ok && response.status !== 400) return reply.code(502).send({ error: 'google_revoke_failed', message: 'O Google não confirmou a revogação. A conta continua conectada.' });
+    if (row) await db.update(workspaceRecords).set({ archivedAt: new Date(), updatedAt: new Date() }).where(eq(workspaceRecords.id, row.id));
+  }
+  await saveIntegrationControl(request.user.organizationId, request.user.sub, 'google', { lastTestStatus: null, lastTestMessage: null, testedAt: null });
+  await db.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'integration', action: 'google_disconnected', payload: { provider: 'google' } });
+  return { data: { disconnected: true } };
+});
+
 app.get('/api/integrations/status', { preHandler: app.authenticate }, async (request) => {
   const controls = await db.select().from(workspaceRecords).where(and(
     eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'integration-controls'), isNull(workspaceRecords.archivedAt),
   ));
   const controlByProvider = new Map(controls.map((row) => [String(row.data.provider), row.data as IntegrationControl]));
+  const googleConnection = await findGoogleConnection(request.user.organizationId);
+  let googleEmail = '';
+  if (typeof googleConnection?.data.sealedTokens === 'string') {
+    try { googleEmail = openGoogleTokens(googleConnection.data.sealedTokens).email; } catch { /* corrupted credentials are shown as disconnected */ }
+  }
   const names: Record<IntegrationProvider, string> = { mercadopago: 'Mercado Pago', evolution: 'Evolution API', waha: 'WAHA', resend: 'Resend', google: 'Google Workspace', github: 'GitHub', n8n: 'n8n', sentry: 'Sentry' };
   return { data: integrationProviders.map((provider) => {
     const control = controlByProvider.get(provider);
     const configured = integrationConfigured(provider);
-    return { name: names[provider], provider, configured, enabled: configured && control?.enabled !== false, lastTestStatus: control?.lastTestStatus || null, lastTestMessage: control?.lastTestMessage || null, testedAt: control?.testedAt || null };
+    return { name: names[provider], provider, configured, enabled: configured && control?.enabled !== false, ...(provider === 'google' && googleEmail ? { accountEmail: googleEmail } : {}), lastTestStatus: control?.lastTestStatus || null, lastTestMessage: control?.lastTestMessage || null, testedAt: control?.testedAt || null };
   }) };
 });
 
@@ -397,7 +546,15 @@ app.post('/api/integrations/:provider/test', { preHandler: app.authenticate, con
       const result = await response.json() as { login?: string };
       return tested('connected', `GitHub conectado como ${result.login || 'usuário autenticado'}.`);
     }
-    if (provider === 'google') return tested('setup_required', 'As credenciais do Google não concluem a autorização. O fluxo OAuth precisa ser finalizado antes de testar Gmail, Calendar, Drive e Meet.');
+    if (provider === 'google') {
+      const tokens = await getGoogleTokens(request.user.organizationId);
+      if (!tokens) return tested('setup_required', 'Autorize sua conta Google para liberar Gmail, Calendar, Drive e links de reunião Meet.');
+      const accessToken = await googleAccessToken(request.user.organizationId, request.user.sub);
+      const response = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', { headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(12_000) });
+      if (!response.ok) return failed(`Google Workspace respondeu com HTTP ${response.status}. Reconecte a conta se a autorização expirou.`);
+      const profile = await response.json() as { email?: string };
+      return tested('connected', `Google Workspace conectado como ${profile.email || tokens.email}.`);
+    }
     if (provider === 'n8n') {
       const baseUrl = process.env.N8N_BASE_URL?.replace(/\/$/, '');
       if (!baseUrl) return unavailable('Configure N8N_BASE_URL no serviço API.');
