@@ -95,7 +95,7 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - Identificado que Equipe permitia cadastrar "convites" e alternar supostos acessos sem criar contas ou enviar e-mails; Configuracoes mostrava tres membros ficticios e oferecia controles de papel, 2FA e validade da sessao que nao alteravam a autenticacao.
 - Corrigido: Equipe agora e explicitamente um cadastro operacional para distribuir trabalho, nao concede login, nao promete envio de convite e mostra situacoes do cadastro. Criar/editar/ativar/remover aguarda o resultado real da API antes de confirmar sucesso.
 - Corrigido: Configuracoes descreve o acesso de proprietario unico que o servidor aplica, informa a expiracao real de 8 horas e declara que 2FA nao esta disponivel; removeu contagens inventadas e preferencias de seguranca sem efeito. Exportacao/importacao e armazenamento agora descrevem corretamente que apenas preferencias sao exportadas e que sao persistidas no banco.
-- Build do frontend, compilacao da API, cinco testes unitarios e `git diff --check` passaram. A validacao visual em producao mostrou a tela Integrações legivel em desktop; a versao atualizada de Equipe/Configuracoes aguarda deploy e verificacao no navegador.
+- Build do frontend, compilacao da API, cinco testes unitarios e `git diff --check` passaram. O commit `cd628ad` foi implantado; `/api/health` respondeu HTTP 200 com banco conectado e o navegador autenticado confirmou as telas novas de Equipe e Configuracoes, com zero pessoas operacionais cadastradas e um acesso de proprietario.
 
 ## Implementacao registrada - Google Calendar - 24/09/2026
 
