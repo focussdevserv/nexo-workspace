@@ -80,6 +80,15 @@ Ainda nao e correto classificar todas as integracoes como operacionais. A caixa 
 
 Esta revisão combinou inspeção estática, compilação e health check. Não executei pagamento, envio de mensagem/e-mail, convite Google, upload, assinatura ou cadastro de dados de validação em produção. Os provedores precisam ser validados com credenciais ativas e eventos reais controlados antes de qualquer promessa de funcionamento ponta a ponta.
 
+## Revisao de seguranca e disponibilidade - 24/09/2026
+
+- Build do frontend (`npm run build`) e compilacao TypeScript da API (`npm run api:build`) passaram nesta revisao.
+- O health da API respondeu HTTP 200 com banco conectado; workspace, privacidade, termos e health de n8n responderam HTTP 200. Isso confirma disponibilidade, nao a execucao de fluxos n8n nem integracoes de negocio.
+- Identificado bypass na validacao do endpoint generico `/api/workspace/:resource`: nomes de campos de credencial eram bloqueados somente no primeiro nivel, permitindo que um campo `accessToken` ou `apiKey` fosse guardado dentro de objeto/array aninhado. O limite de tamanho tambem usava uma serializacao recursiva sem limite de profundidade.
+- Corrigido com validação recursiva, bloqueio de chaves de credencial e chaves sensiveis a prototype pollution em qualquer profundidade, maximo de 32 niveis/5.000 nos e limite de 64.000 bytes. A assinatura HTTP/JSON e as rotas existentes foram preservadas.
+- Cinco testes unitarios isolados cobrem registros normais, chaves secretas aninhadas, prototype pollution, profundidade/tamanho e valores nao objeto. `npm --prefix api test` passou (5/5). Nenhum teste escreveu no PostgreSQL compartilhado.
+- Proximos riscos que permanecem: integracoes sem prova de fluxo real, automacoes n8n nao gerenciadas pelo produto, uploads/assinatura eletronica ausentes e a revisao completa dos controles no frontend.
+
 ## Implementacao registrada - Google Calendar - 24/09/2026
 
 - Commit `4610773`: endpoints autenticados do Calendar para criar, atualizar com idempotência por event ID e excluir eventos; os tokens Google são obtidos pelo mecanismo OAuth cifrado existente.

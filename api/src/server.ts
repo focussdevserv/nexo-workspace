@@ -13,6 +13,7 @@ import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, 
 import { z } from 'zod';
 import { db, pool } from './db/index.js';
 import { activityEvents, billingOrders, billingSubscriptions, clients, organizations, users, workspaceRecords } from './db/schema.js';
+import { isSafeWorkspaceData } from './security/workspace-data.js';
 
 const env = z.object({
   PORT: z.coerce.number().int().positive().default(3001),
@@ -75,10 +76,8 @@ const workspaceResource = z.enum([
   'tickets', 'site-assets', 'monitors', 'expenses', 'revenues', 'finance-accounts', 'finance-transactions',
   'goals', 'team', 'repositories', 'automations', 'settings',
 ]);
-const workspaceDataSchema = z.record(z.string().trim().min(1).max(100), z.unknown()).refine((data) => {
-  const forbidden = /password|secret|token|apikey|accesskey|privatekey/i;
-  return Object.keys(data).every((key) => !forbidden.test(key)) && JSON.stringify(data).length <= 64_000;
-}, 'O registro contém um campo privado ou excede o limite permitido.');
+const workspaceDataSchema = z.record(z.string().trim().min(1).max(100), z.unknown()).refine(isSafeWorkspaceData,
+  'O registro contém uma chave privada/insegura, é profundo demais ou excede o limite permitido.');
 const paymentOrderSchema = z.object({
   clientId: z.string().uuid().optional(),
   clientName: z.string().trim().min(2).max(180),
