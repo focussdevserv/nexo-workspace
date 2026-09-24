@@ -1,5 +1,9 @@
 # Publicar o Nexo em `focussdev.space`
 
+## Variaveis de envio de propostas
+
+Para envio de propostas via Resend, configure no servico API `RESEND_API_KEY` e `RESEND_FROM_EMAIL`. O remetente precisa pertencer a um dominio verificado no Resend; em 24/09/2026, o teste autenticado confirmou `focussdev.space`. O envio ainda precisa de uma validacao controlada com um destinatario autorizado.
+
 ## Resultado da inspeção da VPS Hostinger (23/09/2026)
 
 - Ubuntu 24.04 LTS, plano KVM 2, 2 vCPU, 8 GB RAM e 100 GB de disco; recursos suficientes para iniciar o Nexo.

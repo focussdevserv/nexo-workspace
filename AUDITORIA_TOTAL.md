@@ -131,3 +131,12 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - `N8N_API_KEY` foi adicionado ao Compose, ao exemplo de ambiente e ao guia visual. Sem essa chave, n8n deve aparecer como nao configurado, mesmo que `/healthz` esteja saudavel.
 - A tela `https://n8n.pagfocuss.tech` mostra no Chrome um aviso de site perigoso. Nao foi enviada senha nem API key para essa origem. O acesso administrativo precisa ser feito em um hostname seguro antes de gerar e aplicar uma API key; ate entao, criar workflows e validar execucoes reais permanece bloqueado por seguranca.
 - O projeto OAuth `Nexo Workspace` foi iniciado no Google Auth Platform em modo externo, pois a conta Cloud nao pertence a uma organizacao Google Workspace. Ainda nao existe cliente OAuth nem teste de autorizacao. O Google exige publicacao e verificacao dos escopos sensiveis para uso continuo; as paginas publicas `/privacy` e `/terms` foram adicionadas para preparar a configuracao, mas ainda precisam de dominio verificado e publicacao.
+
+## Envio de propostas por Resend - 24/09/2026
+
+- Implementado envio autenticado da proposta para um destinatario escolhido. O e-mail inclui cliente, investimento, servico, escopo, prazo e condicoes de pagamento; o HTML e escapado no servidor.
+- Cada tentativa usa uma chave idempotente no Resend. A proposta registra destinatario, estado, identificador do provedor e horario confirmado. O estado so muda para Enviada depois da confirmacao do Resend.
+- Coolify recebeu `RESEND_FROM_EMAIL` como variavel de runtime. O remetente usa o dominio verificado `focussdev.space`.
+- O teste autenticado em producao retornou HTTP 200: 1/1 dominio verificado e remetente configurado. O teste consulta dominios e nao envia mensagens.
+- Commit `366600e` publicado e deploy Coolify confirmado. Frontend e API compilaram; os 8 testes unitarios passaram sem criar registros de teste no banco.
+- Nenhum e-mail real foi enviado. Ainda falta validar recebimento e resposta com uma proposta e destinatario autorizados. Contratos, cobrancas e notificacoes ainda nao enviam e-mail.
