@@ -196,3 +196,5 @@
   .ns-integration-modal>footer{position:sticky;bottom:-18px;margin:0 -18px -18px;padding:12px 18px max(12px,env(safe-area-inset-bottom));border-top:1px solid #edf0f3;background:rgb(255 255 255 / 96%)}
   .ns-integration-modal>footer button{flex:1}
 }
+
+.ns-online-dot.offline { background: #d14f57; }.ns-chat-context select { max-width: 190px; padding: 3px 6px; border: 1px solid #e6eaf0; border-radius: 5px; background: #fff; color: #526176; font: inherit; font-size: 8px; }.ns-compose > button.ns-send:disabled { opacity: .45; cursor: not-allowed; }.ns-contact-block select { width: 100%; padding: 7px; border: 1px solid #e5e9ed; border-radius: 6px; background: #fff; color: #718096; font: inherit; font-size: 9px; }

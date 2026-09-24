@@ -29,8 +29,9 @@ function useLocalState(key, fallback) {
     const recordData = (item) => Object.fromEntries(Object.entries(item).filter(([field]) => !['id', 'createdAt', 'updatedAt'].includes(field)));
     Promise.all([
       ...next.filter((item) => !oldById.has(String(item.id))).map(async (item) => {
+        const tempId = String(item.id);
         const saved = await apiRequest(`/api/workspace/${resource}`, { method: 'POST', body: JSON.stringify({ data: recordData(item) }) });
-        valueRef.current = valueRef.current.map((row) => String(row.id) === String(item.id) ? saved.data : row); setValue(valueRef.current);
+        valueRef.current = valueRef.current.map((row) => String(row.id) === tempId || String(row.id) === String(saved.data.id) ? saved.data : row); setValue(valueRef.current);
       }),
       ...next.filter((item) => oldById.has(String(item.id)) && JSON.stringify(recordData(item)) !== JSON.stringify(recordData(oldById.get(String(item.id))))).map((item) => apiRequest(`/api/workspace/${resource}/${item.id}`, { method: 'PATCH', body: JSON.stringify({ data: recordData(item) }) })),
       ...previous.filter((item) => !newById.has(String(item.id))).map((item) => apiRequest(`/api/workspace/${resource}/${item.id}`, { method: 'DELETE' })),

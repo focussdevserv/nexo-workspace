@@ -39,7 +39,7 @@ await app.register(jwt, { secret: env.JWT_SECRET, cookie: { cookieName: 'nexo_se
 const allowedOrigins = env.APP_ORIGIN.split(',').map((origin) => z.string().url().parse(origin.trim()));
 let ownerAccountId: string | null = null;
 app.addHook('onRequest', async (request, reply) => {
-  if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method) || request.url.startsWith('/api/integrations/mercadopago/webhook')) return;
+  if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method) || request.url.startsWith('/api/integrations/mercadopago/webhook') || request.url === '/api/integrations/waha/webhook') return;
   const origin = request.headers.origin;
   if (!origin || !allowedOrigins.includes(origin)) return reply.code(403).send({ error: 'origin_forbidden', message: 'Origem da solicitacao nao autorizada.' });
 });
@@ -375,6 +375,103 @@ app.delete('/api/integrations/waha/sessions/:id', { preHandler: app.authenticate
   await wahaRequest(`/api/sessions/${encodeURIComponent(wahaSessionName(row))}`, { method: 'DELETE' }).catch((error) => { if ((error as { statusCode?: number }).statusCode !== 404) throw error; });
   await db.update(workspaceRecords).set({ archivedAt: new Date(), updatedAt: new Date() }).where(eq(workspaceRecords.id, row.id));
   await db.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'whatsapp-session', entityId: row.id, action: 'deleted', payload: { label: row.data.label } });
+  return reply.code(204).send();
+});
+
+app.post('/api/integrations/waha/send', { preHandler: app.authenticate, config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request, reply) => {
+  const body = parseBody(z.object({
+    sessionId: z.string().uuid(), conversationId: z.string().uuid(), clientMessageId: z.string().uuid(),
+    chatId: z.string().trim().min(5).max(180).regex(/^[\w.+-]+@(?:c\.us|g\.us|lid|s\.whatsapp\.net|newsletter)$/),
+    text: z.string().trim().min(1).max(4096),
+  }), request.body, reply); if (!body) return;
+  if (!await isIntegrationEnabled(request.user.organizationId, 'waha')) return reply.code(409).send({ error: 'integration_disconnected', message: 'WAHA está desconectada no Nexo. Reative em Integrações para enviar.' });
+  const sessionRow = await findOwnedWahaSession(request.user.organizationId, body.sessionId);
+  if (!sessionRow) return reply.code(404).send({ error: 'waha_session_not_found', message: 'A sessão WhatsApp selecionada não pertence a este workspace.' });
+  const [conversation] = await db.select().from(workspaceRecords).where(and(
+    eq(workspaceRecords.id, body.conversationId), eq(workspaceRecords.organizationId, request.user.organizationId),
+    eq(workspaceRecords.resource, 'inbox'), isNull(workspaceRecords.archivedAt),
+  )).limit(1);
+  if (!conversation) return reply.code(404).send({ error: 'conversation_not_found', message: 'A conversa não está mais disponível no workspace.' });
+  const data = conversation.data as Record<string, any>;
+  const existingHistory = Array.isArray(data.history) ? data.history as Array<Record<string, any>> : [];
+  const duplicate = existingHistory.find((message) => message.clientMessageId === body.clientMessageId);
+  if (duplicate?.status === 'sent' && duplicate.providerMessageId) return { data: { messageId: duplicate.providerMessageId, status: 'sent', duplicated: true } };
+  if (duplicate?.status === 'sending' && Date.now() - Date.parse(String(duplicate.createdAt || '')) < 30_000) return reply.code(202).send({ data: { messageId: duplicate.clientMessageId, status: 'sending', duplicated: true } });
+  const pending = { id: body.clientMessageId, clientMessageId: body.clientMessageId, side: 'sent', text: body.text, time: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }), createdAt: new Date().toISOString(), status: 'sending' };
+  const pendingHistory = duplicate ? existingHistory.map((message) => message.clientMessageId === body.clientMessageId ? pending : message) : [...existingHistory, pending];
+  await db.update(workspaceRecords).set({ data: { ...data, whatsappSessionId: sessionRow.id, whatsappChatId: body.chatId, channel: 'WhatsApp', history: pendingHistory }, updatedAt: new Date() }).where(eq(workspaceRecords.id, conversation.id));
+  try {
+    const remote = await wahaRequest<Array<{ name?: string; status?: string }>>('/api/sessions');
+    const remoteSession = remote.find((session) => String(session.name || '') === wahaSessionName(sessionRow));
+    if (remoteSession?.status !== 'WORKING') {
+      const error = Object.assign(new Error('waha_session_not_connected'), { statusCode: 409 });
+      throw error;
+    }
+    const result = await wahaRequest<{ id?: string }>('/api/sendText', { method: 'POST', body: JSON.stringify({ session: wahaSessionName(sessionRow), chatId: body.chatId, text: body.text }) });
+    const [fresh] = await db.select().from(workspaceRecords).where(eq(workspaceRecords.id, conversation.id)).limit(1);
+    const freshData = (fresh?.data || data) as Record<string, any>;
+    const history = Array.isArray(freshData.history) ? freshData.history as Array<Record<string, any>> : pendingHistory;
+    const savedMessage = { ...pending, providerMessageId: result.id || '', status: 'sent' };
+    await db.update(workspaceRecords).set({ data: { ...freshData, whatsappSessionId: sessionRow.id, whatsappChatId: body.chatId, channel: 'WhatsApp', text: body.text, time: savedMessage.time, history: history.map((message) => message.clientMessageId === body.clientMessageId ? savedMessage : message) }, updatedAt: new Date() }).where(eq(workspaceRecords.id, conversation.id));
+    return { data: { messageId: result.id || body.clientMessageId, status: 'sent' } };
+  } catch (error) {
+    const [fresh] = await db.select().from(workspaceRecords).where(eq(workspaceRecords.id, conversation.id)).limit(1);
+    const freshData = (fresh?.data || data) as Record<string, any>;
+    const history = Array.isArray(freshData.history) ? freshData.history as Array<Record<string, any>> : pendingHistory;
+    await db.update(workspaceRecords).set({ data: { ...freshData, history: history.map((message) => message.clientMessageId === body.clientMessageId ? { ...pending, status: 'failed' } : message) }, updatedAt: new Date() }).where(eq(workspaceRecords.id, conversation.id));
+    const statusCode = (error as { statusCode?: number }).statusCode;
+    return reply.code(statusCode === 409 ? 409 : 502).send({ error: 'waha_send_failed', message: statusCode === 409 ? 'A sessão WhatsApp não está conectada. Escaneie o QR e tente novamente.' : 'WAHA não confirmou o envio. Confira a conexão da sessão antes de tentar novamente.' });
+  }
+});
+
+app.post('/api/integrations/waha/webhook', async (request, reply) => {
+  const provided = request.headers['x-nexo-waha-token'];
+  const expected = env.WAHA_API_KEY || '';
+  if (typeof provided !== 'string' || !expected || Buffer.byteLength(provided) !== Buffer.byteLength(expected) || !timingSafeEqual(Buffer.from(provided), Buffer.from(expected))) return reply.code(401).send({ error: 'webhook_unauthorized' });
+  const parsed = z.object({ event: z.string(), session: z.string(), payload: z.record(z.string(), z.unknown()).default({}) }).safeParse(request.body);
+  if (!parsed.success) return reply.code(400).send({ error: 'invalid_waha_event' });
+  const event = parsed.data.event;
+  if (!['message', 'message.ack'].includes(event)) return reply.code(202).send({ data: { ignored: true } });
+  const payload = parsed.data.payload as Record<string, any>;
+  const [sessionRow] = await db.select().from(workspaceRecords).where(and(
+    eq(workspaceRecords.resource, 'whatsapp-sessions'), isNull(workspaceRecords.archivedAt),
+    sql`${workspaceRecords.data}->>'name' = ${parsed.data.session}`,
+  )).limit(1);
+  if (!sessionRow || !await isIntegrationEnabled(sessionRow.organizationId, 'waha')) return reply.code(202).send({ data: { ignored: true } });
+  const messageId = String(payload.id || '');
+  const chatId = String(payload.chatId || (payload.fromMe ? payload.to : payload.from) || '');
+  if (!messageId || !chatId) return reply.code(202).send({ data: { ignored: true } });
+  const [conversation] = await db.select().from(workspaceRecords).where(and(
+    eq(workspaceRecords.organizationId, sessionRow.organizationId), eq(workspaceRecords.resource, 'inbox'), isNull(workspaceRecords.archivedAt),
+    sql`${workspaceRecords.data}->>'whatsappSessionId' = ${sessionRow.id}`, sql`${workspaceRecords.data}->>'whatsappChatId' = ${chatId}`,
+  )).limit(1);
+  if (event === 'message.ack') {
+    if (conversation) {
+      const data = conversation.data as Record<string, any>;
+      const ack = Number(payload.ack || 0);
+      const history = Array.isArray(data.history) ? data.history as Array<Record<string, any>> : [];
+      await db.update(workspaceRecords).set({ data: { ...data, history: history.map((item) => item.providerMessageId === messageId ? { ...item, ack, status: ack >= 3 ? 'read' : ack >= 2 ? 'delivered' : item.status } : item) }, updatedAt: new Date() }).where(eq(workspaceRecords.id, conversation.id));
+    }
+    return reply.code(204).send();
+  }
+  if (payload.fromMe === true) return reply.code(202).send({ data: { ignored: true } });
+  const from = String(payload.from || chatId);
+  const phone = from.split('@')[0]?.split(':')[0] || '';
+  const normalizedPhone = phone.replace(/\D/g, '');
+  const text = String(payload.body || (payload.hasMedia ? `[Mídia${payload.media?.filename ? `: ${payload.media.filename}` : ' recebida'}]` : '')).slice(0, 4096);
+  const timestamp = Number(payload.timestamp || Date.now() / 1000);
+  const at = new Date(timestamp * 1000).toISOString();
+  const currentData = (conversation?.data || {}) as Record<string, any>;
+  const oldHistory = Array.isArray(currentData.history) ? currentData.history as Array<Record<string, any>> : [];
+  if (oldHistory.some((item) => item.providerMessageId === messageId)) return reply.code(204).send();
+  const clientRows = await db.select().from(clients).where(eq(clients.organizationId, sessionRow.organizationId));
+  const matchingClient = clientRows.find((client) => client.phone?.replace(/\D/g, '') === normalizedPhone) || null;
+  const displayName = String(payload._data?.notifyName || payload._data?.pushName || payload.pushName || matchingClient?.contactName || phone || 'WhatsApp');
+  const initials = displayName.split(/\s+/).slice(0, 2).map((part) => part[0] || '').join('').toUpperCase();
+  const history = [...oldHistory, { id: messageId, providerMessageId: messageId, side: 'received', text: text || 'Mensagem recebida', time: new Date(timestamp * 1000).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }), timestamp: at, status: 'received', ...(payload.media?.filename ? { attachment: String(payload.media.filename) } : {}) }];
+  const nextData = { ...currentData, name: currentData.name || displayName, company: matchingClient?.name || currentData.company || '', clientId: matchingClient?.id || currentData.clientId || '', phone, email: matchingClient?.email || currentData.email || '', initials, color: currentData.color || 'blue', channel: 'WhatsApp', whatsappSessionId: sessionRow.id, whatsappChatId: chatId, text: text || 'Mensagem recebida', time: at, unread: Number(currentData.unread || 0) + 1, history };
+  if (conversation) await db.update(workspaceRecords).set({ data: nextData, updatedAt: new Date() }).where(eq(workspaceRecords.id, conversation.id));
+  else await db.insert(workspaceRecords).values({ organizationId: sessionRow.organizationId, resource: 'inbox', data: nextData, createdBy: null });
   return reply.code(204).send();
 });
 

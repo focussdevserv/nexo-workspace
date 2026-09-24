@@ -8,7 +8,7 @@
 
 O Nexo já tem uma base real: login restrito ao proprietário, API com banco PostgreSQL, CRUD genérico para registros do workspace, notificações persistidas, cobrança e assinatura pelo Mercado Pago, sessão/QR de WhatsApp pelo WAHA, OAuth seguro do Google, portal do cliente com link assinado e deploy pelo Coolify.
 
-Ainda nao e correto classificar todas as integracoes como operacionais. WhatsApp ainda nao envia/recebe pelo provedor; automacoes n8n continuam sem criacao/ativacao de workflows pelo Nexo; arquivos nao tem upload real; assinatura eletronica nao tem provedor. O Calendar agora tem operacoes para criar, atualizar e excluir eventos, convidar e-mails informados e solicitar link do Meet, mas o fluxo OAuth real ainda precisa de teste autenticado em uma conta conectada.
+Ainda nao e correto classificar todas as integracoes como operacionais. A caixa de entrada agora tem envio de texto pela WAHA e webhook de recebimento implementados, mas ainda precisam de validacao com sessao autenticada conectada em producao; automacoes n8n continuam sem criacao/ativacao de workflows pelo Nexo; arquivos nao tem upload real; assinatura eletronica nao tem provedor. O Calendar agora tem operacoes para criar, atualizar e excluir eventos, convidar e-mails informados e solicitar link do Meet, mas o fluxo OAuth real ainda precisa de teste autenticado em uma conta conectada.
 
 **Validacao desta revisao:** builds do frontend e da API passaram; `git diff --check` passou; o dominio respondeu HTTP 200, `/api/health` confirmou o banco conectado e o bundle do commit `4610773` foi servido. `https://n8n.pagfocuss.tech/healthz` e `/healthz/readiness` responderam HTTP 200. Isso valida disponibilidade, nao execucao autenticada de workflow.
 
@@ -86,3 +86,11 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - A agenda passou a oferecer sincronizacao com Google Calendar, campo de convidados e opcao de link Meet. Edicoes e exclusoes de eventos sincronizados propagam para o Calendar.
 - A criacao local continua disponivel quando a conta Google nao esta autorizada; o evento fica marcado como nao sincronizado e a interface explica como conectar.
 - Validei builds e disponibilidade do app/API apos o deploy. Nao criei evento real de teste: a aba Nexo esta sem sessao autenticada, entao nao foi possivel provar o OAuth ou uma chamada real ao Calendar nesta revisao.
+
+
+## Atualizacao de implementacao ? WhatsApp WAHA ? 24/09/2026
+
+- Caixa de entrada consulta sessoes WAHA ativas, permite escolher uma sessao, cria conversas com telefone e identifica o JID brasileiro; novas conversas sao persistidas antes de selecionar o registro do banco.
+- Envio de texto usa endpoint autenticado, limite de requisicoes, verificacao de propriedade da sessao/conversa, idempotencia, persistencia de estado e confirmacao do WAHA. Webhook valida segredo em tempo constante, registra entrada, atualiza confirmacoes e evita duplicidade.
+- Compose configura eventos `message` e `message.ack` e envia cabecalho secreto ao app. A sessao/mensagem real nao foi exercitada nesta revisao para evitar envio a cliente sem controle.
+- `npm run build`, `npm --prefix api run build` e `git diff --check` passaram depois das alteracoes. A implantacao precisa ser confirmada por health check e bundle apos o push.

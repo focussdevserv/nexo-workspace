@@ -64,6 +64,9 @@ services:
     restart: unless-stopped
     environment:
       WAHA_API_KEY: ${WAHA_API_KEY:?Configure WAHA_API_KEY in Coolify}
+      WHATSAPP_HOOK_URL: https://focussdev.space/api/integrations/waha/webhook
+      WHATSAPP_HOOK_EVENTS: message,message.ack
+      WHATSAPP_HOOK_CUSTOM_HEADERS: X-Nexo-WAHA-Token:${WAHA_API_KEY:?Configure WAHA_API_KEY in Coolify}
       WAHA_DASHBOARD_ENABLED: "false"
       WHATSAPP_SWAGGER_ENABLED: "false"
       WAHA_PRINT_QR: "false"
