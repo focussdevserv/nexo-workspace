@@ -38,17 +38,17 @@ Ainda nao e correto classificar todas as integracoes como operacionais. A caixa 
 
 ### P1 — integridade dos fluxos e dados
 
-1. **Vínculos cliente → pagamentos:** a API aceita `clientId`, e o portal busca pagamentos por esse identificador, mas o formulário do `PaymentConsole` envia `clientName` sem selecionar/enviar o ID. Assim, uma cobrança pode não aparecer no portal do cliente.
+1. **Vínculos cliente → pagamentos (resolvido no código):** desde o commit `6772be5`, cobranças e assinaturas carregam clientes do workspace, permitem selecionar o cadastro e enviam `clientId` no POST; a API valida que o cliente pertence à organização e o portal consulta por esse ID. Falta validar a exibição ponta a ponta com uma cobrança controlada.
 2. **Vínculos em registros antigos:** o portal busca projetos/tarefas/contratos/aprovações por `clientId`. Registros legados com apenas nome não aparecem. Foi corrigida a criação nova pela ficha e por conversão de proposta, mas contratos/tarefas criados por outros caminhos ainda precisam de seleção de cliente consistente.
 3. **Ficha do cliente usa correspondência parcial por nome** em vários relacionamentos. Isso pode misturar empresas com nomes parecidos ou falhar com abreviações. A regra-alvo deve ser `clientId`; nome apenas como compatibilidade temporária.
 4. **Eventos e reunioes:** eventos sincronizam com Google Calendar; convidados e link Meet sao opcionais. A agenda conserva o registro no workspace se o Google nao estiver autorizado e indica o estado. Ainda falta verificar em producao a conta OAuth, a propagacao de alteracoes e respostas dos participantes.
 5. **Ativos e monitoramento:** sites/domínios/hospedagens são cadastro manual; uptime, SSL, vencimento real e alerta não são consultados. A tela não deve exibir “online” sem um check real.
 6. **GitHub:** cadastro manual de repositório e teste de token existem; commits, PRs, deploys e status de workflow não são sincronizados. A área ainda contém indicação de deploy simulado.
-7. **Mercado Pago:** cobranças e recorrências estão no caminho real. Falta vincular cliente por ID no formulário, fazer reconciliação de estados pendentes/expirados e comprovar notificação de webhook na produção antes de tratar a baixa como definitiva.
+7. **Mercado Pago:** cobrancas e recorrencias usam o caminho real e o formulario ja envia `clientId` quando um cliente cadastrado e selecionado. Restam reconciliar estados pendentes/expirados e comprovar notificacoes de webhook em producao.
 
 ### P2 — acabamento, previsibilidade e acessibilidade
 
-1. **Rotas do app:** a tela selecionada é guardada em `sessionStorage`, então recarregar na mesma sessão tende a manter o módulo, mas o endereço não representa a tela. Links profundos, histórico Voltar/Avançar e abertura direta de um módulo não são confiáveis.
+1. **Rotas do app (validado em produção):** cada módulo tem URL `/app/<módulo>`. Testei abertura direta de Automações, navegação que atualiza a URL para Integrações, Voltar e recarga mantendo o módulo. O portal público `/portal/<slug>` permanece fora do roteador privado.
 2. **Texto corrompido:** existe ao menos um caractere de substituição no filtro “Concluída” e textos com `?` no rótulo de último teste e em detalhes comerciais.
 3. **Ações de aparência funcional:** “Mais filtros” na toolbar não abre filtro; alguns botões de relatório apenas exibem toast; menus de linha recorrem a mensagens genéricas em vez de abrir edição contextual.
 4. **Hierarquia visual:** há diferenças de escala, espaçamento, estados de foco e tamanho de texto entre módulos. Alguns rótulos e informações secundárias usam fonte muito pequena e contraste fraco; a ficha do cliente reúne oito abas num modal grande e precisa de prioridade/estrutura mais clara em telas menores.
@@ -69,7 +69,7 @@ Ainda nao e correto classificar todas as integracoes como operacionais. A caixa 
 
 1. Padronizar seleção e propagação de `clientId` em cobrança, proposta, contrato, tarefa, projeto, aprovação e evento; revisar a projeção do portal.
 2. Implementar upload e armazenamento de arquivos com associação cliente/projeto; só então habilitar “Enviar arquivo” na ficha e no chat.
-3. Implementar mensagens WAHA (webhook de entrada + envio de texto/mídia + histórico/status), com uma sessão selecionável por conversa.
+3. Validar envio e recebimento WAHA apos parear o numero; concluir envio de midia e confirmar estados de entrega/leitura com uma conversa controlada.
 4. Ligar fluxos de e-mail e calendário aos provedores configurados e apresentar falhas/entregas.
 5. Criar workflows n8n importáveis com ativação, credenciais via ambiente, execuções e logs reais.
 6. Integrar assinatura eletrônica e callbacks; gerar PDF/artefato assinado e registrar evidência no contrato.
@@ -80,23 +80,22 @@ Ainda nao e correto classificar todas as integracoes como operacionais. A caixa 
 
 Esta revisão combinou inspeção estática, compilação e health check. Não executei pagamento, envio de mensagem/e-mail, convite Google, upload, assinatura ou cadastro de dados de validação em produção. Os provedores precisam ser validados com credenciais ativas e eventos reais controlados antes de qualquer promessa de funcionamento ponta a ponta.
 
-## Atualizacao de implementacao ? 24/09/2026
+## Implementacao registrada - Google Calendar - 24/09/2026
 
-- Commit `4610773`: endpoints autenticados do Calendar para criar, atualizar com idempotencia por event ID e excluir eventos; os tokens Google sao obtidos pelo mecanismo OAuth cifrado existente.
-- A agenda passou a oferecer sincronizacao com Google Calendar, campo de convidados e opcao de link Meet. Edicoes e exclusoes de eventos sincronizados propagam para o Calendar.
-- A criacao local continua disponivel quando a conta Google nao esta autorizada; o evento fica marcado como nao sincronizado e a interface explica como conectar.
-- Validei builds e disponibilidade do app/API apos o deploy. Nao criei evento real de teste: a aba Nexo esta sem sessao autenticada, entao nao foi possivel provar o OAuth ou uma chamada real ao Calendar nesta revisao.
+- Commit `4610773`: endpoints autenticados do Calendar para criar, atualizar com idempotência por event ID e excluir eventos; os tokens Google são obtidos pelo mecanismo OAuth cifrado existente.
+- A agenda oferece sincronização com Google Calendar, campo de convidados e opção de link Meet. Edições e exclusões de eventos sincronizados propagam para o Calendar.
+- A criação local continua disponível quando a conta Google não está autorizada; o evento fica marcado como não sincronizado e a interface explica como conectar.
+- Os builds e o health check do app/API passaram. O OAuth e o ciclo real de evento ainda precisam de teste com a conta autorizada.
 
+## Implementacao registrada - WhatsApp WAHA - 24/09/2026
 
-## Atualizacao de implementacao ? WhatsApp WAHA ? 24/09/2026
+- A Caixa de entrada consulta sessões WAHA ativas, permite escolher uma sessão e cria conversas com telefone normalizado; novos registros são salvos antes de serem selecionados.
+- Envio de texto usa endpoint autenticado, limite de requisições, verifica propriedade da sessão e conversa, aplica idempotência e persiste estado. O webhook valida segredo em tempo constante, registra mensagens recebidas, atualiza confirmações e evita duplicidade.
+- O Compose configura os eventos `message` e `message.ack` com cabeçalho secreto. A sessão de produção estava como FAILED; a correção publicada permitiu reiniciá-la e gerar o QR no app. Ela aguarda leitura; envio/recebimento real ainda não foi testado.
+- `npm run build`, `npm --prefix api run build` e `git diff --check` passaram. Coolify publicou os commits `3a3c2b4` e `462be4e`; o app/API voltaram a responder com banco conectado e o n8n readiness respondeu HTTP 200.
 
-- Caixa de entrada consulta sessoes WAHA ativas, permite escolher uma sessao, cria conversas com telefone e identifica o JID brasileiro; novas conversas sao persistidas antes de selecionar o registro do banco. O botao de QR agora tambem tenta iniciar sessoes em estado FAILED.
-- Envio de texto usa endpoint autenticado, limite de requisicoes, verificacao de propriedade da sessao/conversa, idempotencia, persistencia de estado e confirmacao do WAHA. Webhook valida segredo em tempo constante, registra entrada, atualiza confirmacoes e evita duplicidade.
-- Compose configura eventos `message` e `message.ack` e envia cabecalho secreto ao app. A sess?o de produ??o estava como FAILED; a corre??o publicada permitiu reinici?-la e gerar o QR no app, que agora aguarda leitura. A caixa de entrada mostra corretamente que ainda n?o h? sess?o conectada. Envio/recebimento real n?o foi exercitado antes do pareamento e sem conversa controlada.
-- `npm run build`, `npm --prefix api run build` e `git diff --check` passaram depois das alteracoes. A implantacao precisa ser confirmada por health check e bundle apos o push.
+## Atualização de implementação ? navegação e auditoria financeira ? 24/09/2026
 
-
-## Atualiza??o de implementa??o ? navega??o e auditoria financeira ? 24/09/2026
-
-- A auditoria confirmou que cobran?as e assinaturas j? enviam `clientId` quando o operador escolhe um cliente existente; a API valida o v?nculo na mesma organiza??o. A limita??o remanescente ? comprovar a exibi??o no portal com dados controlados.
-- Implementadas URLs est?veis `/app/<m?dulo>`, abertura direta por endere?o, sincroniza??o com Voltar/Avan?ar e migra??o da rota inicial ao m?dulo preservado. Rotas `/portal/<slug>` continuam p?blicas. Build de produ??o do frontend passou; comportamento de navegador e deploy ainda pendentes de valida??o nesta revis?o.
+- Cobranças e assinaturas enviam `clientId` quando o operador seleciona um cliente existente; a API valida o vínculo dentro da organização. Falta provar a exibição no portal com uma cobrança controlada.
+- O frontend usa URLs estáveis `/app/<módulo>`, abertura direta, sincronização com Voltar/Avançar e restauração após recarga. A rota pública `/portal/<slug>` segue separada.
+- Build passou. No Chrome autenticado, abri `/app/automacoes` diretamente, naveguei para Integrações, usei Voltar e recarreguei; o endereço e o módulo permaneceram corretos. Coolify marcou o commit `6db738b` como sucesso; API e banco responderam saudáveis.
