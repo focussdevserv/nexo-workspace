@@ -15,6 +15,7 @@ import WorkspaceAccess from './screens/WorkspaceAccess.jsx';
 import { apiRequest } from './lib/workspace-api.js';
 import { purgeFictitiousLocalData } from './lib/demo-data.js';
 import './screens/forms-polish.css';
+import './screens/buttons-polish.css';
 
 purgeFictitiousLocalData();
 

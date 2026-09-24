@@ -1,0 +1,36 @@
+/* Shared button states and action hierarchy for the entire workspace. */
+.app-shell button,
+.cp-public-page button { transition: color .16s ease, background-color .16s ease, border-color .16s ease, box-shadow .16s ease, transform .16s ease; }
+
+.app-shell button:disabled,
+.cp-public-page button:disabled { opacity: .56; cursor: not-allowed; transform: none!important; box-shadow: none!important; }
+.app-shell button:focus-visible,
+.cp-public-page button:focus-visible { outline: 3px solid rgb(89 139 224 / 42%); outline-offset: 2px; }
+
+.app-shell :is(.primary-button,.module-create-button,.ns-primary,.admin-primary,.com-primary,.work-button-primary,.workspace-access-submit),
+.cp-public-page .admin-primary { min-height: 38px; border: 1px solid #1b2635; border-radius: 9px; background: #1b2635; color: #fff!important; font-weight: 650; box-shadow: 0 3px 8px rgb(27 38 53 / 12%); }
+.app-shell :is(.primary-button,.module-create-button,.ns-primary,.admin-primary,.com-primary,.work-button-primary,.workspace-access-submit):hover:not(:disabled),
+.cp-public-page .admin-primary:hover:not(:disabled) { border-color: #2d3a4d; background: #2d3a4d; box-shadow: 0 5px 12px rgb(27 38 53 / 16%); transform: translateY(-1px); }
+.app-shell :is(.primary-button,.module-create-button,.ns-primary,.admin-primary,.com-primary,.work-button-primary,.workspace-access-submit):active:not(:disabled),
+.cp-public-page .admin-primary:active:not(:disabled) { transform: translateY(0) scale(.985); box-shadow: 0 1px 3px rgb(27 38 53 / 14%); }
+
+.app-shell :is(.ns-secondary,.admin-secondary,.com-secondary,.work-button-quiet),
+.cp-public-page .admin-secondary { border: 1px solid #dfe5ec; border-radius: 9px; background: #fff; color: #3d495a; font-weight: 600; }
+.app-shell :is(.ns-secondary,.admin-secondary,.com-secondary,.work-button-quiet):hover:not(:disabled),
+.cp-public-page .admin-secondary:hover:not(:disabled) { border-color: #cbd4df; background: #f7f9fb; color: #202b3a; }
+.app-shell :is(.ns-secondary,.admin-secondary,.com-secondary,.work-button-quiet):active:not(:disabled),
+.cp-public-page .admin-secondary:active:not(:disabled) { background: #edf1f5; transform: scale(.985); }
+
+.app-shell :is(.icon-button,.ns-icon-button,.com-icon-action,.admin-icon-button,.team-row-menu button,.goal-item-menu button,.ns-sub-actions button,.ns-automation-row-actions button),
+.cp-public-page .cp-action-button { transition: color .15s ease, background-color .15s ease, border-color .15s ease, box-shadow .15s ease, transform .15s ease; }
+.app-shell :is(.icon-button,.ns-icon-button,.com-icon-action,.admin-icon-button,.team-row-menu button,.goal-item-menu button,.ns-sub-actions button,.ns-automation-row-actions button):hover:not(:disabled),
+.cp-public-page .cp-action-button:hover:not(:disabled) { transform: translateY(-1px); }
+.app-shell :is(.icon-button,.ns-icon-button,.com-icon-action,.admin-icon-button,.team-row-menu button,.goal-item-menu button,.ns-sub-actions button,.ns-automation-row-actions button):active:not(:disabled),
+.cp-public-page .cp-action-button:active:not(:disabled) { transform: translateY(0) scale(.96); }
+
+.app-shell :is(.danger,.com-delete-action,.file-remove):hover:not(:disabled) { border-color: #edc9c8; background: #fff5f4; color: #a83f3a; }
+.app-shell :is(.ns-link-button,.ns-text-button,.admin-link,.cp-action-button,.pay-back,.pay-mode-switch,.workspace-access-switch):hover:not(:disabled) { text-decoration: underline; text-underline-offset: 3px; }
+
+@media(prefers-reduced-motion:reduce) {
+  .app-shell button,.cp-public-page button { transition-duration: .01ms!important; }
+}
