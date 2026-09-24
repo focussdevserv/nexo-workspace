@@ -221,3 +221,8 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - A criacao de projeto pelo template de servico agora exige cliente cadastrado e persiste projeto e tarefas relacionadas no workspace; antes apenas mostrava uma confirmacao sem gravar os registros.
 - Ao escolher um servico numa proposta, o formulario preenche escopo, prazo e ciclo mensal quando definidos no catalogo, e preserva o valor digitado quando o servico ainda nao tem preco.
 - Cobertura adicionada para deduplicacao, criacao do projeto/tarefas e exigencia de cliente existente.
+## Proposta e variantes do catalogo - 24/09/2026
+
+- Inspecao de producao encontrou 88 servicos ja cadastrados. Quatro nomes repetidos existem porque o catalogo original apresenta o mesmo nome em grupos distintos; mantive essas variantes e alterei a chave de importacao para grupo + nome.
+- A selecao de servico em proposta agora guarda e resolve o ID do registro, evitando escolher o template errado para variantes com o mesmo nome.
+- Foram repetidos os 18 testes da API e builds; todos passaram. Bundle Vite em 504.99 kB.

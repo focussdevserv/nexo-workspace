@@ -3,12 +3,13 @@ import test from 'node:test';
 import { mergeRequestedServiceCatalog, requestedServiceCatalog } from '../../src/data/service-catalog.js';
 import { buildServiceProject } from '../../src/data/service-project-template.js';
 
-test('imports each requested service once and skips names already stored', () => {
+test('imports each service group once while preserving same-name catalog variants', () => {
   const additions = mergeRequestedServiceCatalog([], requestedServiceCatalog);
-  const names = additions.map((item) => item.name.toLocaleLowerCase('pt-BR'));
-  assert.equal(new Set(names).size, names.length);
-  assert.ok(names.includes('site one page'));
-  assert.ok(mergeRequestedServiceCatalog([{ name: 'site one page' }], requestedServiceCatalog).every((item) => item.name !== 'Site One Page'));
+  const keys = additions.map((item) => `${item.catalogGroup}|${item.name.toLocaleLowerCase('pt-BR')}`);
+  assert.equal(new Set(keys).size, keys.length);
+  assert.ok(additions.filter((item) => item.name === 'Site One Page').length > 1);
+  assert.ok(!mergeRequestedServiceCatalog([{ name: 'Site One Page', catalogGroup: 'Serviços avulsos' }], requestedServiceCatalog).some((item) => item.name === 'Site One Page' && item.catalogGroup === 'Serviços avulsos'));
+  assert.ok(mergeRequestedServiceCatalog([{ name: 'Site One Page' }], requestedServiceCatalog).every((item) => item.name !== 'Site One Page'));
   assert.ok(additions.every((item) => !item.price && item.status === 'Rascunho'));
 });
 

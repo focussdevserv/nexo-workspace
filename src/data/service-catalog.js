@@ -55,11 +55,18 @@ export const requestedServiceCatalog = Object.entries(catalogGroups).flatMap(([g
 })));
 
 export function mergeRequestedServiceCatalog(existingServices = [], requestedServices = requestedServiceCatalog) {
-  const names = new Set(existingServices.map((item) => String(item.name || '').trim().toLocaleLowerCase('pt-BR')));
+  const normalize = (value) => String(value || '').trim().toLocaleLowerCase('pt-BR');
+  const groupKey = (item) => `${normalize(item.catalogGroup)}\u001f${normalize(item.name)}`;
+  const names = new Set(existingServices.flatMap((item) => {
+    const name = normalize(item.name);
+    return item.catalogGroup ? [groupKey(item)] : [`*\u001f${name}`];
+  }));
   return requestedServices.filter((item) => {
-    const name = String(item.name || '').trim().toLocaleLowerCase('pt-BR');
-    if (!name || names.has(name)) return false;
-    names.add(name);
+    const name = normalize(item.name);
+    if (!name) return false;
+    const key = groupKey(item);
+    if (names.has(key) || names.has(`*\u001f${name}`)) return false;
+    names.add(key);
     return true;
   });
 }
