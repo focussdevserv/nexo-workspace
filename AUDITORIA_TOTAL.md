@@ -106,3 +106,10 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - A credencial Resend foi aplicada ao servico API pelo Coolify e o teste de producao consultou a API de dominios sem enviar mensagens; resposta: 1 dominio disponivel. Resend aparece habilitado e conectado no ultimo teste.
 - Ainda nao ha operacao de envio de e-mail dentro dos fluxos de propostas, contratos, cobrancas ou notificacoes. A credencial valida nao habilita esses fluxos.
 - Corrigido em `src/screens/ServiceScreens.jsx` o rotulo corrompido do ultimo teste; build e deploy passaram e a tela foi conferida em producao apos o commit `33f9f47`.
+
+## Auditoria complementar - catalogo e n8n
+
+- O catalogo informado pelo proprietario ja esta persistido no workspace: a tela de Servicos mostra 88 itens. Os precos e prazos estao em branco para evitar valores inventados; a proposta aceita importa checklist/modelo de tarefa do servico selecionado.
+- O estado anterior do n8n era impreciso: health check da instancia nao prova que a API esta autenticada. A integracao foi alterada para exigir `N8N_API_KEY` e validar `GET /api/v1/workflows?limit=1` com o cabecalho de API key, sem executar fluxos.
+- `N8N_API_KEY` foi adicionado ao Compose, ao exemplo de ambiente e ao guia visual. Sem essa chave, n8n deve aparecer como nao configurado, mesmo que `/healthz` esteja saudavel.
+- A tela `https://n8n.pagfocuss.tech` mostra no Chrome um aviso de site perigoso. Nao foi enviada senha nem API key para essa origem. O acesso administrativo precisa ser feito em um hostname seguro antes de gerar e aplicar uma API key; ate entao, criar workflows e validar execucoes reais permanece bloqueado por seguranca.

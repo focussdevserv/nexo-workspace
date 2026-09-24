@@ -229,7 +229,7 @@ function integrationConfigured(provider: IntegrationProvider) {
     resend: Boolean(process.env.RESEND_API_KEY),
     google: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
     github: Boolean(process.env.GITHUB_TOKEN),
-    n8n: Boolean(process.env.N8N_BASE_URL),
+    n8n: Boolean(process.env.N8N_BASE_URL && process.env.N8N_API_KEY),
     sentry: Boolean(process.env.SENTRY_DSN),
   })[provider];
 }
@@ -722,10 +722,13 @@ app.post('/api/integrations/:provider/test', { preHandler: app.authenticate, con
     }
     if (provider === 'n8n') {
       const baseUrl = process.env.N8N_BASE_URL?.replace(/\/$/, '');
-      if (!baseUrl) return unavailable('Configure N8N_BASE_URL no serviço API.');
-      const response = await fetch(`${baseUrl}/healthz`, { signal: AbortSignal.timeout(8_000) });
-      if (!response.ok) return failed(`n8n respondeu com HTTP ${response.status} no health check.`);
-      return tested('connected', 'n8n respondeu ao health check interno.');
+      const apiKey = process.env.N8N_API_KEY;
+      if (!baseUrl || !apiKey) return unavailable('Configure N8N_BASE_URL e N8N_API_KEY no serviço API. Gere a chave em Configurações > n8n API na sua instância n8n.');
+      const response = await fetch(`${baseUrl}/api/v1/workflows?limit=1`, { headers: { 'X-N8N-API-KEY': apiKey, Accept: 'application/json' }, signal: AbortSignal.timeout(8_000) });
+      if (response.status === 401 || response.status === 403) return failed('n8n recusou a API key. Gere uma chave válida em Configurações > n8n API e atualize o Coolify.');
+      if (!response.ok) return failed(`A API pública do n8n respondeu com HTTP ${response.status}. Confira a URL e a versão da instância.`);
+      const result = await response.json() as { data?: unknown[] };
+      return tested('connected', `API do n8n autenticada. ${result.data?.length ?? 0} workflow(s) retornado(s) nesta consulta.`);
     }
     return tested('setup_required', 'O DSN do Sentry está no servidor, mas validar a ingestão exige enviar um evento de teste que criaria um evento no projeto.');
   } catch (error) {

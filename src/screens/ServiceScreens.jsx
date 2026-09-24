@@ -431,7 +431,7 @@ function Integrations({ notify }) {
     Resend: { provider: 'resend', vars: ['RESEND_API_KEY'], note: 'O teste consulta os domínios da conta. Ele não envia e-mails.' },
     'Google Workspace': { provider: 'google', vars: ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_REDIRECT_URI'], note: 'Conecte sua conta Google para habilitar Gmail, Calendar, Drive e reuniões Meet. Cadastre no Google Cloud a URI de retorno exibida no servidor.' },
     GitHub: { provider: 'github', vars: ['GITHUB_TOKEN'], note: 'O teste consulta a identidade do token. Use um token com o menor conjunto de permissões necessário.' },
-    n8n: { provider: 'n8n', vars: ['N8N_BASE_URL'], note: 'O teste consulta o health check interno. A API usa http://n8n:5678 na rede privada do Compose; nenhum webhook é disparado.' },
+    n8n: { provider: 'n8n', vars: ['N8N_BASE_URL', 'N8N_API_KEY'], note: 'Gere uma API key em Configurações > n8n API no n8n e salve em N8N_API_KEY no Coolify. O teste consulta a API autenticada de workflows, sem criar, ativar ou executar nenhum fluxo.' },
     Sentry: { provider: 'sentry', vars: ['SENTRY_DSN'], note: 'O teste não envia um evento artificial ao Sentry, para não criar um incidente falso no projeto.' },
   };
   const testConnection = async () => {
