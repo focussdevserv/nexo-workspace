@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mapN8nCollections } from '../src/integrations/n8n.ts';
+import { buildN8nAutomationWorkflow, mapN8nCollections, n8nAutomationTemplates } from '../src/integrations/n8n.ts';
 
 test('maps n8n workflow and execution lists to safe summaries', () => {
   const mapped = mapN8nCollections([
@@ -25,4 +25,24 @@ test('maps n8n workflow and execution lists to safe summaries', () => {
 
 test('handles empty or malformed n8n list entries', () => {
   assert.deepEqual(mapN8nCollections([{}, 'invalid'], [null, {}]), { workflows: [], executions: [] });
+});
+
+test('creates authenticated webhook workflows without retaining execution data', () => {
+  const workflow = buildN8nAutomationWorkflow({
+    automationId: '9b68be20-4709-45f5-9b29-668b21e7fd12', templateId: 'new-lead-follow-up',
+    name: 'Lead follow-up', webhookPath: 'nexo/6d206c5b-0671-4662-99dc-f9297dc41df0',
+    callbackUrl: 'https://focussdev.space/api/integrations/n8n/actions', credentialId: 'nexo-bridge-v1',
+  });
+  assert.equal(workflow.nodes[0]?.parameters.authentication, 'headerAuth');
+  assert.equal(workflow.nodes[0]?.parameters.path, 'nexo/6d206c5b-0671-4662-99dc-f9297dc41df0');
+  assert.equal(workflow.nodes[0]?.parameters.responseMode, 'lastNode');
+  assert.equal(workflow.nodes[0]?.credentials.httpHeaderAuth.id, 'nexo-bridge-v1');
+  assert.equal(workflow.nodes[1]?.parameters.url, 'https://focussdev.space/api/integrations/n8n/actions');
+  assert.equal(workflow.nodes[1]?.credentials.httpHeaderAuth.id, 'nexo-bridge-v1');
+  assert.equal(workflow.settings.saveDataSuccessExecution, 'none');
+  assert.equal(workflow.settings.saveDataErrorExecution, 'none');
+  assert.equal(workflow.settings.saveManualExecutions, false);
+  assert.equal(JSON.stringify(workflow).includes('credential-secret'), false);
+  assert.deepEqual(n8nAutomationTemplates['new-lead-follow-up'], { eventKey: 'lead.created', taskKind: 'lead' });
+  assert.equal(Object.hasOwn(n8nAutomationTemplates, 'overdue-payment-reminder'), false);
 });

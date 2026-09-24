@@ -149,3 +149,10 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - Google Auth Platform: o projeto `Nexo Workspace` está External/Testing, com `emprisefocussdev@gmail.com` incluído como usuário de teste. A marca ainda acusa domínio autorizado ausente para `focussdev.space`. Não há cliente OAuth web ativo; sem DNS/validação de domínio e uma forma segura de guardar o segredo diretamente no serviço API, o OAuth não foi habilitado no Coolify. URI de callback planejada: `https://focussdev.space/api/integrations/google/callback`.
 - Prioridades operacionais mantidas: (1) acessar a conta/zona DNS correta, publicar e verificar `focussdev.space` e criar hostname seguro para n8n; (2) gerar a chave API do n8n na origem validada e salvá-la somente no Coolify; (3) concluir cliente OAuth Google e armazenar credenciais somente no Coolify; (4) testar QR/pareamento WAHA e mensagens reais controladas; (5) implementar CRUD/ativação/execução/logs de workflows n8n; (6) continuar testes E2E sem registros artificiais para financeiro, documentos, arquivos, Gmail e portal.
 - A pasta `output/` já estava não rastreada antes desta revisão e foi preservada.
+
+## N8N EVENT AUTOMATION UPDATE - 2026-09-24
+
+- The app now creates authenticated n8n workflows for lead-created, proposal-accepted, payment-confirmed, project-published, and ticket-created events. The server provisions the bridge credential; its secret is not returned to the browser. Generated workflows disable successful, failed, and manual execution data persistence.
+- Backend events call published n8n webhooks. The callback verifies the bridge signature in constant time, validates the linked automation and event, and creates a workspace task. Webhook responses wait for the final action node.
+- The overdue-payment model remains a local draft. It is deliberately excluded from remote workflow creation because no scheduled `payment.overdue` event emitter exists yet.
+- Frontend/API builds, `git diff --check`, and 11 API tests passed. Remote workflow creation and execution remain unverified until a safe n8n hostname and `N8N_API_KEY` are configured in Coolify.

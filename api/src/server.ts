@@ -15,7 +15,7 @@ import { db, pool } from './db/index.js';
 import { activityEvents, billingOrders, billingSubscriptions, clients, organizations, users, workspaceRecords } from './db/schema.js';
 import { isSafeWorkspaceData } from './security/workspace-data.js';
 import { renderProposalEmail } from './email/proposal.js';
-import { mapN8nCollections } from './integrations/n8n.js';
+import { mapN8nCollections, n8nAutomationTemplates, buildN8nAutomationWorkflow, type N8nAutomationTemplateId } from './integrations/n8n.js';
 
 const env = z.object({
   PORT: z.coerce.number().int().positive().default(3001),
@@ -42,7 +42,7 @@ await app.register(jwt, { secret: env.JWT_SECRET, cookie: { cookieName: 'nexo_se
 const allowedOrigins = env.APP_ORIGIN.split(',').map((origin) => z.string().url().parse(origin.trim()));
 let ownerAccountId: string | null = null;
 app.addHook('onRequest', async (request, reply) => {
-  if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method) || request.url.startsWith('/api/integrations/mercadopago/webhook') || request.url === '/api/integrations/waha/webhook') return;
+  if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method) || request.url.startsWith('/api/integrations/mercadopago/webhook') || request.url === '/api/integrations/waha/webhook' || request.url === '/api/integrations/n8n/actions') return;
   const origin = request.headers.origin;
   if (!origin || !allowedOrigins.includes(origin)) return reply.code(403).send({ error: 'origin_forbidden', message: 'Origem da solicitacao nao autorizada.' });
 });
@@ -762,6 +762,141 @@ async function n8nApiRequest(path: string, init: RequestInit = {}) {
   return data;
 }
 
+const n8nWebhookHeader = 'X-Nexo-Signature';
+const n8nWebhookSecret = createHmac('sha256', env.JWT_SECRET).update('nexo-workspace-automation-bridge-v1').digest('hex');
+async function getN8nWebhookCredential() {
+  const existing = await n8nApiRequest('/credentials?limit=250') as { data?: Array<{ id?: string; name?: string; type?: string }> };
+  const match = existing.data?.find((item) => item.name === 'Nexo Workspace Automation Bridge' && item.type === 'httpHeaderAuth');
+  const credentialData = { name: n8nWebhookHeader, value: n8nWebhookSecret };
+  if (match?.id) {
+    await n8nApiRequest(`/credentials/${encodeURIComponent(match.id)}`, { method: 'PATCH', body: JSON.stringify({ data: credentialData, isPartialData: false }) });
+    return { id: match.id, name: 'Nexo Workspace Automation Bridge' };
+  }
+  const created = await n8nApiRequest('/credentials', { method: 'POST', body: JSON.stringify({ name: 'Nexo Workspace Automation Bridge', type: 'httpHeaderAuth', data: credentialData }) }) as { id?: string };
+  if (!created.id) throw new Error('n8n_credential_create_failed');
+  return { id: created.id, name: 'Nexo Workspace Automation Bridge' };
+}
+
+async function dispatchN8nEvent(organizationId: string, eventKey: string, record: Record<string, unknown>) {
+  const baseUrl = process.env.N8N_BASE_URL?.replace(/\/$/, '');
+  const apiKey = process.env.N8N_API_KEY;
+  if (!baseUrl || !apiKey || !await isIntegrationEnabled(organizationId, 'n8n')) return;
+  const automations = await db.select().from(workspaceRecords).where(and(
+    eq(workspaceRecords.organizationId, organizationId), eq(workspaceRecords.resource, 'automations'), isNull(workspaceRecords.archivedAt),
+    sql`${workspaceRecords.data}->>'eventKey' = ${eventKey}`, sql`${workspaceRecords.data}->>'active' = 'true'`,
+  ));
+  const eventId = randomUUID();
+  await Promise.all(automations.map(async (row) => {
+    const path = String(row.data.n8nWebhookPath ?? '');
+    if (!/^nexo\/[0-9a-f-]{36}$/i.test(path)) return;
+    try {
+      const response = await fetch(new URL(`/webhook/${path}`, `${baseUrl}/`), {
+        method: 'POST', signal: AbortSignal.timeout(8_000),
+        headers: { 'Content-Type': 'application/json', [n8nWebhookHeader]: n8nWebhookSecret },
+        body: JSON.stringify({ eventId, eventKey, record }),
+      });
+      if (!response.ok) app.log.warn({ eventKey, statusCode: response.status }, 'n8n event delivery failed');
+    } catch (error) { app.log.warn({ eventKey, error: error instanceof Error ? error.name : 'unknown' }, 'n8n event delivery failed'); }
+  }));
+}
+
+app.post('/api/integrations/n8n/actions', { config: { rateLimit: { max: 120, timeWindow: '1 minute' } } }, async (request, reply) => {
+  const provided = request.headers[n8nWebhookHeader.toLowerCase()];
+  if (typeof provided !== 'string' || Buffer.byteLength(provided) !== Buffer.byteLength(n8nWebhookSecret) || !timingSafeEqual(Buffer.from(provided), Buffer.from(n8nWebhookSecret))) return reply.code(401).send({ error: 'automation_unauthorized' });
+  const body = parseBody(z.object({
+    automationId: z.string().uuid(),
+    event: z.object({ eventId: z.string().uuid(), eventKey: z.string().min(1).max(80), record: z.record(z.string(), z.unknown()) }).refine((value) => isSafeWorkspaceData(value.record)),
+  }), request.body, reply);
+  if (!body) return;
+  const [automation] = await db.select().from(workspaceRecords).where(and(
+    eq(workspaceRecords.id, body.automationId), eq(workspaceRecords.resource, 'automations'), isNull(workspaceRecords.archivedAt),
+    sql`${workspaceRecords.data}->>'active' = 'true'`, sql`${workspaceRecords.data}->>'eventKey' = ${body.event.eventKey}`,
+  )).limit(1);
+  if (!automation) return reply.code(404).send({ error: 'automation_not_found' });
+  const templateId = String(automation.data.templateId ?? '') as N8nAutomationTemplateId;
+  const template = n8nAutomationTemplates[templateId];
+  if (!template || template.eventKey !== body.event.eventKey) return reply.code(409).send({ error: 'automation_action_not_allowed' });
+  const event = body.event.record;
+  const sourceId = String(event.id ?? '');
+  const [existingEventTask] = await db.select({ id: workspaceRecords.id }).from(workspaceRecords).where(and(
+    eq(workspaceRecords.organizationId, automation.organizationId), eq(workspaceRecords.resource, 'tasks'), isNull(workspaceRecords.archivedAt),
+    sql`${workspaceRecords.data}->>'n8nEventId' = ${body.event.eventId}`,
+  )).limit(1);
+  if (existingEventTask) return { data: { status: 'already_processed', taskId: existingEventTask.id } };
+  if (template.taskKind === 'lead' && sourceId) {
+    const [nativeTask] = await db.select({ id: workspaceRecords.id }).from(workspaceRecords).where(and(
+      eq(workspaceRecords.organizationId, automation.organizationId), eq(workspaceRecords.resource, 'tasks'), isNull(workspaceRecords.archivedAt),
+      sql`${workspaceRecords.data}->>'automationKey' = 'lead-first-contact'`, sql`${workspaceRecords.data}->>'sourceLeadId' = ${sourceId}`,
+    )).limit(1);
+    if (nativeTask) return { data: { status: 'already_applied', taskId: nativeTask.id } };
+  }
+  if (template.taskKind === 'project' && sourceId) {
+    const [nativeTask] = await db.select({ id: workspaceRecords.id }).from(workspaceRecords).where(and(
+      eq(workspaceRecords.organizationId, automation.organizationId), eq(workspaceRecords.resource, 'tasks'), isNull(workspaceRecords.archivedAt),
+      sql`${workspaceRecords.data}->>'automationKey' = 'project-delivery-follow-up'`, sql`${workspaceRecords.data}->>'projectId' = ${sourceId}`,
+    )).limit(1);
+    if (nativeTask) return { data: { status: 'already_applied', taskId: nativeTask.id } };
+  }
+  const label = String(event.name ?? event.title ?? event.description ?? sourceId ?? 'registro').trim().slice(0, 160) || 'registro';
+  const clientName = String(event.client ?? event.clientName ?? event.company ?? '').trim().slice(0, 160);
+  const dueDays = template.taskKind === 'project' ? 7 : template.taskKind === 'lead' || template.taskKind === 'proposal' ? 1 : 0;
+  const due = new Date(Date.now() + dueDays * 86_400_000).toISOString().slice(0, 10);
+  const titlePrefix: Record<typeof template.taskKind, string> = {
+    lead: 'Primeiro contato', proposal: 'Preparar início do projeto', payment: 'Revisar pagamento recebido',
+    project: 'Acompanhar entrega', ticket: 'Atender chamado',
+  };
+  const data = {
+    title: `${titlePrefix[template.taskKind]} · ${label}`.slice(0, 220), client: clientName, project: String(event.project ?? ''), due,
+    status: 'A fazer', priority: template.taskKind === 'lead' || template.taskKind === 'ticket' ? 'Alta' : 'Normal', assignee: '',
+    automationKey: `n8n:${template.taskKind}`, sourceN8nAutomationId: automation.id, n8nEventId: body.event.eventId,
+    ...(template.taskKind === 'lead' ? { sourceLeadId: sourceId } : {}), ...(template.taskKind === 'project' ? { projectId: sourceId } : {}),
+  };
+  const [task] = await db.transaction(async (tx) => {
+    const rows = await tx.insert(workspaceRecords).values({ organizationId: automation.organizationId, createdBy: ownerAccountId, resource: 'tasks', data }).returning();
+    await tx.insert(activityEvents).values({ organizationId: automation.organizationId, actorUserId: ownerAccountId, entityType: 'tasks', entityId: rows[0]!.id, action: 'created', payload: { automation: `n8n:${template.taskKind}`, sourceN8nAutomationId: automation.id } });
+    return rows;
+  });
+  return { data: { status: 'processed', taskId: task!.id } };
+});
+
+app.post('/api/workspace/automations/:id/n8n-workflow', { preHandler: app.authenticate, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
+  const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
+  if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Identificador de automação inválido.' });
+  if (!process.env.N8N_BASE_URL || !process.env.N8N_API_KEY) return reply.code(503).send({ error: 'n8n_not_configured', message: 'Configure a URL segura do n8n e uma chave com permissões de workflow e credenciais no Coolify.' });
+  if (!await isIntegrationEnabled(request.user.organizationId, 'n8n')) return reply.code(409).send({ error: 'integration_disconnected', message: 'Reative o n8n em Integrações antes de criar workflows.' });
+  const [automation] = await db.select().from(workspaceRecords).where(and(
+    eq(workspaceRecords.id, params.data.id), eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'automations'), isNull(workspaceRecords.archivedAt),
+  )).limit(1);
+  if (!automation) return reply.code(404).send({ error: 'not_found', message: 'Automação não encontrada.' });
+  if (automation.data.n8nWorkflowId) return reply.code(409).send({ error: 'workflow_already_created', message: 'Esta automação já está associada a um workflow do n8n.' });
+  const templateId = String(automation.data.templateId ?? '') as N8nAutomationTemplateId;
+  if (!Object.hasOwn(n8nAutomationTemplates, templateId)) return reply.code(400).send({ error: 'automation_template_unsupported', message: 'Escolha um modelo compatível para criar o workflow n8n.' });
+  let remoteWorkflowId = '';
+  try {
+    const credential = await getN8nWebhookCredential();
+    const webhookPath = `nexo/${randomUUID()}`;
+    const callbackUrl = new URL('/api/integrations/n8n/actions', allowedOrigins[0]).toString();
+    const workflow = buildN8nAutomationWorkflow({ automationId: automation.id, templateId, name: String(automation.data.name ?? 'Automação'), webhookPath, callbackUrl, credentialId: credential.id });
+    const created = await n8nApiRequest('/workflows', { method: 'POST', body: JSON.stringify(workflow) }) as { id?: string };
+    if (!created.id) throw new Error('n8n_workflow_create_failed');
+    remoteWorkflowId = created.id;
+    const eventKey = n8nAutomationTemplates[templateId].eventKey;
+    const data = { ...automation.data, n8nWorkflowId: created.id, n8nWebhookPath: webhookPath, eventKey, active: false, status: 'draft' };
+    const [saved] = await db.update(workspaceRecords).set({ data, updatedAt: new Date() }).where(and(
+      eq(workspaceRecords.id, automation.id), eq(workspaceRecords.organizationId, request.user.organizationId), isNull(workspaceRecords.archivedAt),
+      sql`NOT (${workspaceRecords.data} ? 'n8nWorkflowId')`,
+    )).returning();
+    if (!saved) throw new Error('automation_changed_during_create');
+    await db.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'automations', entityId: saved.id, action: 'n8n_workflow_created', payload: { n8nWorkflowId: created.id, eventKey } });
+    return reply.code(201).send({ data: { ...saved.data, id: saved.id, createdAt: saved.createdAt, updatedAt: saved.updatedAt } });
+  } catch (error) {
+    if (remoteWorkflowId) { try { await n8nApiRequest(`/workflows/${encodeURIComponent(remoteWorkflowId)}`, { method: 'DELETE' }); } catch { app.log.error({ workflowId: remoteWorkflowId }, 'Could not clean up n8n workflow after failed link'); } }
+    const statusCode = (error as { statusCode?: number }).statusCode ?? 502;
+    const message = statusCode === 403 ? 'A chave de API precisa de permissões credential:list, credential:create, credential:update e workflow:create.' : 'Não foi possível criar e vincular o workflow. Atualize a integração e tente novamente.';
+    return reply.code(statusCode).send({ error: 'n8n_workflow_create_failed', message });
+  }
+});
+
 app.get('/api/integrations/n8n/workflows', { preHandler: app.authenticate, config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {
   if (!process.env.N8N_BASE_URL || !process.env.N8N_API_KEY) return reply.code(503).send({ error: 'n8n_not_configured', message: 'Configure a URL segura do n8n e a chave da API no Coolify.' });
   if (!await isIntegrationEnabled(request.user.organizationId, 'n8n')) return reply.code(409).send({ error: 'integration_disconnected', message: 'Reative o n8n em Integrações para consultar workflows.' });
@@ -792,6 +927,15 @@ app.post('/api/integrations/n8n/workflows/:id/:action', { preHandler: app.authen
     const verified = await n8nApiRequest(`/workflows/${encodeURIComponent(id)}`) as Record<string, unknown>;
     const active = verified.active === true;
     if (active !== (action === 'publish')) return reply.code(502).send({ error: 'n8n_publish_not_confirmed', message: 'O n8n não confirmou o estado solicitado. Atualize a lista antes de tentar novamente.' });
+    const linkedAutomations = await db.select().from(workspaceRecords).where(and(
+      eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'automations'), isNull(workspaceRecords.archivedAt),
+      sql`${workspaceRecords.data}->>'n8nWorkflowId' = ${id}`,
+    ));
+    for (const automation of linkedAutomations) {
+      const data = { ...automation.data, active, status: active ? 'connected' : 'draft' };
+      await db.update(workspaceRecords).set({ data, updatedAt: new Date() }).where(eq(workspaceRecords.id, automation.id));
+      await db.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'automations', entityId: automation.id, action: active ? 'n8n_workflow_published' : 'n8n_workflow_unpublished', payload: { n8nWorkflowId: id } });
+    }
     return { data: { id, active, name: verified.name ?? '' } };
   } catch (error) {
     const statusCode = (error as { statusCode?: number }).statusCode ?? 502;
@@ -1068,10 +1212,12 @@ app.post('/api/integrations/mercadopago/webhook', async (request, reply) => {
       const order = await mercadoPago<Record<string, any>>(`/v1/orders/${encodeURIComponent(resourceId)}`);
       const externalReference = String(order.external_reference ?? '');
       const details = paymentDetailsFromOrder(order);
-      const [local] = await db.select({ id: billingOrders.id, organizationId: billingOrders.organizationId }).from(billingOrders).where(eq(billingOrders.id, externalReference)).limit(1);
+      const [local] = await db.select({ id: billingOrders.id, organizationId: billingOrders.organizationId, status: billingOrders.status, description: billingOrders.description, clientName: billingOrders.clientName, amount: billingOrders.amount }).from(billingOrders).where(eq(billingOrders.id, externalReference)).limit(1);
       if (local) {
-        await db.update(billingOrders).set({ status: providerStatus(details.status), statusDetail: details.statusDetail, mpPaymentId: details.paymentId, paymentDetails: details as Record<string, unknown>, updatedAt: new Date() }).where(eq(billingOrders.id, local.id));
+        const nextStatus = providerStatus(details.status);
+        await db.update(billingOrders).set({ status: nextStatus, statusDetail: details.statusDetail, mpPaymentId: details.paymentId, paymentDetails: details as Record<string, unknown>, updatedAt: new Date() }).where(eq(billingOrders.id, local.id));
         await db.insert(activityEvents).values({ organizationId: local.organizationId, entityType: 'billing_order', entityId: local.id, action: 'provider_updated', payload: { status: providerStatus(details.status) } });
+        if (nextStatus === 'paid' && local.status !== 'paid') void dispatchN8nEvent(local.organizationId, 'payment.confirmed', { id: local.id, title: local.description, client: local.clientName, amount: local.amount });
       }
     } else if (topic === 'subscription_preapproval') {
       const remote = await mercadoPago<Record<string, any>>(`/preapproval/${encodeURIComponent(resourceId)}`);
@@ -1162,16 +1308,24 @@ app.post('/api/workspace/:resource', { preHandler: app.authenticate }, async (re
     const created = await tx.insert(workspaceRecords).values({ organizationId: request.user.organizationId, createdBy: request.user.sub, resource: params.data.resource, data: body.data }).returning();
     await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: params.data.resource, entityId: created[0]!.id, action: 'created', payload: { label: body.data.name ?? body.data.title ?? body.data.clientName ?? '' } });
     if (params.data.resource === 'leads') {
-      const leadName = String(body.data.name ?? body.data.title ?? 'novo lead');
-      const due = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-      const [task] = await tx.insert(workspaceRecords).values({ organizationId: request.user.organizationId, createdBy: request.user.sub, resource: 'tasks', data: {
-        title: `Primeiro contato · ${leadName}`, client: String(body.data.company ?? leadName), project: '', due, status: 'A fazer', priority: 'Alta', assignee: '',
-        automationKey: 'lead-first-contact', sourceLeadId: created[0]!.id,
-      } }).returning();
-      await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'tasks', entityId: task!.id, action: 'created', payload: { automation: 'lead-first-contact', leadId: created[0]!.id } });
+      const [linkedN8nAutomation] = await tx.select({ id: workspaceRecords.id }).from(workspaceRecords).where(and(
+        eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'automations'), isNull(workspaceRecords.archivedAt),
+        sql`${workspaceRecords.data}->>'eventKey' = 'lead.created'`, sql`${workspaceRecords.data}->>'active' = 'true'`, sql`${workspaceRecords.data}->>'n8nWorkflowId' <> ''`,
+      )).limit(1);
+      if (!linkedN8nAutomation) {
+        const leadName = String(body.data.name ?? body.data.title ?? 'novo lead');
+        const due = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+        const [task] = await tx.insert(workspaceRecords).values({ organizationId: request.user.organizationId, createdBy: request.user.sub, resource: 'tasks', data: {
+          title: `Primeiro contato - ${leadName}`, client: String(body.data.company ?? leadName), project: '', due, status: 'A fazer', priority: 'Alta', assignee: '',
+          automationKey: 'lead-first-contact', sourceLeadId: created[0]!.id,
+        } }).returning();
+        await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'tasks', entityId: task!.id, action: 'created', payload: { automation: 'lead-first-contact', leadId: created[0]!.id } });
+      }
     }
     return created;
   });
+  if (params.data.resource === 'leads') void dispatchN8nEvent(request.user.organizationId, 'lead.created', { ...saved!.data, id: saved!.id });
+  if (params.data.resource === 'tickets') void dispatchN8nEvent(request.user.organizationId, 'ticket.created', { ...saved!.data, id: saved!.id });
   return reply.code(201).send({ data: { ...saved!.data, id: saved!.id, createdAt: saved!.createdAt, updatedAt: saved!.updatedAt } });
 });
 
@@ -1180,9 +1334,11 @@ app.patch('/api/workspace/:resource/:id', { preHandler: app.authenticate }, asyn
   const body = parseBody(z.object({ data: workspaceDataSchema }).refine((value) => Object.keys(value.data).length > 0), request.body, reply);
   if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Recurso ou identificador inválidos.' });
   if (!body) return;
+  let previousData: Record<string, unknown> | undefined;
   const updated = await db.transaction(async (tx) => {
     const [current] = await tx.select().from(workspaceRecords).where(and(eq(workspaceRecords.id, params.data.id), eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, params.data.resource), isNull(workspaceRecords.archivedAt))).limit(1);
     if (!current) return undefined;
+    previousData = current.data;
     const [saved] = await tx.update(workspaceRecords).set({ data: { ...current.data, ...body.data }, updatedAt: new Date() }).where(eq(workspaceRecords.id, current.id)).returning();
     await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: params.data.resource, entityId: current.id, action: 'updated', payload: { fields: Object.keys(body.data) } });
     const completedStatuses = new Set(['Concluído', 'Concluido', 'Publicado', 'Entregue']);
@@ -1192,7 +1348,11 @@ app.patch('/api/workspace/:resource/:id', { preHandler: app.authenticate }, asyn
         eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'tasks'), isNull(workspaceRecords.archivedAt),
         sql`${workspaceRecords.data}->>'automationKey' = 'project-delivery-follow-up'`, sql`${workspaceRecords.data}->>'projectId' = ${current.id}`,
       )).limit(1);
-      if (!existingFollowUp) {
+      const [linkedN8nAutomation] = await tx.select({ id: workspaceRecords.id }).from(workspaceRecords).where(and(
+        eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'automations'), isNull(workspaceRecords.archivedAt),
+        sql`${workspaceRecords.data}->>'eventKey' = 'project.published'`, sql`${workspaceRecords.data}->>'active' = 'true'`, sql`${workspaceRecords.data}->>'n8nWorkflowId' <> ''`,
+      )).limit(1);
+      if (!existingFollowUp && !linkedN8nAutomation) {
         const due = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
         const [task] = await tx.insert(workspaceRecords).values({ organizationId: request.user.organizationId, createdBy: request.user.sub, resource: 'tasks', data: {
           title: `Acompanhamento da entrega · ${projectName}`, client: String(body.data.client ?? current.data.client ?? ''), project: projectName, projectId: current.id,
@@ -1204,12 +1364,30 @@ app.patch('/api/workspace/:resource/:id', { preHandler: app.authenticate }, asyn
     return saved;
   });
   if (!updated) return reply.code(404).send({ error: 'not_found', message: 'Registro não encontrado.' });
+  const normalizeStatus = (value: unknown) => String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const priorStatus = normalizeStatus(previousData?.status);
+  const nextStatus = normalizeStatus(body.data.status);
+  const publishedStatuses = new Set(['publicado', 'entregue', 'concluido']);
+  if (params.data.resource === 'projects' && publishedStatuses.has(nextStatus) && !publishedStatuses.has(priorStatus)) void dispatchN8nEvent(request.user.organizationId, 'project.published', { ...updated.data, id: updated.id });
+  if (params.data.resource === 'proposals' && nextStatus === 'aprovada' && priorStatus !== 'aprovada') void dispatchN8nEvent(request.user.organizationId, 'proposal.accepted', { ...updated.data, id: updated.id });
   return { data: { ...updated.data, id: updated.id, createdAt: updated.createdAt, updatedAt: updated.updatedAt } };
 });
 
 app.delete('/api/workspace/:resource/:id', { preHandler: app.authenticate }, async (request, reply) => {
   const params = z.object({ resource: workspaceResource, id: z.string().uuid() }).safeParse(request.params);
   if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Recurso ou identificador inválidos.' });
+  if (params.data.resource === 'automations') {
+    const [automation] = await db.select().from(workspaceRecords).where(and(eq(workspaceRecords.id, params.data.id), eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'automations'), isNull(workspaceRecords.archivedAt))).limit(1);
+    if (automation?.data.active === true && automation.data.n8nWorkflowId) {
+      if (!process.env.N8N_API_KEY || !process.env.N8N_BASE_URL || !await isIntegrationEnabled(request.user.organizationId, 'n8n')) return reply.code(409).send({ error: 'n8n_workflow_active', message: 'Despublique o workflow do n8n antes de excluir esta automação.' });
+      try {
+        const workflowId = String(automation.data.n8nWorkflowId);
+        await n8nApiRequest(`/workflows/${encodeURIComponent(workflowId)}/unpublish`, { method: 'POST', body: '{}' });
+        const verified = await n8nApiRequest(`/workflows/${encodeURIComponent(workflowId)}`) as Record<string, unknown>;
+        if (verified.active === true) return reply.code(502).send({ error: 'n8n_unpublish_not_confirmed', message: 'O n8n não confirmou a despublicação; a automação foi mantida.' });
+      } catch { return reply.code(502).send({ error: 'n8n_unpublish_failed', message: 'Não foi possível despublicar no n8n; a automação foi mantida.' }); }
+    }
+  }
   const [archived] = await db.transaction(async (tx) => {
     const rows = await tx.update(workspaceRecords).set({ archivedAt: new Date(), updatedAt: new Date() }).where(and(eq(workspaceRecords.id, params.data.id), eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, params.data.resource), isNull(workspaceRecords.archivedAt))).returning({ id: workspaceRecords.id });
     if (rows[0]) await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: params.data.resource, entityId: rows[0].id, action: 'archived', payload: {} });
