@@ -272,3 +272,33 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - Adicionei o modelo "Revisar cobrança vencida" no workspace, criei o workflow remoto `Nexo · Revisar cobrança vencida` e publiquei pelo app. A tela consultou o estado ativo na API do n8n: 6 workflows publicados. Após recarregar, a ficha local também confirmou "Ativo no n8n".
 - O histórico do n8n ainda mostra zero execuções. O workspace não possui cobranças, então não inseri cobrança vencida artificial nem forcei webhook. A primeira execução real fica pendente até existir uma cobrança real que ultrapasse `dueAt` sem confirmação de pagamento.
 - Corrigi mais um estado visual: depois de publicar/despublicar, o cliente atualiza a lista local e a lista do n8n em conjunto. O texto dos modelos distingue os compatíveis com workflow remoto dos rascunhos personalizados. A UI antiga só atualizava o n8n e deixava a automação local como "Rascunho n8n" até recarregar a página.
+
+## Revalidação OAuth Google no Coolify — 24/09/2026
+
+- Criado no Google Cloud o cliente Web `Nexo Workspace - Web Production`, com origem `https://focussdev.space` e retorno `https://focussdev.space/api/integrations/google/callback`.
+- Entradas `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` e `GOOGLE_REDIRECT_URI` foram adicionadas ao ambiente do app no Coolify. A revisão da tela não confirmou que os valores foram aplicados ao processo da API: o Nexo ainda respondeu “credenciais ausentes” no diálogo Google Workspace após o redeploy.
+- OAuth não foi autorizado e nenhum evento de Calendar foi criado. Gmail e Drive também não foram validados; a interface informa essas capacidades, mas o fluxo operacional ainda não foi demonstrado.
+- Produção e n8n estavam HTTP 200 (`/api/health` com PostgreSQL conectado e `/healthz` ok) na checagem desta sessão.
+- Próximo passo técnico: confirmar no serviço API do Coolify que as três variáveis estão disponíveis no container em produção, reiniciar o serviço e verificar `GET /api/integrations/status` antes de iniciar o consentimento Google. Não considerar esta integração concluída até o status OAuth trazer a conta conectada.
+## Auditoria total e Google Workspace - 24/09/2026 (continuidade)
+
+### Estado verificado
+- A correcao OAuth em producao foi confirmada: `GOOGLE_REDIRECT_URI` aponta para `/api/integrations/google/callback`; a conta de teste `emprisefocussdev@gmail.com` autorizou a aplicacao e o teste de conexao respondeu que Google Workspace esta conectado. A conta OAuth segue no modo Testing do Google Cloud.
+- Calendar ja cria, atualiza e remove eventos pelo endpoint autenticado; o formulario da agenda pode pedir conferencias Google Meet via `conferenceData`. Nao criei eventos reais durante esta auditoria.
+- Gmail e Drive tinham escopos consentidos, mas ainda nao tinham chamadas operacionais no app. Esta fatia adiciona envio de propostas pelo Gmail como alternativa ao Resend e upload de arquivos ao Drive. Propostas continuam com Resend como opcao inicial.
+- Upload exige sessao autenticada e Google ativo, valida nome/MIME/base64, limita o arquivo a 8 MiB, usa token OAuth do servidor, nao grava conteudo no banco, registra evento de auditoria e persiste no workspace somente id/link/metadados do Drive. A lista de Arquivos abre o link Drive para itens enviados por esta interface.
+- O Gmail usa o HTML/texto renderizado da proposta existente, reserva o envio com chave de idempotencia no banco e grava provedor, destinatario, status e ID retornado. O envio requer acao explicita na ficha da proposta.
+- Nao enviei e-mail nem subi arquivo a producao para evitar criar comunicacoes/arquivos artificiais. A confirmacao ponta a ponta de permissao, destinatario, entrega e link permanece pendente da primeira operacao real autorizada.
+
+### Validacao local desta fatia
+- API: 26/26 testes; build TypeScript passou.
+- Frontend: build Vite passou; bundle principal 509,19 kB e ainda supera o aviso de 500 kB.
+- `git diff --check` passou. Nao executei operacoes que escrevem dados no PostgreSQL compartilhado.
+
+### Pendencias do produto e da producao
+- Verificar deploy e `/api/health` depois desta publicacao; nao considerar as novas acoes Gmail/Drive testadas em producao ate um envio/upload real controlado.
+- O teste de conexao Google comprova OAuth/UserInfo, nao cada permissao Workspace. A primeira chamada real pode revelar APIs/escopos que ainda precisam ser habilitados no Google Cloud.
+- WAHA segue dependendo de ler o QR com o telefone e validar envio/recebimento; n8n tem seis workflows publicados, ainda sem execucoes porque nao existem registros financeiros reais elegiveis; Evolution, GitHub e Sentry precisam de decisao/configuracao antes de marcar como operacionais.
+- Assinatura eletronica nao esta integrada; contratos atuais sao rascunhos HTML para revisao. Monitoramento de uptime/SSL, leitura/sincronizacao Gmail, listagem/arvore de pastas no Drive, vinculacao automatica de arquivos ao cliente/projeto, ciclo completo Mercado Pago, testes e2e de cada fluxo e revisao visual/acessibilidade de todos os modulos continuam no backlog.
+- O segredo OAuth apareceu em saida de diagnostico anterior desta sessao. Nao o reproduzir; rotacionar o segredo no Google Cloud e atualiza-lo no Coolify como acao de seguranca pendente.
+- Esta auditoria permanece aberta; somente capabilities com confirmacao observavel devem ser anunciadas como conectadas/funcionais.

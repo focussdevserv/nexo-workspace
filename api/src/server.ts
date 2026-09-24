@@ -15,6 +15,7 @@ import { db, pool } from './db/index.js';
 import { activityEvents, billingOrders, billingOverdueEvents, billingSubscriptions, clients, organizations, users, workspaceRecords } from './db/schema.js';
 import { isSafeWorkspaceData } from './security/workspace-data.js';
 import { renderProposalEmail } from './email/proposal.js';
+import { buildGoogleRawMessage, decodeGoogleDriveUpload } from './integrations/google-mail.js';
 import { buildOverduePaymentEvent, overduePaymentRetryDelayMs } from './integrations/overdue-payment.js';
 import { classifyWahaQrResponse } from './integrations/waha.js';
 import { mapN8nCollections, n8nAutomationTemplates, buildN8nAutomationWorkflow, n8nApiKeyFailureMessage, n8nApiValidationMessage, type N8nAutomationTemplateId } from './integrations/n8n.js';
@@ -995,16 +996,17 @@ app.post('/api/integrations/n8n/workflows/:id/:action', { preHandler: app.authen
   }
 });
 
-app.post('/api/workspace/proposals/:id/send-email', { preHandler: app.authenticate, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
+app.post('/api/workspace/proposals/:id/send-email', { preHandler: app.authenticate, bodyLimit: 12 * 1024 * 1024, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
   const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
-  const body = parseBody(z.object({ to: z.string().trim().email().max(254).transform((value) => value.toLowerCase()) }), request.body, reply);
+  const body = parseBody(z.object({ to: z.string().trim().email().max(254).transform((value) => value.toLowerCase()), provider: z.enum(['resend', 'google']).default('resend') }), request.body, reply);
   const idempotencyKey = z.string().uuid().safeParse(request.headers['idempotency-key']);
   if (!params.success || !idempotencyKey.success) return reply.code(400).send({ error: 'validation_error', message: 'Proposta ou chave de envio inválida.' });
   if (!body) return;
   const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.RESEND_FROM_EMAIL?.trim();
-  if (!apiKey || !from || !z.string().email().safeParse(from).success) return reply.code(503).send({ error: 'resend_not_configured', message: 'Configure a chave do Resend e um endereço remetente verificado em Integrações no Coolify.' });
-  if (!await isIntegrationEnabled(request.user.organizationId, 'resend')) return reply.code(409).send({ error: 'integration_disconnected', message: 'Resend está desconectado no Nexo. Reative em Integrações para enviar.' });
+  if (body.provider === 'resend' && (!apiKey || !from || !z.string().email().safeParse(from).success)) return reply.code(503).send({ error: 'resend_not_configured', message: 'Configure a chave e o remetente do Resend em Integrações.' });
+  if (!await isIntegrationEnabled(request.user.organizationId, body.provider)) return reply.code(409).send({ error: 'integration_disconnected', message: 'O provedor de e-mail está desconectado no Nexo.' });
+  if (body.provider === 'google' && !await getGoogleTokens(request.user.organizationId)) return reply.code(409).send({ error: 'google_authorization_required', message: 'Autorize Google Workspace em Integrações antes de enviar pelo Gmail.' });
 
   const reservation = await db.transaction(async (tx) => {
     const [row] = await tx.select().from(workspaceRecords).where(and(
@@ -1016,7 +1018,7 @@ app.post('/api/workspace/proposals/:id/send-email', { preHandler: app.authentica
     const delivery = data.emailDelivery as Record<string, any> | undefined;
     if (delivery?.key === idempotencyKey.data && delivery.status === 'sent') return { duplicate: true as const, row, delivery };
     if (delivery?.status === 'sending' && delivery.key !== idempotencyKey.data) return { error: 'send_in_progress' as const };
-    const nextDelivery = { key: idempotencyKey.data, status: 'sending', recipient: body.to, startedAt: new Date().toISOString() };
+    const nextDelivery = { key: idempotencyKey.data, status: 'sending', recipient: body.to, provider: body.provider, startedAt: new Date().toISOString() };
     await tx.update(workspaceRecords).set({ data: { ...data, email: body.to, emailDelivery: nextDelivery }, updatedAt: new Date() }).where(eq(workspaceRecords.id, row.id));
     return { row, delivery: nextDelivery };
   });
@@ -1029,25 +1031,54 @@ app.post('/api/workspace/proposals/:id/send-email', { preHandler: app.authentica
   const proposal = reservation.row.data as Record<string, any>;
   const { html, text } = renderProposalEmail(proposal);
   try {
-    const response = await fetch('https://api.resend.com/emails', {
+    const response = await fetch(body.provider === 'resend' ? 'https://api.resend.com/emails' : 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
       method: 'POST',
-      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json', 'Idempotency-Key': `nexo-proposal-${params.data.id}-${idempotencyKey.data}` },
-      body: JSON.stringify({ from, to: [body.to], subject: `Proposta comercial: ${String(proposal.title || proposal.name || 'Nexo')}`, html, text }),
+      headers: { Authorization: `Bearer ${body.provider === 'resend' ? apiKey : await googleAccessToken(request.user.organizationId, request.user.sub)}`, 'Content-Type': 'application/json', ...(body.provider === 'resend' ? { 'Idempotency-Key': `nexo-proposal-${params.data.id}-${idempotencyKey.data}` } : {}) },
+      body: body.provider === 'resend' ? JSON.stringify({ from, to: [body.to], subject: `Proposta comercial: ${String(proposal.title || proposal.name || 'Nexo')}`, html, text }) : JSON.stringify({ raw: buildGoogleRawMessage({ to: body.to, subject: `Proposta comercial: ${String(proposal.title || proposal.name || 'Nexo')}`, html, text }) }),
       signal: AbortSignal.timeout(15_000),
     });
-    const result = await response.json().catch(() => ({})) as { id?: string };
+    const result = await response.json().catch(() => ({})) as { id?: string; threadId?: string };
     if (!response.ok || !result.id) {
-      await db.update(workspaceRecords).set({ data: { ...proposal, email: body.to, emailDelivery: { key: idempotencyKey.data, status: 'failed', recipient: body.to, failedAt: new Date().toISOString(), providerStatus: response.status } }, updatedAt: new Date() }).where(and(eq(workspaceRecords.id, reservation.row.id), eq(workspaceRecords.organizationId, request.user.organizationId)));
-      return reply.code(response.status === 429 ? 429 : 502).send({ error: 'resend_send_failed', message: `O Resend recusou o envio (HTTP ${response.status}). Verifique o remetente e o domínio verificado.` });
+      await db.update(workspaceRecords).set({ data: { ...proposal, email: body.to, emailDelivery: { key: idempotencyKey.data, status: 'failed', provider: body.provider, recipient: body.to, failedAt: new Date().toISOString(), providerStatus: response.status } }, updatedAt: new Date() }).where(and(eq(workspaceRecords.id, reservation.row.id), eq(workspaceRecords.organizationId, request.user.organizationId)));
+      return reply.code(response.status === 429 ? 429 : response.status === 401 || response.status === 403 ? 409 : 502).send({ error: `${body.provider}_send_failed`, message: `${body.provider === 'google' ? 'Gmail' : 'Resend'} recusou o envio (HTTP ${response.status}). Confira autorizacao e remetente.` });
     }
     const sentAt = new Date().toISOString();
-    const emailDelivery = { key: idempotencyKey.data, status: 'sent', recipient: body.to, emailId: result.id, sentAt };
+    const emailDelivery = { key: idempotencyKey.data, status: 'sent', provider: body.provider, recipient: body.to, emailId: result.id, sentAt };
     await db.update(workspaceRecords).set({ data: { ...proposal, email: body.to, status: 'Enviada', tone: 'blue', emailDelivery, date: `Enviada em ${new Date(sentAt).toLocaleDateString('pt-BR')}` }, updatedAt: new Date() }).where(and(eq(workspaceRecords.id, reservation.row.id), eq(workspaceRecords.organizationId, request.user.organizationId)));
-    await db.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'proposal', entityId: reservation.row.id, action: 'email_sent', payload: { recipient: body.to, emailId: result.id } });
+    await db.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'proposal', entityId: reservation.row.id, action: 'email_sent', payload: { provider: body.provider, recipient: body.to, emailId: result.id } });
     return { data: { status: 'sent', emailId: result.id, recipient: body.to, sentAt } };
   } catch {
-    await db.update(workspaceRecords).set({ data: { ...proposal, email: body.to, emailDelivery: { key: idempotencyKey.data, status: 'failed', recipient: body.to, failedAt: new Date().toISOString() } }, updatedAt: new Date() }).where(and(eq(workspaceRecords.id, reservation.row.id), eq(workspaceRecords.organizationId, request.user.organizationId)));
-    return reply.code(502).send({ error: 'resend_unreachable', message: 'Não foi possível confirmar o envio no Resend. Use a mesma tentativa antes de iniciar outro envio.' });
+    await db.update(workspaceRecords).set({ data: { ...proposal, email: body.to, emailDelivery: { key: idempotencyKey.data, status: 'failed', provider: body.provider, recipient: body.to, failedAt: new Date().toISOString() } }, updatedAt: new Date() }).where(and(eq(workspaceRecords.id, reservation.row.id), eq(workspaceRecords.organizationId, request.user.organizationId)));
+    return reply.code(502).send({ error: `${body.provider}_unreachable`, message: `Nao foi possivel confirmar o envio no ${body.provider === 'google' ? 'Gmail' : 'Resend'}. Reutilize a mesma chave de envio ao tentar novamente.` });
+  }
+});
+
+app.post('/api/integrations/google/drive/upload', { bodyLimit: 12 * 1024 * 1024, preHandler: app.authenticate, config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {
+  const body = parseBody(z.object({ name: z.string().trim().min(1).max(180).refine((value) => !value.includes('/') && !value.includes('\\') && !/[\r\n\0]/.test(value)), mimeType: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9.+-]*\/[A-Za-z0-9][A-Za-z0-9.+-]*$/).max(120), data: z.string().max(11_185_000) }), request.body, reply);
+  if (!body) return;
+  if (!await isIntegrationEnabled(request.user.organizationId, 'google')) return reply.code(409).send({ error: 'integration_disconnected', message: 'Google Workspace is disconnected. Reconnect it before uploading.' });
+  let bytes: Buffer;
+  try { bytes = decodeGoogleDriveUpload(body.data); }
+  catch { return reply.code(413).send({ error: 'drive_upload_too_large_or_invalid', message: 'The file is empty, invalid, or larger than the 8 MiB limit.' }); }
+  try {
+    const accessToken = await googleAccessToken(request.user.organizationId, request.user.sub);
+    const boundary = `nexo_${randomUUID().replaceAll('-', '')}`;
+    const metadata = Buffer.from(JSON.stringify({ name: body.name, mimeType: body.mimeType }), 'utf8');
+    const multipart = Buffer.concat([
+      Buffer.from(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n`), metadata,
+      Buffer.from(`\r\n--${boundary}\r\nContent-Type: ${body.mimeType}\r\n\r\n`), bytes,
+      Buffer.from(`\r\n--${boundary}--`),
+    ]);
+    const response = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,mimeType,size,webViewLink,createdTime', { method: 'POST', headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': `multipart/related; boundary=${boundary}` }, body: multipart, signal: AbortSignal.timeout(30_000) });
+    const result = await response.json().catch(() => ({})) as { id?: string; name?: string; mimeType?: string; size?: string; webViewLink?: string; createdTime?: string };
+    if (!response.ok || !result.id) return reply.code(response.status === 401 || response.status === 403 ? 409 : 502).send({ error: 'google_drive_upload_failed', message: 'Google Drive did not confirm the upload. Check the authorized account and Drive access.' });
+    await db.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'file', action: 'google_drive_uploaded', payload: { fileId: result.id, name: result.name || body.name, mimeType: result.mimeType || body.mimeType, size: Number(result.size || bytes.length) } });
+    return reply.code(201).send({ data: { id: result.id, name: result.name || body.name, mimeType: result.mimeType || body.mimeType, size: Number(result.size || bytes.length), url: result.webViewLink || `https://drive.google.com/open?id=${encodeURIComponent(result.id)}`, createdAt: result.createdTime || new Date().toISOString() } });
+  } catch (error) {
+    const statusCode = (error as { statusCode?: number }).statusCode;
+    if (statusCode === 409 || statusCode === 503) return reply.code(statusCode).send({ error: 'google_authorization_required', message: 'Authorize Google Workspace in Integrations to upload files to Drive.' });
+    app.log.warn({ error: error instanceof Error ? error.name : 'unknown' }, 'Google Drive upload failed');
+    return reply.code(502).send({ error: 'google_drive_unavailable', message: 'Google Drive upload could not be completed.' });
   }
 });
 

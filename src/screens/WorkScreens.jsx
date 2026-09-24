@@ -93,6 +93,7 @@ function WorkScreen({ page }) {
   const [calendarOffset, setCalendarOffset] = useState(0);
   const [composer, setComposer] = useState('');
   const uploadRef = useRef(null);
+  const [uploadingFiles, setUploadingFiles] = useState(false);
   const [draft, setDraft] = useState({ title: '', client: '', project: '', due: '', assignee: '', time: '16:30', detail: '', priority: 'Normal', syncGoogleCalendar: true, createMeet: false, attendees: '' });
   const [timerNow, setTimerNow] = useState(Date.now());
   const activeTimer = hours.find((item) => item.status === 'running');
@@ -164,7 +165,19 @@ function WorkScreen({ page }) {
     else { setFiles((items) => [{ id, name: draft.title.trim(), project: draft.project || 'Sem projeto', client: draft.client || 'Sem cliente', date: 'Agora', size: '—', type: 'pdf', folder: false }, ...items]); notify('Arquivo registrado na lista local.'); }
     setComposer('');
   };
-  const addLocalFile = (file) => { if (!file) return; window.dispatchEvent(new CustomEvent('nexo:navigate', { detail: 'Integrações' })); notify('O upload real ainda não está conectado. Configure o Google Drive em Integrações.'); if (uploadRef.current) uploadRef.current.value = ''; };
+  const addLocalFile = async (file) => {
+    if (!file) return;
+    if (!file.size || file.size > 8 * 1024 * 1024) { notify('O arquivo precisa ter ate 8 MiB.'); return; }
+    setUploadingFiles(true);
+    try {
+      const dataUrl = await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onerror = () => reject(new Error('Nao foi possivel ler o arquivo.')); reader.onload = () => resolve(String(reader.result || '')); reader.readAsDataURL(file); });
+      const uploaded = await apiRequest('/api/integrations/google/drive/upload', { method: 'POST', body: JSON.stringify({ name: file.name, mimeType: file.type || 'application/octet-stream', data: dataUrl.slice(dataUrl.indexOf(',') + 1) }) });
+      const result = uploaded.data;
+      setFiles((items) => [{ id: result.id, name: result.name, project: '', client: '', date: new Date(result.createdAt).toLocaleDateString('pt-BR'), size: `${(result.size / 1024 / 1024).toFixed(2)} MB`, type: file.type.startsWith('image/') ? 'image' : file.type.includes('pdf') ? 'pdf' : 'file', folder: false, url: result.url, driveFileId: result.id, mimeType: result.mimeType }, ...items]);
+      notify(`Arquivo enviado ao Google Drive: ${result.name}`);
+    } catch (error) { notify(error.message || 'O envio ao Google Drive falhou. Verifique a conexao em Integracoes.'); }
+    finally { setUploadingFiles(false); if (uploadRef.current) uploadRef.current.value = ''; }
+  };
   const decideApproval = (id, status) => {
     const approval = approvals.find((item) => item.id === id);
     setApprovals((current) => current.map((item) => item.id === id ? { ...item, status, decidedAt: new Date().toISOString() } : item));
@@ -214,8 +227,8 @@ function WorkScreen({ page }) {
       <section className="drive-breadcrumb"><button onClick={() => setFileType('Todos')}>Arquivos</button><ChevronRight size={15} /><span>Todos os arquivos</span><span className="drive-space">Armazenamento Google Drive não conectado</span></section>
       <section className="drive-tools"><label className="drive-search"><Search size={16} /><input placeholder="Buscar arquivos e pastas" value={fileQuery} onChange={(e) => setFileQuery(e.target.value)} /><kbd>⌘ K</kbd></label><div className="drive-filters"><SlidersHorizontal size={15} />{['Todos', 'Pastas', 'pdf', 'image', 'sheet'].map((type) => <button key={type} className={fileType === type ? 'active' : ''} onClick={() => setFileType(type)}>{type === 'image' ? 'Imagens' : type === 'sheet' ? 'Planilhas' : type === 'pdf' ? 'PDFs' : type}</button>)}</div><button className="work-button work-button-quiet" onClick={() => notify('Arquivos organizados por data.')}><ArrowDown size={14} /> Recentes</button></section>
       <div className="drive-section-heading"><h2>Acessados recentemente</h2><button onClick={() => setView(view === 'grid' ? 'list' : 'grid')}>{view === 'grid' ? <List size={16} /> : <LayoutGrid size={16} />} {view === 'grid' ? 'Lista' : 'Grade'}</button></div>
-      <section className={`drive-grid ${view === 'list' ? 'drive-list' : ''}`}>{visibleFiles.map((file) => <FileCard key={file.id} file={file} onOpen={() => setSelectedFile(file)} onMenu={() => setSelectedFile(file)} />)}{visibleFiles.length === 0 && <Empty title="Nenhum arquivo encontrado" text="Mude os filtros ou tente outra busca." />}</section>
-      <div className="drive-drop" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); Array.from(e.dataTransfer.files).forEach(addLocalFile); }}><span><Upload size={18} /></span><div><b>Organize os arquivos do seu time</b><small>Arraste arquivos para cá ou selecione um arquivo do computador</small></div><button onClick={() => uploadRef.current?.click()}>Selecionar arquivo</button><input ref={uploadRef} type="file" hidden multiple onChange={(e) => { Array.from(e.target.files || []).forEach(addLocalFile); e.target.value = ''; }} /></div>
+      <section className={`drive-grid ${view === 'list' ? 'drive-list' : ''}`}>{visibleFiles.map((file) => <FileCard key={file.id} file={file} onOpen={() => file.url ? window.open(file.url, '_blank', 'noopener,noreferrer') : setSelectedFile(file)} onMenu={() => setSelectedFile(file)} />)}{visibleFiles.length === 0 && <Empty title="Nenhum arquivo encontrado" text="Mude os filtros ou tente outra busca." />}</section>
+      <div className="drive-drop" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); Array.from(e.dataTransfer.files).forEach(addLocalFile); }}><span><Upload size={18} /></span><div><b>Organize os arquivos do seu time</b><small>Arraste arquivos para cá ou selecione um arquivo do computador</small></div><button disabled={uploadingFiles} onClick={() => uploadRef.current?.click()}>{uploadingFiles ? 'Enviando...' : 'Selecionar arquivo'}</button><input ref={uploadRef} type="file" hidden multiple onChange={(e) => { Array.from(e.target.files || []).forEach(addLocalFile); e.target.value = ''; }} /></div>
     </>}
 
     {selectedTask && key === 'tarefas' && <TaskDetail task={selectedTask} tasks={tasks} onClose={() => setSelectedTask(null)} onSave={(patch) => { setTasks((current) => current.map((item) => item.id === selectedTask.id ? { ...item, ...patch } : item)); setSelectedTask((current) => ({ ...current, ...patch })); }} onAction={notify} />}
