@@ -177,3 +177,29 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - A aba aberta manteve o bundle antigo até recarga forçada; o HTML servido não tinha política explícita de cache. Foi adicionada política `no-cache` para `index.html` e cache imutável para assets com hash; aguardando publicação e validação no domínio.
 - Validação local: `npm run build`, `npm --prefix api test` (12/12), `npm --prefix api run build` e `git diff --check` passaram. O Vite mantém aviso de chunk JavaScript acima de 500 kB.
 - Limite desta etapa: não enviei mensagens, e-mails nem pagamentos. Não criei registros adicionais de clientes/projetos. `output/` permaneceu intacto.
+
+## Auditoria em andamento — criação de workflows n8n — 24/09/2026
+
+- A tentativa real no painel de Automações retornou HTTP 400. O backend antes ocultava a resposta de validação do n8n; agora expõe somente a mensagem segura do provedor, truncada e sem corpo/payload. O commit `cb77075` foi publicado.
+- O diagnóstico confirmou `request/body/meta is read-only`. Removi o campo `meta` somente leitura do objeto enviado à API n8n e cobri isso em teste (`44ff512`).
+- O deploy temporariamente deixou o domínio sem servidor por cerca de um minuto; app/API voltaram a HTTP 200 com banco conectado. O n8n permaneceu saudável.
+- A interface ainda apresenta zero workflows; é necessário confirmar que o commit `44ff512` está ativo e repetir a criação. Nenhum workflow foi confirmado, publicado ou executado ainda.
+- A etapa de release depende do deploy automático do Coolify; o painel na VPS abre na tela de login e não há sessão autenticada disponível nesta janela. Nenhuma credencial de login foi reutilizada de outro serviço.
+
+## Revalidação funcional e UX — 24/09/2026
+
+- A causa da criação remota foi corrigida: a API n8n rejeitava o campo somente leitura `meta`. O commit `44ff512` entrou em produção. Criar e publicar foram confirmados pela UI e API.
+- Foram criados e publicados cinco workflows reais: novo lead, proposta aprovada, pagamento confirmado, projeto publicado e novo ticket. O n8n mostra 5/5 publicados e zero execuções; nenhum lead, ticket, projeto, pagamento, cliente ou tarefa de teste foi criado.
+- O lembrete de cobrança vencida continua sendo apenas um modelo local: o backend ainda não tem rotina agendada que emita `payment.overdue`.
+- O app e PostgreSQL voltaram a responder HTTP 200 depois do deploy; `flow.pagfocuss.tech/healthz` também respondeu 200.
+- Integrações na última leitura de produção: 4 configuradas e confirmadas (Mercado Pago, WAHA, Resend, n8n); Evolution, Google Workspace, GitHub e Sentry não configuradas. Mercado Pago enumerou 12 meios de pagamento; esse teste não criou cobrança. Resend confirmou 1/1 domínio e remetente, sem enviar e-mail.
+- WAHA: há uma sessão cadastrada, mas o estado é `FAILED` e 0 sessões conectadas. O app não exibia o QR porque o backend tratava a resposta binária de imagem da WAHA como JSON. Corrigido no código para transportar bytes como Base64 sem cache; deploy e leitura final do estado ainda pendentes.
+- Limitações funcionais confirmadas no código: OAuth Google ausente; arquivos não são enviados ao Drive (a interface informa isso); contratos são documentos base baixáveis sem assinatura eletrônica; sites/domínios são cadastro, sem monitoramento automático de uptime/SSL; GitHub e Sentry não configurados; não foi feito ciclo financeiro com pagamento de produção.
+- Revisão de interface: os módulos têm estados vazios e navegação por URL; permanecem cópias antigas e não roteadas de cobrança/assinaturas que usam `localStorage`, além de controles de paginação/exportação sem implementação completa em algumas tabelas. Revisar acessibilidade e responsividade em todos os módulos continua pendente.
+- A revisão aplica as regras atuais de interface para foco, navegação, rótulos, estados assíncronos, formulários e responsividade: https://raw.githubusercontent.com/vercel-labs/web-interface-guidelines/main/command.md
+
+## Correção do fluxo QR WAHA — 24/09/2026
+
+- A rota oficial de QR serve bytes de imagem; o backend usava um parser JSON e devolvia `data: null`. A rota agora lê `arrayBuffer`, permite somente `image/*`, converte em Base64 para o app e define `Cache-Control: no-store`, pois o QR é uma credencial de sessão.
+- `npm --prefix api test` passou com 13/13; `npm --prefix api run build`, `npm run build` e `git diff --check` passaram. O Vite ainda avisa que o bundle JavaScript tem 502.84 kB.
+- A sessão WAHA já existente reporta `FAILED`; o deploy precisa confirmar se o endpoint consegue gerar um QR com o estado atual. O pareamento e qualquer envio/recebimento ainda dependem do usuário ler o QR e de validar uma conversa autorizada.

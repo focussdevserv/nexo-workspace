@@ -349,8 +349,24 @@ app.get('/api/integrations/waha/sessions/:id/qr', { preHandler: app.authenticate
   const row = await findOwnedWahaSession(request.user.organizationId, params.data.id);
   if (!row) return reply.code(404).send({ error: 'not_found', message: 'Sessão não encontrada.' });
   try {
-    const qr = await wahaRequest<{ mimetype?: string; data?: string }>(`/api/${encodeURIComponent(wahaSessionName(row))}/auth/qr?format=image`);
-    return { data: qr.data ? { mimetype: qr.mimetype || 'image/png', image: qr.data } : null };
+    // WAHA serves the QR as image bytes (not a JSON { data } object).
+    // Keep it in memory only and prevent intermediaries from caching this login credential.
+    const response = await fetch(`${env.WAHA_API_URL!.replace(/\/$/, '')}/api/${encodeURIComponent(wahaSessionName(row))}/auth/qr`, {
+      signal: AbortSignal.timeout(15_000),
+      headers: { 'X-Api-Key': env.WAHA_API_KEY!, Accept: 'image/png, image/*' },
+    });
+    if (response.status === 404 || response.status === 204) return reply.header('Cache-Control', 'no-store').send({ data: null });
+    if (!response.ok) {
+      app.log.warn({ statusCode: response.status, path: 'auth/qr' }, 'WAHA QR request failed');
+      throw Object.assign(new Error('waha_qr_request_failed'), { statusCode: 502 });
+    }
+    const mimetype = response.headers.get('content-type')?.split(';')[0] || 'image/png';
+    if (!mimetype.startsWith('image/')) {
+      app.log.warn({ contentType: mimetype }, 'WAHA returned a non-image QR response');
+      return reply.header('Cache-Control', 'no-store').send({ data: null });
+    }
+    const image = Buffer.from(await response.arrayBuffer()).toString('base64');
+    return reply.header('Cache-Control', 'no-store').send({ data: { mimetype, image } });
   } catch (error) {
     if ((error as { statusCode?: number }).statusCode === 404) return { data: null };
     throw error;
