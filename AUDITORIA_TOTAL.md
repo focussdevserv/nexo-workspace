@@ -8,9 +8,9 @@
 
 O Nexo já tem uma base real: login restrito ao proprietário, API com banco PostgreSQL, CRUD genérico para registros do workspace, notificações persistidas, cobrança e assinatura pelo Mercado Pago, sessão/QR de WhatsApp pelo WAHA, OAuth seguro do Google, portal do cliente com link assinado e deploy pelo Coolify.
 
-Ainda nao e correto classificar todas as integracoes como operacionais. A caixa de entrada agora tem envio de texto pela WAHA e webhook de recebimento implementados, mas ainda precisam de validacao com sessao autenticada conectada em producao; automacoes n8n continuam sem criacao/ativacao de workflows pelo Nexo; arquivos nao tem upload real; assinatura eletronica nao tem provedor. O Calendar agora tem operacoes para criar, atualizar e excluir eventos, convidar e-mails informados e solicitar link do Meet, mas o fluxo OAuth real ainda precisa de teste autenticado em uma conta conectada.
+Ainda nao e correto classificar todas as integracoes como operacionais. A caixa de entrada tem envio de texto pela WAHA e webhook de recebimento implementados, mas ainda precisam de validacao com sessao autenticada conectada em producao; automacoes n8n continuam sem criacao/ativacao de workflows pelo Nexo; arquivos nao tem upload real; assinatura eletronica nao tem provedor. O Calendar agora tem operacoes para criar, atualizar e excluir eventos, convidar e-mails informados e solicitar link do Meet, mas o fluxo OAuth real ainda precisa de teste autenticado em uma conta conectada.
 
-**Validacao desta revisao:** builds do frontend e da API passaram; `git diff --check` passou; o dominio respondeu HTTP 200, `/api/health` confirmou o banco conectado e o bundle do commit `4610773` foi servido. `https://n8n.pagfocuss.tech/healthz` e `/healthz/readiness` responderam HTTP 200. Isso valida disponibilidade, nao execucao autenticada de workflow.
+**Validacao anterior:** builds do frontend e da API passaram; rotas do workspace foram verificadas no navegador; o dominio e o n8n responderam HTTP 200 e o banco confirmou conexao. Nesta revisao, `/api/health` confirmou o PostgreSQL conectado, a pagina inicial respondeu HTTP 200, e `https://n8n.pagfocuss.tech/healthz` e `/healthz/readiness` responderam HTTP 200. O teste de conexao do Resend consultou a conta sem enviar e-mail e confirmou 1 dominio. Corrigido o rótulo corrompido do ultimo teste na tela de Integracoes; build, deploy e verificacao visual desta correcao ainda pendentes.
 
 ## O que já funciona de verdade
 
@@ -29,11 +29,11 @@ Ainda nao e correto classificar todas as integracoes como operacionais. A caixa 
 
 ### P0 — necessário para afirmar “integração funcionando”
 
-1. **WhatsApp na Caixa de entrada:** a tela carrega conversas salvas, mas o botão de enviar sempre informa que o envio está indisponível. Falta receber webhooks da WAHA/Evolution, enviar texto e mídia, persistir id de mensagem/status, associar a conversa ao contato e tratar falha/duplicidade.
+1. **WhatsApp na Caixa de entrada:** envio de texto e webhook de recebimento/status pela WAHA foram implementados, com persistencia, verificacao da sessao e deduplicacao. O numero de producao ainda aguarda leitura do QR; envio e recebimento reais ainda nao foram validados. Envio de midia permanece indisponivel; Evolution API nao foi configurada.
 2. **Automações n8n:** a área atual salva fluxos como `Rascunho`; não cria/ativa workflows no n8n, não executa testes e não mostra histórico real de execução. O health check do n8n não constitui integração de automação.
 3. **Arquivos:** a tela de arquivos aceita o seletor, mas informa que não faz upload. Falta upload seguro ao Google Drive (ou storage próprio), metadados e link de download, associação por cliente/projeto e envio real como anexo pelo canal.
 4. **Operacoes Google:** OAuth e escopos existem. Calendar agora cria/atualiza/exclui eventos, envia convites para e-mails explicitamente informados e pode pedir conferencia Meet. A conta OAuth e o ciclo real ainda precisam ser validados com sessao proprietaria; Gmail e Drive ainda nao possuem operacoes no produto.
-5. **Resend:** há teste de credencial/domínios, mas não há fluxo de envio para propostas, contratos, cobrança ou notificações, nem registro de entrega/rejeição.
+5. **Resend:** credencial detectada e teste de API aprovado nesta revisao (1 dominio). O produto ainda nao envia propostas, contratos, cobrancas ou notificacoes por e-mail, nem registra entrega/rejeicao.
 6. **Assinatura eletrônica:** contrato pode ser gerado/baixado em HTML, mas não há provedor de assinatura integrado, envio de envelope, callback ou documento assinado verificável.
 
 ### P1 — integridade dos fluxos e dados
@@ -49,7 +49,7 @@ Ainda nao e correto classificar todas as integracoes como operacionais. A caixa 
 ### P2 — acabamento, previsibilidade e acessibilidade
 
 1. **Rotas do app (validado em produção):** cada módulo tem URL `/app/<módulo>`. Testei abertura direta de Automações, navegação que atualiza a URL para Integrações, Voltar e recarga mantendo o módulo. O portal público `/portal/<slug>` permanece fora do roteador privado.
-2. **Texto corrompido:** existe ao menos um caractere de substituição no filtro “Concluída” e textos com `?` no rótulo de último teste e em detalhes comerciais.
+2. **Texto corrompido:** o rotulo ?Ultimo teste? na tela de Integracoes foi corrigido nesta entrega. Ainda precisa varredura dos demais modulos para caracteres de substituicao e textos com `?`.
 3. **Ações de aparência funcional:** “Mais filtros” na toolbar não abre filtro; alguns botões de relatório apenas exibem toast; menus de linha recorrem a mensagens genéricas em vez de abrir edição contextual.
 4. **Hierarquia visual:** há diferenças de escala, espaçamento, estados de foco e tamanho de texto entre módulos. Alguns rótulos e informações secundárias usam fonte muito pequena e contraste fraco; a ficha do cliente reúne oito abas num modal grande e precisa de prioridade/estrutura mais clara em telas menores.
 5. **Ações de módulo:** várias telas têm estado vazio honesto, mas ainda oferecem botões que só navegam para outra área em vez de iniciar o fluxo com cliente já selecionado. A ficha deve abrir proposta, cobrança e ticket com o cliente preenchido.
@@ -99,3 +99,10 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - Cobranças e assinaturas enviam `clientId` quando o operador seleciona um cliente existente; a API valida o vínculo dentro da organização. Falta provar a exibição no portal com uma cobrança controlada.
 - O frontend usa URLs estáveis `/app/<módulo>`, abertura direta, sincronização com Voltar/Avançar e restauração após recarga. A rota pública `/portal/<slug>` segue separada.
 - Build passou. No Chrome autenticado, abri `/app/automacoes` diretamente, naveguei para Integrações, usei Voltar e recarreguei; o endereço e o módulo permaneceram corretos. Coolify marcou o commit `6db738b` como sucesso; API e banco responderam saudáveis.
+
+
+## Atualizacao de auditoria - Resend e texto da tela - 24/09/2026
+
+- A credencial Resend foi aplicada ao servico API pelo Coolify e o teste de producao consultou a API de dominios sem enviar mensagens; resposta: 1 dominio disponivel. Resend aparece habilitado e conectado no ultimo teste.
+- Ainda nao ha operacao de envio de e-mail dentro dos fluxos de propostas, contratos, cobrancas ou notificacoes. A credencial valida nao habilita esses fluxos.
+- Corrigido em `src/screens/ServiceScreens.jsx` o rotulo corrompido do ultimo teste. Build e deploy desta alteracao ainda pendentes nesta revisao.
