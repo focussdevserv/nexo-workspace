@@ -452,6 +452,74 @@ app.post('/api/integrations/google/disconnect', { preHandler: app.authenticate, 
   return { data: { disconnected: true } };
 });
 
+app.route({ method: ['POST', 'PATCH'], url: '/api/integrations/google/calendar/events', preHandler: app.authenticate, config: { rateLimit: { max: 30, timeWindow: '1 minute' } }, handler: async (request, reply) => {
+  const body = parseBody(z.object({
+    eventId: z.string().regex(/^[a-v0-9]{5,1024}$/).optional(),
+    title: z.string().trim().min(1).max(180),
+    description: z.string().max(8000).optional(),
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    startTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+    endTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+    createMeet: z.boolean().default(false),
+    attendees: z.array(z.string().email()).max(30).default([]),
+  }), request.body, reply); if (!body) return;
+  try {
+    const accessToken = await googleAccessToken(request.user.organizationId, request.user.sub);
+    const base = 'https://www.googleapis.com/calendar/v3/calendars/primary/events';
+    const headers = { Authorization: `Bearer ${accessToken}`, Accept: 'application/json', 'Content-Type': 'application/json' };
+    if (body.eventId) {
+      const existing = await fetch(`${base}/${body.eventId}`, { headers, signal: AbortSignal.timeout(12_000) });
+      if (existing.ok) {
+        if (request.method === 'POST') {
+          const event = await existing.json() as { id?: string; htmlLink?: string; hangoutLink?: string };
+          return { data: { eventId: event.id, htmlLink: event.htmlLink, meetUrl: event.hangoutLink, existing: true } };
+        }
+      }
+      if (!existing.ok && existing.status !== 404) return reply.code(502).send({ error: 'google_calendar_lookup_failed', message: 'Não foi possível verificar o evento no Google Calendar.' });
+      if (existing.status === 404 && request.method === 'PATCH') return reply.code(404).send({ error: 'google_calendar_event_missing', message: 'O evento não foi encontrado no Google Calendar.' });
+    }
+    const eventBody = {
+      ...(body.eventId && request.method === 'POST' ? { id: body.eventId } : {}),
+      summary: body.title,
+      description: body.description || '',
+      start: { dateTime: `${body.date}T${body.startTime}:00`, timeZone: 'America/Sao_Paulo' },
+      end: { dateTime: `${body.endDate || body.date}T${body.endTime}:00`, timeZone: 'America/Sao_Paulo' },
+      ...(body.attendees.length ? { attendees: body.attendees.map((email) => ({ email })) } : {}),
+      ...(body.createMeet ? { conferenceData: { createRequest: { requestId: randomUUID(), conferenceSolutionKey: { type: 'hangoutsMeet' } } } } : {}),
+    };
+    const query = new URLSearchParams({ ...(body.createMeet ? { conferenceDataVersion: '1' } : {}), ...(body.attendees.length ? { sendUpdates: 'all' } : {}) });
+    const response = await fetch(`${base}${body.eventId && request.method === 'PATCH' ? `/${body.eventId}` : ''}${query.size ? `?${query}` : ''}`, { method: request.method === 'PATCH' ? 'PATCH' : 'POST', headers, body: JSON.stringify(eventBody), signal: AbortSignal.timeout(15_000) });
+    const result = await response.json().catch(() => ({})) as { id?: string; htmlLink?: string; hangoutLink?: string; error?: { message?: string } };
+    if (!response.ok) {
+      app.log.warn({ status: response.status, reason: result.error?.message }, 'Google Calendar event creation failed');
+      return reply.code(response.status === 401 || response.status === 403 ? 409 : 502).send({ error: 'google_calendar_create_failed', message: 'O Google Calendar não aceitou o evento. Verifique a autorização e o escopo de calendário da conta.' });
+    }
+    return reply.code(request.method === 'PATCH' ? 200 : 201).send({ data: { eventId: result.id, htmlLink: result.htmlLink, meetUrl: result.hangoutLink, existing: false } });
+  } catch (error) {
+    const statusCode = (error as { statusCode?: number }).statusCode;
+    if (statusCode === 409 || statusCode === 503) return reply.code(statusCode).send({ error: 'google_authorization_required', message: 'Autorize o Google Workspace em Integrações antes de sincronizar eventos.' });
+    app.log.warn({ error: error instanceof Error ? error.name : 'unknown' }, 'Google Calendar event failed');
+    return reply.code(502).send({ error: 'google_calendar_unavailable', message: 'Não foi possível concluir a operação no Google Calendar.' });
+  }
+} });
+
+app.delete('/api/integrations/google/calendar/events/:eventId', { preHandler: app.authenticate, config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request, reply) => {
+  const params = z.object({ eventId: z.string().regex(/^[a-v0-9]{5,1024}$/) }).safeParse(request.params);
+  if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Identificador de evento inválido.' });
+  try {
+    const accessToken = await googleAccessToken(request.user.organizationId, request.user.sub);
+    const response = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${params.data.eventId}`, { method: 'DELETE', headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(12_000) });
+    if ([200, 204, 404, 410].includes(response.status)) return reply.code(204).send();
+    return reply.code(response.status === 401 || response.status === 403 ? 409 : 502).send({ error: 'google_calendar_delete_failed', message: 'O Google Calendar não confirmou a exclusão do evento.' });
+  } catch (error) {
+    const statusCode = (error as { statusCode?: number }).statusCode;
+    if (statusCode === 409 || statusCode === 503) return reply.code(statusCode).send({ error: 'google_authorization_required', message: 'Autorize o Google Workspace antes de excluir eventos sincronizados.' });
+    app.log.warn({ error: error instanceof Error ? error.name : 'unknown' }, 'Google Calendar event deletion failed');
+    return reply.code(502).send({ error: 'google_calendar_unavailable', message: 'Não foi possível concluir a exclusão no Google Calendar.' });
+  }
+});
+
 app.get('/api/integrations/status', { preHandler: app.authenticate }, async (request) => {
   const controls = await db.select().from(workspaceRecords).where(and(
     eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'integration-controls'), isNull(workspaceRecords.archivedAt),
