@@ -5,7 +5,7 @@ import {
   ShieldCheck, SlidersHorizontal, Upload, UserRound, Users, Webhook,
 } from 'lucide-react';
 import './settings.css';
-import { apiRequest, useWorkspaceRecords } from '../lib/workspace-api.js';
+import { useWorkspaceRecords } from '../lib/workspace-api.js';
 
 const defaults = {
   workspace: { agency: '', timezone: 'America/Sao_Paulo', weekStart: 'monday', currency: 'BRL', dateFormat: 'dd/MM/yyyy', language: 'pt-BR', fiscalName: '', document: '', email: '', phone: '', website: '', address: '' },
@@ -24,17 +24,6 @@ const sections = [
   { id: 'security', label: 'Segurança', hint: 'Sessões, autenticação e acesso', icon: ShieldCheck },
   { id: 'data', label: 'Dados e exportação', hint: 'Backup e preferências de dados', icon: Download },
 ];
-const integrations = [
-  { name: 'Mercado Pago', type: 'Pagamentos', detail: 'Cobranças, pagamentos e assinaturas', icon: 'MP' },
-  { name: 'Evolution API', type: 'WhatsApp', detail: 'Conversas, notificações e follow-up', icon: 'WA' },
-  { name: 'WAHA', type: 'WhatsApp', detail: 'Conecte uma instância WhatsApp', icon: 'WA' },
-  { name: 'Resend', type: 'E-mail', detail: 'E-mails transacionais e propostas', icon: 'RE' },
-  { name: 'Google Workspace', type: 'Produtividade', detail: 'Gmail, Calendar, Drive e Meet', icon: 'G' },
-  { name: 'GitHub', type: 'Desenvolvimento', detail: 'Repositórios, commits e deploys', icon: 'GH' },
-  { name: 'n8n', type: 'Automações', detail: 'Fluxos, webhooks e integrações', icon: 'n8n' },
-  { name: 'Sentry', type: 'Monitoramento', detail: 'Erros e saúde das aplicações', icon: 'SE' },
-];
-
 export default function SettingsScreen({ notify }) {
   const { records, create, update: updateRecord } = useWorkspaceRecords('settings');
   const savedSettings = records.find((item) => item.key === 'workspace-preferences');
@@ -42,7 +31,6 @@ export default function SettingsScreen({ notify }) {
   const [active, setActive] = useState('workspace');
   const [dirty, setDirty] = useState(false);
   const [savedAt, setSavedAt] = useState('');
-  const [integrationsState, setIntegrationsState] = useState({});
   const fileRef = useRef(null);
   useEffect(() => {
     if (!savedSettings) return;
@@ -50,11 +38,6 @@ export default function SettingsScreen({ notify }) {
     setSavedAt(savedSettings.savedAt || '');
     setDirty(false);
   }, [savedSettings?.id, savedSettings?.updatedAt]);
-  const refreshIntegrationStatus = async () => {
-    try { const { data } = await apiRequest('/api/integrations/status'); setIntegrationsState(Object.fromEntries(data.map((item) => [item.name, item.configured]))); }
-    catch (error) { notify(error.message || 'Could not load integration status.'); }
-  };
-  useEffect(() => { refreshIntegrationStatus(); }, []);
   useEffect(() => {
     const onBeforeUnload = (event) => { if (dirty) { event.preventDefault(); event.returnValue = ''; } };
     window.addEventListener('beforeunload', onBeforeUnload);
@@ -69,7 +52,7 @@ export default function SettingsScreen({ notify }) {
       setSavedAt(timestamp); setDirty(false); notify('Workspace preferences saved.');
     } catch (error) { notify(error.message || 'Could not save preferences to the server.'); }
   };
-  const toggleIntegration = (name) => { window.dispatchEvent(new CustomEvent('nexo:navigate', { detail: 'Integrações' })); notify(`${name}: configure credentials on the server to change its status.`); };
+  const openIntegrations = () => window.dispatchEvent(new CustomEvent('nexo:navigate', { detail: 'Integrações' }));
   const exportData = () => {
     const payload = { version: 1, exportedAt: new Date().toISOString(), settings };
     const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }));
@@ -140,11 +123,11 @@ export default function SettingsScreen({ notify }) {
         <SettingsCard title="Meios de pagamento aceitos" description="Selecione os métodos que sua agência pretende oferecer." icon={Database}><SettingToggle title="Pix" detail="Pagamento instantâneo via Mercado Pago." value={settings.billing.pix} onChange={(v) => update('billing', 'pix', v)} /><SettingToggle title="Boleto bancário" detail="Cobrança com vencimento e confirmação automática." value={settings.billing.boleto} onChange={(v) => update('billing', 'boleto', v)} /><SettingToggle title="Cartão de crédito" detail="Pagamento à vista ou parcelado, conforme configuração do provedor." value={settings.billing.card} onChange={(v) => update('billing', 'card', v)} /><SettingToggle title="Renovar assinaturas automaticamente" detail="Requer uma integração de pagamentos ativa." value={settings.billing.autoRenew} onChange={(v) => update('billing', 'autoRenew', v)} /></SettingsCard><div className="settings-callout"><LockKeyhole size={17} /><span><b>Dados de pagamento protegidos</b><small>Chaves e tokens do Mercado Pago serão guardados no servidor quando a API estiver conectada.</small></span></div>
       </>}
 
-      {active === 'integrations' && <><div className="settings-integrations-intro"><div><h3>Conecte as ferramentas que sua agência já usa</h3><p>As conexões reais exigem credenciais e configuração segura no servidor.</p></div><button className="admin-secondary" onClick={refreshIntegrationStatus}>Verificar conexões</button></div><div className="settings-integration-grid">{integrations.map((item) => <article className="settings-integration" key={item.name}><div className="integration-head"><span className="integration-logo">{item.icon}</span><span className={`integration-status ${integrationsState[item.name] ? 'connected' : ''}`}><i />{integrationsState[item.name] ? 'Configurada' : 'Não conectada'}</span></div><h3>{item.name}</h3><small>{item.type}</small><p>{item.detail}</p><button className="admin-secondary" onClick={() => toggleIntegration(item.name)}>Gerenciar conexões</button></article>)}</div><div className="settings-callout"><KeyRound size={17} /><span><b>Segredos não ficam no navegador</b><small>O estado acima é apenas organizacional. A conexão com APIs será concluída quando configurarmos variáveis de ambiente e endpoints no VPS.</small></span></div></>}
+      {active === 'integrations' && <SettingsCard title="Gerenciar integrações" description="Veja o estado real, teste conexões e controle os serviços do workspace em um único painel." icon={Link2}><div className="settings-security-note"><ShieldCheck size={19} /><div><b>As credenciais são mantidas no servidor</b><p>O painel de Integrações consulta as configurações da VPS e informa quando cada serviço foi testado, se está conectado ou se precisa de configuração.</p></div></div><button type="button" className="admin-primary" onClick={openIntegrations}><Link2 size={15} /> Abrir painel de Integrações</button></SettingsCard>}
 
       {active === 'security' && <>
         <SettingsCard title="Proteção da conta" description="Controles para reduzir acessos indevidos." icon={ShieldCheck}><SettingToggle title="Exigir autenticação em dois fatores" detail="Recomendado para todos os usuários com acesso financeiro." value={settings.permissions.require2fa} onChange={(v) => update('permissions', 'require2fa', v)} /><div className="settings-fields"><Field label="Encerrar sessão após"><select value={settings.permissions.sessionDays} onChange={(e) => update('permissions', 'sessionDays', e.target.value)}><option value="7">7 dias</option><option value="14">14 dias</option><option value="30">30 dias</option><option value="90">90 dias</option></select></Field></div></SettingsCard>
-        <SettingsCard title="Credenciais e integrações" description="Tokens privados devem ser gerenciados no servidor." icon={KeyRound}><div className="settings-security-note"><LockKeyhole size={19} /><div><b>Nenhuma chave secreta é armazenada aqui</b><p>Quando ativarmos as integrações, as credenciais ficarão nas variáveis protegidas do VPS. Esta tela não salva senhas, tokens ou chaves de API no localStorage.</p></div></div></SettingsCard>
+        <SettingsCard title="Credenciais e integrações" description="Tokens privados devem ser gerenciados no servidor." icon={KeyRound}><div className="settings-security-note"><LockKeyhole size={19} /><div><b>Nenhuma chave secreta é armazenada aqui</b><p>As credenciais das integrações ficam nas variáveis protegidas do VPS. Esta tela não salva senhas, tokens ou chaves de API no navegador.</p></div></div><button type="button" className="admin-secondary" onClick={openIntegrations}><Link2 size={15} /> Abrir painel de Integrações</button></SettingsCard>
       </>}
 
       {active === 'data' && <>
