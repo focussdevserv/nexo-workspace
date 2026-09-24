@@ -156,3 +156,9 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - Backend events call published n8n webhooks. The callback verifies the bridge signature in constant time, validates the linked automation and event, and creates a workspace task. Webhook responses wait for the final action node.
 - The overdue-payment model remains a local draft. It is deliberately excluded from remote workflow creation because no scheduled `payment.overdue` event emitter exists yet.
 - Frontend/API builds, `git diff --check`, and 11 API tests passed. Remote workflow creation and execution remain unverified until a safe n8n hostname and `N8N_API_KEY` are configured in Coolify.
+
+## SUPPORT TICKETS PERSISTENCE UPDATE - 2026-09-24
+
+- Replaced the browser-only ticket list with the authenticated workspace-record API. Creating a ticket now persists it to PostgreSQL; status, priority, owner, and details edits use PATCH. Loading and API errors are visible with a retry action.
+- Ticket creation now reaches the backend ticket event hook, so a published compatible n8n workflow can receive it. No sample ticket or customer record was created.
+- Frontend/API builds and the existing 11 API tests passed. The change still needs production deploy verification.
