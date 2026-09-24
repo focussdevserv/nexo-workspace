@@ -358,7 +358,10 @@ app.get('/api/integrations/waha/sessions/:id/qr', { preHandler: app.authenticate
     if (response.status === 404 || response.status === 204) return reply.header('Cache-Control', 'no-store').send({ data: null });
     if (!response.ok) {
       app.log.warn({ statusCode: response.status, path: 'auth/qr' }, 'WAHA QR request failed');
-      throw Object.assign(new Error('waha_qr_request_failed'), { statusCode: 502 });
+      const message = response.status === 401 || response.status === 403
+        ? 'A WAHA recusou a chave de API. Revise a credencial da integração.'
+        : `A WAHA não conseguiu gerar o QR (HTTP ${response.status}). Reinicie a sessão e tente novamente.`;
+      return reply.code(502).header('Cache-Control', 'no-store').send({ error: 'waha_qr_unavailable', message });
     }
     const mimetype = response.headers.get('content-type')?.split(';')[0] || 'image/png';
     if (!mimetype.startsWith('image/')) {
