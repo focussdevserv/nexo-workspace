@@ -337,19 +337,19 @@ function Integrations({ notify }) {
     try {
       const { data } = await apiRequest('/api/integrations/status');
       setIntegrationStatus(Object.fromEntries(data.map((item) => [item.name, Boolean(item.configured)])));
-    } catch (error) { notify(error.message || 'N?o foi poss?vel consultar o status das integra??es.'); }
+    } catch (error) { notify(error.message || 'Não foi possível consultar o status das integrações.'); }
     finally { setStatusLoading(false); }
   };
   useEffect(() => { refreshStatus(); }, []);
-  const categories = ['Todas', 'Pagamentos', 'WhatsApp', 'E-mail', 'Produtividade', 'Desenvolvimento', 'Automa??es', 'Monitoramento'];
-  const providerCategory = (name) => name === 'Mercado Pago' ? 'Pagamentos' : ['Evolution API', 'WAHA'].includes(name) ? 'WhatsApp' : name === 'Resend' ? 'E-mail' : name === 'Google Workspace' ? 'Produtividade' : name === 'GitHub' ? 'Desenvolvimento' : name === 'n8n' ? 'Automa??es' : 'Monitoramento';
+  const categories = ['Todas', 'Pagamentos', 'WhatsApp', 'E-mail', 'Produtividade', 'Desenvolvimento', 'Automações', 'Monitoramento'];
+  const providerCategory = (name) => name === 'Mercado Pago' ? 'Pagamentos' : ['Evolution API', 'WAHA'].includes(name) ? 'WhatsApp' : name === 'Resend' ? 'E-mail' : name === 'Google Workspace' ? 'Produtividade' : name === 'GitHub' ? 'Desenvolvimento' : name === 'n8n' ? 'Automações' : 'Monitoramento';
   const visible = integrations.filter((item) => filter === 'Todas' || providerCategory(item.name) === filter);
   const configuredCount = Object.values(integrationStatus).filter(Boolean).length;
   return <>
-    <div className="ns-integration-intro"><span><Link2 size={18} /></span><div><b>Status das integra??es do servidor</b><small>{statusLoading ? 'Consultando as vari?veis protegidas do Coolify?' : `${configuredCount} de ${integrations.length} servi?os com credenciais configuradas.`}</small></div><button type="button" onClick={refreshStatus} disabled={statusLoading}><RefreshCw size={15} />Atualizar</button></div>
-    <div className="ns-integration-filters">{categories.map((item) => <button type="button" className={filter === item ? 'active' : ''} key={item} onClick={() => setFilter(item)}>{item}</button>)}</div>
-    <div className="ns-integration-grid">{visible.map((item) => { const Icon = item.icon; const configured = Boolean(integrationStatus[item.name]); return <article className="ns-integration-card" key={item.name}><div className="ns-integration-top"><span className={`ns-integration-logo ${item.color}`}><Icon size={20} /></span><span className={`ns-connection-badge ${configured ? 'configured' : ''}`}><i />{configured ? 'Credencial presente' : 'N?o configurada'}</span></div><h3>{item.name}</h3><p>{item.detail}</p><div className="ns-integration-actions"><button type="button" onClick={() => notify(`${item.name}: configure as credenciais nas vari?veis de ambiente do Coolify. Este painel n?o grava segredos nem declara uma conex?o testada.`)}><Settings2 size={14} />Configura??o segura</button></div></article>; })}</div>
-    <div className="ns-info-note"><ShieldCheck size={17} /><span>Este status confirma somente a presen?a das credenciais no servidor. Uma conex?o s? ser? considerada ativa quando o teste real do provedor estiver implementado.</span></div>
+    <div className="ns-integration-intro"><span><Link2 size={18} /></span><div><b>Status das integrações do servidor</b><small>{statusLoading ? 'Consultando as variáveis protegidas do Coolify…' : `${configuredCount} de ${integrations.length} serviços com credenciais configuradas.`}</small></div><button className="ns-integration-refresh" type="button" onClick={refreshStatus} disabled={statusLoading}><RefreshCw size={15} className={statusLoading ? 'ns-spinning' : ''} />Atualizar</button></div>
+    <div className="ns-integration-filters" role="group" aria-label="Filtrar integrações">{categories.map((item) => <button type="button" aria-pressed={filter === item} className={filter === item ? 'active' : ''} key={item} onClick={() => setFilter(item)}>{item}</button>)}</div>
+    <div className="ns-integration-grid">{visible.map((item) => { const Icon = item.icon; const configured = Boolean(integrationStatus[item.name]); return <article className="ns-integration-card" key={item.name}><div className="ns-integration-top"><span className={`ns-integration-logo ${item.color}`}><Icon size={20} /></span><span className={`ns-connection-badge ${configured ? 'configured' : ''}`}><i />{configured ? 'Credencial presente' : 'Não configurada'}</span></div><h3>{item.name}</h3><p>{item.detail}</p><div className="ns-integration-actions"><button className="ns-integration-configure" type="button" onClick={() => notify(`${item.name}: configure as credenciais nas variáveis de ambiente do Coolify. Este painel não grava segredos nem confirma uma conexão testada.`)}><Settings2 size={14} />Configuração segura</button></div></article>; })}</div>
+    <div className="ns-info-note"><ShieldCheck size={17} /><span>Este status confirma somente a presença das credenciais no servidor. Uma conexão só será considerada ativa quando o teste real do provedor estiver implementado.</span></div>
   </>;
 }
 
