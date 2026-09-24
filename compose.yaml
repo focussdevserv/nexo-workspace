@@ -19,6 +19,7 @@ services:
       WAHA_API_URL: ${WAHA_API_URL:-http://waha:3000}
       WAHA_API_KEY: ${WAHA_API_KEY:?Configure WAHA_API_KEY in Coolify}
       RESEND_API_KEY: ${RESEND_API_KEY:-}
+      RESEND_FROM_EMAIL: ${RESEND_FROM_EMAIL:-}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-https://focussdev.space/api/integrations/google/callback}
