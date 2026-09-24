@@ -21,6 +21,12 @@ function safeDate(value: unknown) {
   return value;
 }
 
+export function n8nApiKeyFailureMessage(status: number) {
+  if (status === 401) return 'n8n respondeu HTTP 401. A chave do Coolify não corresponde a uma chave ativa nesta instância; gere uma chave nova, copie o valor completo e faça redeploy.';
+  if (status === 403) return 'n8n respondeu HTTP 403. A chave foi reconhecida, mas não tem os escopos necessários para consultar workflows. Revise workflow:list e workflow:read.';
+  return `n8n recusou a autenticação com HTTP ${status}. Confira a chave e as permissões no n8n.`;
+}
+
 export function mapN8nCollections(workflowEntries: unknown[], executionEntries: unknown[]) {
   const workflows = workflowEntries.filter((entry): entry is N8nWorkflowSummary => Boolean(entry) && typeof entry === 'object' && !Array.isArray(entry))
     .map((item) => ({

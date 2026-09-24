@@ -15,7 +15,7 @@ import { db, pool } from './db/index.js';
 import { activityEvents, billingOrders, billingSubscriptions, clients, organizations, users, workspaceRecords } from './db/schema.js';
 import { isSafeWorkspaceData } from './security/workspace-data.js';
 import { renderProposalEmail } from './email/proposal.js';
-import { mapN8nCollections, n8nAutomationTemplates, buildN8nAutomationWorkflow, type N8nAutomationTemplateId } from './integrations/n8n.js';
+import { mapN8nCollections, n8nAutomationTemplates, buildN8nAutomationWorkflow, n8nApiKeyFailureMessage, type N8nAutomationTemplateId } from './integrations/n8n.js';
 
 const env = z.object({
   PORT: z.coerce.number().int().positive().default(3001),
@@ -730,7 +730,7 @@ app.post('/api/integrations/:provider/test', { preHandler: app.authenticate, con
       const apiKey = process.env.N8N_API_KEY;
       if (!baseUrl || !apiKey) return unavailable('Configure N8N_BASE_URL e N8N_API_KEY no serviço API. Gere a chave em Configurações > n8n API na sua instância n8n.');
       const response = await fetch(`${baseUrl}/api/v1/workflows?limit=1`, { headers: { 'X-N8N-API-KEY': apiKey, Accept: 'application/json' }, signal: AbortSignal.timeout(8_000) });
-      if (response.status === 401 || response.status === 403) return failed('n8n recusou a API key. Gere uma chave válida em Configurações > n8n API e atualize o Coolify.');
+      if (response.status === 401 || response.status === 403) return failed(n8nApiKeyFailureMessage(response.status));
       if (!response.ok) return failed(`A API pública do n8n respondeu com HTTP ${response.status}. Confira a URL e a versão da instância.`);
       const result = await response.json() as { data?: unknown[] };
       return tested('connected', `API do n8n autenticada. ${result.data?.length ?? 0} workflow(s) retornado(s) nesta consulta.`);

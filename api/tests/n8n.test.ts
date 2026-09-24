@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildN8nAutomationWorkflow, mapN8nCollections, n8nAutomationTemplates } from '../src/integrations/n8n.ts';
+import { buildN8nAutomationWorkflow, mapN8nCollections, n8nApiKeyFailureMessage, n8nAutomationTemplates } from '../src/integrations/n8n.ts';
+
+test('distinguishes an invalid n8n API key from missing workflow scopes', () => {
+  assert.match(n8nApiKeyFailureMessage(401), /chave.*ativa/i);
+  assert.match(n8nApiKeyFailureMessage(403), /escopos.*workflow:list.*workflow:read/i);
+});
 
 test('maps n8n workflow and execution lists to safe summaries', () => {
   const mapped = mapN8nCollections([
