@@ -8,9 +8,9 @@
 
 O Nexo já tem uma base real: login restrito ao proprietário, API com banco PostgreSQL, CRUD genérico para registros do workspace, notificações persistidas, cobrança e assinatura pelo Mercado Pago, sessão/QR de WhatsApp pelo WAHA, OAuth seguro do Google, portal do cliente com link assinado e deploy pelo Coolify.
 
-Ainda não é correto classificar todas as integrações como operacionais. Em várias delas o app só testa credenciais ou registra rascunhos. Os maiores bloqueios para uso diário são conversas WhatsApp sem envio/recebimento ligado ao provedor, automações n8n que não executam fluxos, arquivos sem upload real, assinatura eletrônica sem provedor e registros relacionados sem `clientId` em todos os caminhos. Site, e-mail e Calendar também precisam de operações reais, não apenas teste de conexão.
+Ainda nao e correto classificar todas as integracoes como operacionais. WhatsApp ainda nao envia/recebe pelo provedor; automacoes n8n continuam sem criacao/ativacao de workflows pelo Nexo; arquivos nao tem upload real; assinatura eletronica nao tem provedor. O Calendar agora tem operacoes para criar, atualizar e excluir eventos, convidar e-mails informados e solicitar link do Meet, mas o fluxo OAuth real ainda precisa de teste autenticado em uma conta conectada.
 
-**Validação desta revisão:** `npm run build` passou; `npm --prefix api run build` passou; o domínio respondeu HTTP 200, `/api/health` confirmou o banco conectado e a VPS serviu o bundle do commit `6772be5`.
+**Validacao desta revisao:** builds do frontend e da API passaram; `git diff --check` passou; o dominio respondeu HTTP 200, `/api/health` confirmou o banco conectado e o bundle do commit `4610773` foi servido. `https://n8n.pagfocuss.tech/healthz` e `/healthz/readiness` responderam HTTP 200. Isso valida disponibilidade, nao execucao autenticada de workflow.
 
 ## O que já funciona de verdade
 
@@ -32,7 +32,7 @@ Ainda não é correto classificar todas as integrações como operacionais. Em v
 1. **WhatsApp na Caixa de entrada:** a tela carrega conversas salvas, mas o botão de enviar sempre informa que o envio está indisponível. Falta receber webhooks da WAHA/Evolution, enviar texto e mídia, persistir id de mensagem/status, associar a conversa ao contato e tratar falha/duplicidade.
 2. **Automações n8n:** a área atual salva fluxos como `Rascunho`; não cria/ativa workflows no n8n, não executa testes e não mostra histórico real de execução. O health check do n8n não constitui integração de automação.
 3. **Arquivos:** a tela de arquivos aceita o seletor, mas informa que não faz upload. Falta upload seguro ao Google Drive (ou storage próprio), metadados e link de download, associação por cliente/projeto e envio real como anexo pelo canal.
-4. **Operações Google:** o OAuth e os escopos existem, porém faltam ações no produto para criar/atualizar eventos do Calendar, criar reuniões Meet, enviar e-mail Gmail e enviar/compartilhar arquivos no Drive. Gmail/Calendar/Drive não devem aparecer como “integrados para uso” só porque o OAuth passou.
+4. **Operacoes Google:** OAuth e escopos existem. Calendar agora cria/atualiza/exclui eventos, envia convites para e-mails explicitamente informados e pode pedir conferencia Meet. A conta OAuth e o ciclo real ainda precisam ser validados com sessao proprietaria; Gmail e Drive ainda nao possuem operacoes no produto.
 5. **Resend:** há teste de credencial/domínios, mas não há fluxo de envio para propostas, contratos, cobrança ou notificações, nem registro de entrega/rejeição.
 6. **Assinatura eletrônica:** contrato pode ser gerado/baixado em HTML, mas não há provedor de assinatura integrado, envio de envelope, callback ou documento assinado verificável.
 
@@ -41,7 +41,7 @@ Ainda não é correto classificar todas as integrações como operacionais. Em v
 1. **Vínculos cliente → pagamentos:** a API aceita `clientId`, e o portal busca pagamentos por esse identificador, mas o formulário do `PaymentConsole` envia `clientName` sem selecionar/enviar o ID. Assim, uma cobrança pode não aparecer no portal do cliente.
 2. **Vínculos em registros antigos:** o portal busca projetos/tarefas/contratos/aprovações por `clientId`. Registros legados com apenas nome não aparecem. Foi corrigida a criação nova pela ficha e por conversão de proposta, mas contratos/tarefas criados por outros caminhos ainda precisam de seleção de cliente consistente.
 3. **Ficha do cliente usa correspondência parcial por nome** em vários relacionamentos. Isso pode misturar empresas com nomes parecidos ou falhar com abreviações. A regra-alvo deve ser `clientId`; nome apenas como compatibilidade temporária.
-4. **Eventos e reuniões:** o calendário local grava eventos no workspace, mas não envia convite para Calendar/Meet nem registra resposta de participantes.
+4. **Eventos e reunioes:** eventos sincronizam com Google Calendar; convidados e link Meet sao opcionais. A agenda conserva o registro no workspace se o Google nao estiver autorizado e indica o estado. Ainda falta verificar em producao a conta OAuth, a propagacao de alteracoes e respostas dos participantes.
 5. **Ativos e monitoramento:** sites/domínios/hospedagens são cadastro manual; uptime, SSL, vencimento real e alerta não são consultados. A tela não deve exibir “online” sem um check real.
 6. **GitHub:** cadastro manual de repositório e teste de token existem; commits, PRs, deploys e status de workflow não são sincronizados. A área ainda contém indicação de deploy simulado.
 7. **Mercado Pago:** cobranças e recorrências estão no caminho real. Falta vincular cliente por ID no formulário, fazer reconciliação de estados pendentes/expirados e comprovar notificação de webhook na produção antes de tratar a baixa como definitiva.
@@ -79,3 +79,10 @@ Ainda não é correto classificar todas as integrações como operacionais. Em v
 ## Limites desta auditoria
 
 Esta revisão combinou inspeção estática, compilação e health check. Não executei pagamento, envio de mensagem/e-mail, convite Google, upload, assinatura ou cadastro de dados de validação em produção. Os provedores precisam ser validados com credenciais ativas e eventos reais controlados antes de qualquer promessa de funcionamento ponta a ponta.
+
+## Atualizacao de implementacao ? 24/09/2026
+
+- Commit `4610773`: endpoints autenticados do Calendar para criar, atualizar com idempotencia por event ID e excluir eventos; os tokens Google sao obtidos pelo mecanismo OAuth cifrado existente.
+- A agenda passou a oferecer sincronizacao com Google Calendar, campo de convidados e opcao de link Meet. Edicoes e exclusoes de eventos sincronizados propagam para o Calendar.
+- A criacao local continua disponivel quando a conta Google nao esta autorizada; o evento fica marcado como nao sincronizado e a interface explica como conectar.
+- Validei builds e disponibilidade do app/API apos o deploy. Nao criei evento real de teste: a aba Nexo esta sem sessao autenticada, entao nao foi possivel provar o OAuth ou uma chamada real ao Calendar nesta revisao.
