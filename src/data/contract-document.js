@@ -1,5 +1,9 @@
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 
+const lockedContractStatuses = new Set(['Aguardando assinatura', 'Assinado', 'Ativo']);
+export const editableContractStatuses = ['Rascunho', 'Concluído', 'Cancelado'];
+export const isLockedContractStatus = (status) => lockedContractStatuses.has(String(status || ''));
+
 export function contractText(contract = {}) {
   const scope = contract.scope || contract.service || '[DESCREVER O ESCOPO E OS ENTREGÁVEIS]';
   const terms = contract.paymentTerms || '[DEFINIR VALORES, PARCELAS E VENCIMENTOS]';

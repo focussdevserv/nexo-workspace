@@ -17,6 +17,7 @@ import { isSafeWorkspaceData } from './security/workspace-data.js';
 import { renderProposalEmail } from './email/proposal.js';
 import { classifyWahaQrResponse } from './integrations/waha.js';
 import { mapN8nCollections, n8nAutomationTemplates, buildN8nAutomationWorkflow, n8nApiKeyFailureMessage, n8nApiValidationMessage, type N8nAutomationTemplateId } from './integrations/n8n.js';
+import { isUnverifiedContractTransition, requiresExternalSignature } from './contracts/status.js';
 
 const env = z.object({
   PORT: z.coerce.number().int().positive().default(3001),
@@ -1329,6 +1330,7 @@ app.post('/api/workspace/:resource', { preHandler: app.authenticate }, async (re
   const body = parseBody(z.object({ data: workspaceDataSchema }), request.body, reply);
   if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Recurso inválido.' });
   if (!body) return;
+  if (params.data.resource === 'contracts' && requiresExternalSignature(body.data.status)) return reply.code(409).send({ error: 'contract_signature_required', message: 'Contrato so muda para Aguardando assinatura, Assinado ou Ativo apos confirmacao do provedor.' });
   const [saved] = await db.transaction(async (tx) => {
     const created = await tx.insert(workspaceRecords).values({ organizationId: request.user.organizationId, createdBy: request.user.sub, resource: params.data.resource, data: body.data }).returning();
     await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: params.data.resource, entityId: created[0]!.id, action: 'created', payload: { label: body.data.name ?? body.data.title ?? body.data.clientName ?? '' } });
@@ -1360,9 +1362,11 @@ app.patch('/api/workspace/:resource/:id', { preHandler: app.authenticate }, asyn
   if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Recurso ou identificador inválidos.' });
   if (!body) return;
   let previousData: Record<string, unknown> | undefined;
+  let rejectedContractTransition = false;
   const updated = await db.transaction(async (tx) => {
     const [current] = await tx.select().from(workspaceRecords).where(and(eq(workspaceRecords.id, params.data.id), eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, params.data.resource), isNull(workspaceRecords.archivedAt))).limit(1);
     if (!current) return undefined;
+    if (params.data.resource === 'contracts' && isUnverifiedContractTransition(current.data.status, body.data.status)) { rejectedContractTransition = true; return undefined; }
     previousData = current.data;
     const [saved] = await tx.update(workspaceRecords).set({ data: { ...current.data, ...body.data }, updatedAt: new Date() }).where(eq(workspaceRecords.id, current.id)).returning();
     await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: params.data.resource, entityId: current.id, action: 'updated', payload: { fields: Object.keys(body.data) } });
@@ -1388,6 +1392,7 @@ app.patch('/api/workspace/:resource/:id', { preHandler: app.authenticate }, asyn
     }
     return saved;
   });
+  if (rejectedContractTransition) return reply.code(409).send({ error: 'contract_signature_required', message: 'Contrato so muda para Aguardando assinatura, Assinado ou Ativo apos confirmacao do provedor.' });
   if (!updated) return reply.code(404).send({ error: 'not_found', message: 'Registro não encontrado.' });
   const normalizeStatus = (value: unknown) => String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
   const priorStatus = normalizeStatus(previousData?.status);

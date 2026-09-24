@@ -240,3 +240,9 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - Métricas de renovação agora usam datas cadastradas (incluindo formatos anteriores aceitos) e respeitam o filtro da tela. Remoção usa o endpoint real do workspace.
 - A página Arquivos deixou de afirmar um consumo fixo de 18,6 GB/100 GB e agora informa que o armazenamento Google Drive não está conectado.
 - Build Vite, 18 testes da API e `git diff --check` passaram. A criação de registro em produção não foi simulada; a persistência precisa ser validada na operação normal com um cliente real cadastrado.
+
+## Contratos — integridade de status — 24/09/2026
+
+- A interface e a API agora impedem definir manualmente `Aguardando assinatura`, `Assinado` ou `Ativo`. Esses estados exigem confirmação externa; registros preexistentes nesses estados continuam visíveis, mas não podem receber uma nova transição manual.
+- O documento é identificado como rascunho/modelo HTML para revisão e informa que o download não registra assinatura. Campos comerciais e de identificação ainda precisam ser revisados antes de uso externo; não há provedor de assinatura configurado.
+- Adicionados testes da política de estados e da renderização do modelo. API: 21/21 testes; build da API e do frontend passaram. Sem contrato de teste ou assinatura fictícia em produção.
