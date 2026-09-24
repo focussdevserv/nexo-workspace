@@ -245,4 +245,5 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 
 - A interface e a API agora impedem definir manualmente `Aguardando assinatura`, `Assinado` ou `Ativo`. Esses estados exigem confirmação externa; registros preexistentes nesses estados continuam visíveis, mas não podem receber uma nova transição manual.
 - O documento é identificado como rascunho/modelo HTML para revisão e informa que o download não registra assinatura. Campos comerciais e de identificação ainda precisam ser revisados antes de uso externo; não há provedor de assinatura configurado.
+- A criação manual do rascunho agora exige cliente cadastrado, valor válido, escopo e prazo; pode preencher escopo/prazo/valor com o serviço selecionado no catálogo e grava o texto-base no contrato.
 - Adicionados testes da política de estados e da renderização do modelo. API: 21/21 testes; build da API e do frontend passaram. Sem contrato de teste ou assinatura fictícia em produção.
