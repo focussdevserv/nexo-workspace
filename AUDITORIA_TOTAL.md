@@ -302,3 +302,9 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - Assinatura eletronica nao esta integrada; contratos atuais sao rascunhos HTML para revisao. Monitoramento de uptime/SSL, leitura/sincronizacao Gmail, listagem/arvore de pastas no Drive, vinculacao automatica de arquivos ao cliente/projeto, ciclo completo Mercado Pago, testes e2e de cada fluxo e revisao visual/acessibilidade de todos os modulos continuam no backlog.
 - O segredo OAuth apareceu em saida de diagnostico anterior desta sessao. Nao o reproduzir; rotacionar o segredo no Google Cloud e atualiza-lo no Coolify como acao de seguranca pendente.
 - Esta auditoria permanece aberta; somente capabilities com confirmacao observavel devem ser anunciadas como conectadas/funcionais.
+
+### Pos-publicacao desta fatia - 24/09/2026
+- Commits `a751630` e `df434aa` publicados na branch principal. O Coolify concluiu ambos com PostgreSQL e API saudaveis; `/api/health` retornou `database: connected`, o n8n `/healthz` retornou 200.
+- O bundle servido em producao contem o seletor de provedor Gmail, a chamada `/api/integrations/google/drive/upload` e a linha de status Drive. Apos atualizar a aba autenticada, a pagina Arquivos mostrou `Google Drive conectado: emprisefocussdev@gmail.com`.
+- Nao existe proposta real na conta para abrir o seletor e enviar uma mensagem sem criar teste; nao enviei e-mail nem arquivo. A validacao observada confirma deploy e UI, nao entrega Gmail nem upload efetivo.
+- Risco para operacao diaria: Google Cloud permanece em Testing. A documentacao oficial informa que autorizacoes de test users expiram em 7 dias quando a app solicita escopos alem de nome/e-mail/perfil; portanto, pode ser necessario reautorizar semanalmente. Ver [Manage App Audience](https://support.google.com/cloud/answer/15549945?hl=en). Publicar em Production pode exigir verificacao de OAuth e revisao dos escopos.
