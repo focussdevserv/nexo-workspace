@@ -613,7 +613,7 @@ function Automations({ notify }) {
     setBusy(`n8n:${workflow.id}`);
     try {
       await apiRequest(`/api/integrations/n8n/workflows/${encodeURIComponent(workflow.id)}/${action}`, { method: 'POST', body: '{}' });
-      await refreshN8n();
+      await Promise.all([refresh(), refreshN8n()]);
       notify(action === 'publish' ? 'Workflow publicado e confirmado pelo n8n.' : 'Workflow despublicado e confirmado pelo n8n.');
     } catch (err) { notify(err.message || 'O n8n não confirmou a alteração do workflow.'); }
     finally { setBusy(''); }
@@ -667,7 +667,7 @@ function Automations({ notify }) {
       {n8nData?.executions.map((run) => { const state = String(run.status || 'unknown'); const Icon = state === 'success' ? CheckCircle2 : ['error', 'crashed'].includes(state) ? AlertCircle : Clock3; return <div className="ns-run-row" key={run.id}><Icon size={15} /><span><b>{run.workflowName}</b> · {state}</span><small>{run.startedAt ? new Date(run.startedAt).toLocaleString('pt-BR') : 'Aguardando execução'}</small></div>; })}
       {n8nData && n8nData.executions.length === 0 && <div className="ns-empty-history">Nenhuma execução recente registrada no n8n.</div>}
     </section>
-    <div className="ns-section-heading"><div><h2>Modelos do workspace</h2><p>Estes modelos são rascunhos locais e ainda não criam workflows no n8n.</p></div><button type="button" className="ns-primary" onClick={openNew}><Plus size={15} />Criar rascunho</button></div>
+    <div className="ns-section-heading"><div><h2>Modelos do workspace</h2><p>Modelos compatíveis podem ser criados e publicados no n8n; modelos personalizados permanecem como rascunhos locais.</p></div><button type="button" className="ns-primary" onClick={openNew}><Plus size={15} />Criar rascunho</button></div>
     {loading && <div className="ns-empty-history">Carregando fluxos salvos...</div>}
     {error && <div className="dashboard-data-error" role="alert">{error}<button type="button" onClick={refresh}>Tentar novamente</button></div>}
     {!loading && items.length > 0 && <div className="ns-automation-list">{items.map((item) => { const linked = Boolean(item.n8nWorkflowId); const supported = n8nSupportedTemplateIds.has(item.templateId); return <article className="ns-automation-row" key={item.id}><span className={`ns-flow-icon${item.active ? ' active' : ''}`}><Sparkles size={18} /></span><span className="ns-flow-main"><b>{item.name}</b><small>{item.detail || item.systems}</small></span><span className="ns-flow-trigger"><small>Quando</small><b>{item.trigger}</b></span><span className="ns-flow-run"><small>Então</small><b>{item.action || 'Ação não configurada'}</b></span><span className={`ns-automation-status${item.active ? ' is-active' : ''}`}>{item.active ? 'Ativo no n8n' : linked ? 'Rascunho n8n' : 'Modelo local'}</span><div className="ns-automation-row-actions">{!linked && supported && <button type="button" className="ns-secondary ns-create-n8n-button" disabled={Boolean(busy)} onClick={() => createN8nWorkflow(item)}>{busy === `create-n8n:${item.id}` ? 'Criando...' : 'Criar no n8n'}</button>}<IconButton label={`Editar ${item.name}`} onClick={() => openEdit(item)}><Pencil size={15} /></IconButton><IconButton label={`Excluir ${item.name}`} onClick={() => remove(item)}><Trash2 size={15} /></IconButton></div></article>; })}</div>}

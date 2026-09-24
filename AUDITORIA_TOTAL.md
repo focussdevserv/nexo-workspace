@@ -265,3 +265,10 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - O modelo foi retirado da categoria de ação local e agora pode criar workflow remoto. Publicar o workflow habilita o evento no backend. Falhas de despacho n8n deixaram de rejeitar/derrubar a ação que as originou.
 - A migração `0004_billing_overdue_events` cria somente o índice por status/vencimento e a tabela outbox; não recria tabelas financeiras existentes. Não apliquei migração ao banco compartilhado localmente (Docker indisponível).
 - Testes isolados: 24/24; build TypeScript da API, build Vite e `git diff --check` passaram. Bundle Vite permanece em 507,87 kB. Falta deploy, criação/publicação do workflow remoto e verificação de execução com registro vencido real; produção atualmente não tem cobranças, portanto não existe evento real para execução sem inserir dados de teste.
+
+## Workflow de cobrança vencida no n8n - publicado - 24/09/2026
+
+- Migração `0004` e API foram implantadas; `/api/health` voltou a 200 com PostgreSQL conectado. Coolify registrou os serviços API como saudáveis e iniciou o novo web container. Houve 503 transitório durante a troca, seguido por recuperação.
+- Adicionei o modelo "Revisar cobrança vencida" no workspace, criei o workflow remoto `Nexo · Revisar cobrança vencida` e publiquei pelo app. A tela consultou o estado ativo na API do n8n: 6 workflows publicados. Após recarregar, a ficha local também confirmou "Ativo no n8n".
+- O histórico do n8n ainda mostra zero execuções. O workspace não possui cobranças, então não inseri cobrança vencida artificial nem forcei webhook. A primeira execução real fica pendente até existir uma cobrança real que ultrapasse `dueAt` sem confirmação de pagamento.
+- Corrigi mais um estado visual: depois de publicar/despublicar, o cliente atualiza a lista local e a lista do n8n em conjunto. O texto dos modelos distingue os compatíveis com workflow remoto dos rascunhos personalizados. A UI antiga só atualizava o n8n e deixava a automação local como "Rascunho n8n" até recarregar a página.
