@@ -54,3 +54,12 @@ export const requestedServiceCatalog = Object.entries(catalogGroups).flatMap(([g
   status: 'Rascunho',
 })));
 
+export function mergeRequestedServiceCatalog(existingServices = [], requestedServices = requestedServiceCatalog) {
+  const names = new Set(existingServices.map((item) => String(item.name || '').trim().toLocaleLowerCase('pt-BR')));
+  return requestedServices.filter((item) => {
+    const name = String(item.name || '').trim().toLocaleLowerCase('pt-BR');
+    if (!name || names.has(name)) return false;
+    names.add(name);
+    return true;
+  });
+}

@@ -215,3 +215,9 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - A revalidacao posterior mostrou HTTP 422 da WAHA: o desafio de pareamento nao estava mais pendente. A documentacao oficial define esse retorno como estado sem QR ativo (inclui codigo expirado).
 - Corrigi o app para consultar o QR apenas quando o status da sessao e SCAN_QR_CODE, tratar 422 como ausencia normal de desafio, e reiniciar sessao FAILED com a acao restart. A tela informa quando precisa gerar um novo QR.
 - Testes da classificacao de resposta WAHA cobrem 204, 404, 422, imagem, respostas nao-imagem e erros HTTP.
+## Catalogo e projetos por template - 24/09/2026
+
+- A importacao do catalogo agora descarta nomes repetidos tanto no workspace quanto dentro da lista informada, sem cadastrar precos ficticios.
+- A criacao de projeto pelo template de servico agora exige cliente cadastrado e persiste projeto e tarefas relacionadas no workspace; antes apenas mostrava uma confirmacao sem gravar os registros.
+- Ao escolher um servico numa proposta, o formulario preenche escopo, prazo e ciclo mensal quando definidos no catalogo, e preserva o valor digitado quando o servico ainda nao tem preco.
+- Cobertura adicionada para deduplicacao, criacao do projeto/tarefas e exigencia de cliente existente.
