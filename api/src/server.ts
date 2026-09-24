@@ -15,6 +15,7 @@ import { db, pool } from './db/index.js';
 import { activityEvents, billingOrders, billingSubscriptions, clients, organizations, users, workspaceRecords } from './db/schema.js';
 import { isSafeWorkspaceData } from './security/workspace-data.js';
 import { renderProposalEmail } from './email/proposal.js';
+import { classifyWahaQrResponse } from './integrations/waha.js';
 import { mapN8nCollections, n8nAutomationTemplates, buildN8nAutomationWorkflow, n8nApiKeyFailureMessage, n8nApiValidationMessage, type N8nAutomationTemplateId } from './integrations/n8n.js';
 
 const env = z.object({
@@ -355,8 +356,11 @@ app.get('/api/integrations/waha/sessions/:id/qr', { preHandler: app.authenticate
       signal: AbortSignal.timeout(15_000),
       headers: { 'X-Api-Key': env.WAHA_API_KEY!, Accept: 'image/png, image/*' },
     });
-    if (response.status === 404 || response.status === 204) return reply.header('Cache-Control', 'no-store').send({ data: null });
-    if (!response.ok) {
+    // WAHA returns 422 when no QR challenge is pending (for example, before
+    // SCAN_QR_CODE or after the code expired). That is a normal session state.
+    const qrResponse = classifyWahaQrResponse(response.status, response.headers.get('content-type') || '');
+    if (qrResponse === 'pending') return reply.header('Cache-Control', 'no-store').send({ data: null });
+    if (qrResponse === 'error') {
       app.log.warn({ statusCode: response.status, path: 'auth/qr' }, 'WAHA QR request failed');
       const message = response.status === 401 || response.status === 403
         ? 'A WAHA recusou a chave de API. Revise a credencial da integração.'
@@ -364,10 +368,6 @@ app.get('/api/integrations/waha/sessions/:id/qr', { preHandler: app.authenticate
       return reply.code(502).header('Cache-Control', 'no-store').send({ error: 'waha_qr_unavailable', message });
     }
     const mimetype = response.headers.get('content-type')?.split(';')[0] || 'image/png';
-    if (!mimetype.startsWith('image/')) {
-      app.log.warn({ contentType: mimetype }, 'WAHA returned a non-image QR response');
-      return reply.header('Cache-Control', 'no-store').send({ data: null });
-    }
     const image = Buffer.from(await response.arrayBuffer()).toString('base64');
     return reply.header('Cache-Control', 'no-store').send({ data: { mimetype, image } });
   } catch (error) {

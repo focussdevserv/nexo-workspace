@@ -203,3 +203,15 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - A rota oficial de QR serve bytes de imagem; o backend usava um parser JSON e devolvia `data: null`. A rota agora lê `arrayBuffer`, permite somente `image/*`, converte em Base64 para o app e define `Cache-Control: no-store`, pois o QR é uma credencial de sessão.
 - `npm --prefix api test` passou com 13/13; `npm --prefix api run build`, `npm run build` e `git diff --check` passaram. O Vite ainda avisa que o bundle JavaScript tem 502.84 kB.
 - A sessão WAHA já existente reporta `FAILED`; o deploy precisa confirmar se o endpoint consegue gerar um QR com o estado atual. O pareamento e qualquer envio/recebimento ainda dependem do usuário ler o QR e de validar uma conversa autorizada.
+
+## Update de verificacao - 24/09/2026
+
+- Publicados os commits `8e0eeba` (imagem binaria do QR sem cache) e `e0af695` (erro seguro e acionavel para falhas do endpoint WAHA).
+- Confirmado em producao: `https://focussdev.space/api/health` retornou status ok e banco conectado; apos recarregar o app, a imagem QR da sessao WAHA apareceu na tela.
+- A sessao ainda aguarda leitura pelo WhatsApp do usuario. Nao houve pareamento, envio ou recebimento de mensagem nesta validacao.
+- Validacao local: 13/13 testes da API, build TypeScript e build Vite passaram antes das duas publicacoes. O bundle Vite segue acima do limite recomendado por 2.84 kB.
+## Ciclo de QR expirado - 24/09/2026
+
+- A revalidacao posterior mostrou HTTP 422 da WAHA: o desafio de pareamento nao estava mais pendente. A documentacao oficial define esse retorno como estado sem QR ativo (inclui codigo expirado).
+- Corrigi o app para consultar o QR apenas quando o status da sessao e SCAN_QR_CODE, tratar 422 como ausencia normal de desafio, e reiniciar sessao FAILED com a acao restart. A tela informa quando precisa gerar um novo QR.
+- Testes da classificacao de resposta WAHA cobrem 204, 404, 422, imagem, respostas nao-imagem e erros HTTP.
