@@ -182,7 +182,7 @@ function WorkspaceShell() {
 
   useEffect(() => {
     refreshNotifications();
-    const timer = window.setInterval(refreshNotifications, 60_000);
+    const timer = window.setInterval(refreshNotifications, 10_000);
     return () => window.clearInterval(timer);
   }, [refreshNotifications]);
 

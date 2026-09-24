@@ -493,8 +493,13 @@ app.post('/api/integrations/waha/webhook', async (request, reply) => {
   const initials = displayName.split(/\s+/).slice(0, 2).map((part) => part[0] || '').join('').toUpperCase();
   const history = [...oldHistory, { id: messageId, providerMessageId: messageId, side: 'received', text: text || 'Mensagem recebida', time: new Date(timestamp * 1000).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }), timestamp: at, status: 'received', ...(payload.media?.filename ? { attachment: String(payload.media.filename) } : {}) }];
   const nextData = { ...currentData, name: currentData.name || displayName, company: matchingClient?.name || currentData.company || '', clientId: matchingClient?.id || currentData.clientId || '', phone, email: matchingClient?.email || currentData.email || '', initials, color: currentData.color || 'blue', channel: 'WhatsApp', whatsappSessionId: sessionRow.id, whatsappChatId: chatId, text: text || 'Mensagem recebida', time: at, unread: Number(currentData.unread || 0) + 1, history };
+  let inboxId = conversation?.id;
   if (conversation) await db.update(workspaceRecords).set({ data: nextData, updatedAt: new Date() }).where(eq(workspaceRecords.id, conversation.id));
-  else await db.insert(workspaceRecords).values({ organizationId: sessionRow.organizationId, resource: 'inbox', data: nextData, createdBy: null });
+  else {
+    const [created] = await db.insert(workspaceRecords).values({ organizationId: sessionRow.organizationId, resource: 'inbox', data: nextData, createdBy: null }).returning({ id: workspaceRecords.id });
+    inboxId = created?.id;
+  }
+  if (inboxId) await db.insert(activityEvents).values({ organizationId: sessionRow.organizationId, entityType: 'inbox', entityId: inboxId, action: 'received', payload: { label: displayName, preview: (text || 'Mensagem recebida').slice(0, 180), providerMessageId: messageId } });
   return reply.code(204).send();
 });
 
@@ -1118,11 +1123,13 @@ app.get('/api/billing/payment-methods', { preHandler: app.authenticate }, async 
 });
 
 const notificationRoutes: Record<string, string> = {
+  inbox: 'Caixa de entrada',
   leads: 'Leads', clients: 'Clientes', client: 'Clientes', proposals: 'Propostas', projects: 'Projetos',
   tasks: 'Tarefas', events: 'Agenda', tickets: 'Tickets', approvals: 'Aprovações',
   billing_order: 'Cobranças', billing_subscription: 'Assinaturas',
 };
 const notificationLabels: Record<string, string> = {
+  inbox: 'mensagem WhatsApp',
   leads: 'lead', clients: 'cliente', client: 'cliente', proposals: 'proposta', projects: 'projeto',
   tasks: 'tarefa', events: 'reunião', tickets: 'ticket de suporte', approvals: 'aprovação',
   billing_order: 'cobrança', billing_subscription: 'assinatura',
@@ -1139,10 +1146,11 @@ app.get('/api/notifications', { preHandler: app.authenticate }, async (request) 
   const data = rows.flatMap((event) => {
     const label = notificationLabels[event.entityType];
     const route = notificationRoutes[event.entityType];
-    if (!label || !route || !['created', 'updated', 'provider_updated'].includes(event.action)) return [];
+    if (!label || !route || !['created', 'updated', 'provider_updated', 'received'].includes(event.action)) return [];
     const payload = event.payload as Record<string, unknown>;
     const subject = String(payload.label || payload.name || payload.title || '').trim();
     const titleMap: Record<string, [string, string]> = {
+      inbox: ['Nova mensagem no WhatsApp', 'Nova mensagem no WhatsApp'],
       leads: ['Novo lead recebido', 'Lead atualizado'], clients: ['Cliente cadastrado', 'Cliente atualizado'], client: ['Cliente cadastrado', 'Cliente atualizado'],
       proposals: ['Nova proposta', 'Proposta atualizada'], projects: ['Projeto criado', 'Projeto atualizado'],
       tasks: ['Nova tarefa', 'Tarefa atualizada'], events: ['Reunião agendada', 'Reunião atualizada'],

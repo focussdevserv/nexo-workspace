@@ -308,3 +308,12 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - O bundle servido em producao contem o seletor de provedor Gmail, a chamada `/api/integrations/google/drive/upload` e a linha de status Drive. Apos atualizar a aba autenticada, a pagina Arquivos mostrou `Google Drive conectado: emprisefocussdev@gmail.com`.
 - Nao existe proposta real na conta para abrir o seletor e enviar uma mensagem sem criar teste; nao enviei e-mail nem arquivo. A validacao observada confirma deploy e UI, nao entrega Gmail nem upload efetivo.
 - Risco para operacao diaria: Google Cloud permanece em Testing. A documentacao oficial informa que autorizacoes de test users expiram em 7 dias quando a app solicita escopos alem de nome/e-mail/perfil; portanto, pode ser necessario reautorizar semanalmente. Ver [Manage App Audience](https://support.google.com/cloud/answer/15549945?hl=en). Publicar em Production pode exigir verificacao de OAuth e revisao dos escopos.
+
+## WhatsApp e notificações - fatia de auditoria - 24/09/2026
+
+- Conferi a estrutura dos eventos com a documentação oficial WAHA: `message` traz timestamp Unix em segundos, e `message.ack` traz `id` e estado numérico. A conversão do timestamp no handler atual está correta. Referência: https://waha.devlike.pro/docs/how-to/events/.
+- Lacuna corrigida: mensagens WhatsApp recebidas agora criam evento persistido `inbox/received`; o sino passa a incluí-las e abre `Caixa de entrada`. O polling do sino foi reduzido de 60 para 10 segundos. O handler mantém a deduplicação pelo ID do provedor antes de atualizar conversa e notificação.
+- WAHA oferece eventos de mídia, mas o Nexo ainda só registra o nome/texto indicativo; download e armazenamento/visualização de anexos recebidos não estão implementados. O envio de anexos continua desabilitado na interface. Não anunciar mídia como funcional.
+- A sessão WAHA em produção ainda requer leitura do QR no telefone. Não enviei mensagens nem inseri registros artificiais. Assim, webhook/recebimento, notificações WhatsApp em produção, entrega/leitura, e ciclo pareado permanecem sem validação ponta a ponta.
+- Validação local desta fatia: testes API 26/26, build TypeScript da API, build Vite e `git diff --check` passaram. Vite ainda alerta bundle JS principal acima de 500 kB.
+- Próximo passo: publicar e confirmar health check; após o usuário parear a sessão, validar uma mensagem recebida autorizada e seu aviso no sino. Em seguida continuar a auditoria módulo por módulo.
