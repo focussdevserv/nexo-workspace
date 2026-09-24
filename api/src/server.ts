@@ -774,7 +774,7 @@ async function getN8nWebhookCredential() {
     return { id: match.id, name: 'Nexo Workspace Automation Bridge' };
   }
   const created = await n8nApiRequest('/credentials', { method: 'POST', body: JSON.stringify({ name: 'Nexo Workspace Automation Bridge', type: 'httpHeaderAuth', data: credentialData }) }) as { id?: string };
-  if (!created.id) throw new Error('n8n_credential_create_failed');
+  if (!created.id) throw Object.assign(new Error('n8n_credential_create_failed'), { providerMessage: 'n8n aceitou a criação da credencial mas não devolveu um identificador.' });
   return { id: created.id, name: 'Nexo Workspace Automation Bridge' };
 }
 
@@ -873,14 +873,17 @@ app.post('/api/workspace/automations/:id/n8n-workflow', { preHandler: app.authen
   const templateId = String(automation.data.templateId ?? '') as N8nAutomationTemplateId;
   if (!Object.hasOwn(n8nAutomationTemplates, templateId)) return reply.code(400).send({ error: 'automation_template_unsupported', message: 'Escolha um modelo compatível para criar o workflow n8n.' });
   let remoteWorkflowId = '';
+  let stage = 'preparar credencial';
   try {
     const credential = await getN8nWebhookCredential();
+    stage = 'criar workflow remoto';
     const webhookPath = `nexo/${randomUUID()}`;
     const callbackUrl = new URL('/api/integrations/n8n/actions', allowedOrigins[0]).toString();
     const workflow = buildN8nAutomationWorkflow({ automationId: automation.id, templateId, name: String(automation.data.name ?? 'Automação'), webhookPath, callbackUrl, credentialId: credential.id });
     const created = await n8nApiRequest('/workflows', { method: 'POST', body: JSON.stringify(workflow) }) as { id?: string };
-    if (!created.id) throw new Error('n8n_workflow_create_failed');
+    if (!created.id) throw Object.assign(new Error('n8n_workflow_create_failed'), { providerMessage: 'n8n aceitou a criação do workflow mas não devolveu um identificador.' });
     remoteWorkflowId = created.id;
+    stage = 'vincular workflow ao modelo';
     const eventKey = n8nAutomationTemplates[templateId].eventKey;
     const data = { ...automation.data, n8nWorkflowId: created.id, n8nWebhookPath: webhookPath, eventKey, active: false, status: 'draft' };
     const [saved] = await db.update(workspaceRecords).set({ data, updatedAt: new Date() }).where(and(
@@ -894,7 +897,8 @@ app.post('/api/workspace/automations/:id/n8n-workflow', { preHandler: app.authen
     if (remoteWorkflowId) { try { await n8nApiRequest(`/workflows/${encodeURIComponent(remoteWorkflowId)}`, { method: 'DELETE' }); } catch { app.log.error({ workflowId: remoteWorkflowId }, 'Could not clean up n8n workflow after failed link'); } }
     const statusCode = (error as { statusCode?: number }).statusCode ?? 502;
     const providerMessage = (error as { providerMessage?: string }).providerMessage;
-    const message = statusCode === 403 ? 'A chave de API precisa de permissões credential:list, credential:create, credential:update e workflow:create.' : providerMessage ?? 'Não foi possível criar e vincular o workflow. Atualize a integração e tente novamente.';
+    app.log.error({ stage, statusCode, error: error instanceof Error ? error.message : 'unknown' }, 'Could not create n8n workflow');
+    const message = statusCode === 403 ? 'A chave de API precisa de permissões credential:list, credential:create, credential:update e workflow:create.' : providerMessage ?? `Falha ao ${stage}. Verifique os logs da API no Coolify para o diagnóstico.`;
     return reply.code(statusCode).send({ error: 'n8n_workflow_create_failed', message });
   }
 });
