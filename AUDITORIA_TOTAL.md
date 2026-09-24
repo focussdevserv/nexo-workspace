@@ -10,7 +10,7 @@ O Nexo já tem uma base real: login restrito ao proprietário, API com banco Pos
 
 Ainda nao e correto classificar todas as integracoes como operacionais. A caixa de entrada tem envio de texto pela WAHA e webhook de recebimento implementados, mas ainda precisam de validacao com sessao autenticada conectada em producao; automacoes n8n continuam sem criacao/ativacao de workflows pelo Nexo; arquivos nao tem upload real; assinatura eletronica nao tem provedor. O Calendar agora tem operacoes para criar, atualizar e excluir eventos, convidar e-mails informados e solicitar link do Meet, mas o fluxo OAuth real ainda precisa de teste autenticado em uma conta conectada.
 
-**Validacao anterior:** builds do frontend e da API passaram; rotas do workspace foram verificadas no navegador; o dominio e o n8n responderam HTTP 200 e o banco confirmou conexao. Nesta revisao, `/api/health` confirmou o PostgreSQL conectado, a pagina inicial respondeu HTTP 200, e `https://n8n.pagfocuss.tech/healthz` e `/healthz/readiness` responderam HTTP 200. O teste de conexao do Resend consultou a conta sem enviar e-mail e confirmou 1 dominio. Corrigido o rótulo corrompido do ultimo teste na tela de Integracoes; build, deploy e verificacao visual desta correcao ainda pendentes.
+**Validacao:** builds do frontend e da API passaram; `git diff --check` passou; as rotas do workspace foram validadas no navegador. Nesta revisao, `/api/health` confirmou o PostgreSQL conectado, a pagina inicial e o bundle atualizado responderam HTTP 200, os health checks de `https://n8n.pagfocuss.tech` responderam HTTP 200 e o teste do Resend confirmou 1 dominio sem enviar e-mail. O rótulo corrigido ?Ultimo teste:? foi conferido na tela de Integracoes em producao apos o deploy do commit `33f9f47`.
 
 ## O que já funciona de verdade
 
@@ -105,4 +105,4 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 
 - A credencial Resend foi aplicada ao servico API pelo Coolify e o teste de producao consultou a API de dominios sem enviar mensagens; resposta: 1 dominio disponivel. Resend aparece habilitado e conectado no ultimo teste.
 - Ainda nao ha operacao de envio de e-mail dentro dos fluxos de propostas, contratos, cobrancas ou notificacoes. A credencial valida nao habilita esses fluxos.
-- Corrigido em `src/screens/ServiceScreens.jsx` o rotulo corrompido do ultimo teste. Build e deploy desta alteracao ainda pendentes nesta revisao.
+- Corrigido em `src/screens/ServiceScreens.jsx` o rotulo corrompido do ultimo teste; build e deploy passaram e a tela foi conferida em producao apos o commit `33f9f47`.
