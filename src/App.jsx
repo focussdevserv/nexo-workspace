@@ -12,6 +12,7 @@ import ServiceScreen from './screens/ServiceScreens.jsx';
 import AdminScreen from './screens/AdminScreens.jsx';
 import { PublicClientPortal } from './screens/ClientPortalScreens.jsx';
 import WorkspaceAccess from './screens/WorkspaceAccess.jsx';
+import PublicLegalPage from './screens/PublicLegalPages.jsx';
 import { apiRequest } from './lib/workspace-api.js';
 import { purgeFictitiousLocalData } from './lib/demo-data.js';
 import './screens/forms-polish.css';
@@ -339,6 +340,8 @@ function WorkspaceShell() {
 
 export default function App() {
   if (window.location.pathname.startsWith('/portal/')) return <PublicClientPortal slug={window.location.pathname.split('/').filter(Boolean).at(-1)} />;
+  if (window.location.pathname === '/privacy') return <PublicLegalPage type="privacy" />;
+  if (window.location.pathname === '/terms') return <PublicLegalPage type="terms" />;
   return <WorkspaceAccess><WorkspaceShell /></WorkspaceAccess>;
 }
 
