@@ -15,6 +15,7 @@ import { db, pool } from './db/index.js';
 import { activityEvents, billingOrders, billingSubscriptions, clients, organizations, users, workspaceRecords } from './db/schema.js';
 import { isSafeWorkspaceData } from './security/workspace-data.js';
 import { renderProposalEmail } from './email/proposal.js';
+import { mapN8nCollections } from './integrations/n8n.js';
 
 const env = z.object({
   PORT: z.coerce.number().int().positive().default(3001),
@@ -738,6 +739,64 @@ app.post('/api/integrations/:provider/test', { preHandler: app.authenticate, con
   } catch (error) {
     app.log.warn({ provider, error: error instanceof Error ? error.name : 'unknown' }, 'Integration connection test failed');
     return failed('Não foi possível confirmar a conexão. Confira o serviço, a URL e as credenciais no Coolify.');
+  }
+});
+
+const n8nWorkflowIdSchema = z.string().trim().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/);
+async function n8nApiRequest(path: string, init: RequestInit = {}) {
+  const baseUrl = process.env.N8N_BASE_URL?.replace(/\/$/, '');
+  const apiKey = process.env.N8N_API_KEY;
+  if (!baseUrl || !apiKey) throw Object.assign(new Error('n8n_not_configured'), { statusCode: 503 });
+  const response = await fetch(`${baseUrl}/api/v1${path}`, {
+    ...init,
+    signal: AbortSignal.timeout(12_000),
+    headers: { 'X-N8N-API-KEY': apiKey, Accept: 'application/json', ...(init.body ? { 'Content-Type': 'application/json' } : {}), ...(init.headers ?? {}) },
+  });
+  const body = await response.text();
+  const data = body ? (() => { try { return JSON.parse(body) as unknown; } catch { return null; } })() : null;
+  if (!response.ok) {
+    const statusCode = response.status === 401 || response.status === 403 ? 403 : response.status === 404 ? 404 : response.status >= 500 ? 502 : 400;
+    app.log.warn({ statusCode: response.status, path }, 'n8n API request failed');
+    throw Object.assign(new Error(response.status === 401 || response.status === 403 ? 'n8n_api_forbidden' : 'n8n_api_request_failed'), { statusCode });
+  }
+  return data;
+}
+
+app.get('/api/integrations/n8n/workflows', { preHandler: app.authenticate, config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {
+  if (!process.env.N8N_BASE_URL || !process.env.N8N_API_KEY) return reply.code(503).send({ error: 'n8n_not_configured', message: 'Configure a URL segura do n8n e a chave da API no Coolify.' });
+  if (!await isIntegrationEnabled(request.user.organizationId, 'n8n')) return reply.code(409).send({ error: 'integration_disconnected', message: 'Reative o n8n em Integrações para consultar workflows.' });
+  try {
+    const [workflowResult, executionResult] = await Promise.all([
+      n8nApiRequest('/workflows?limit=100') as Promise<{ data?: unknown[]; nextCursor?: string | null }>,
+      n8nApiRequest('/executions?limit=25&includeData=false') as Promise<{ data?: unknown[]; nextCursor?: string | null }>,
+    ]);
+    const mapped = mapN8nCollections(
+      Array.isArray(workflowResult.data) ? workflowResult.data : [],
+      Array.isArray(executionResult.data) ? executionResult.data : [],
+    );
+    return { data: { ...mapped, workflowNextCursor: workflowResult.nextCursor ?? null, executionNextCursor: executionResult.nextCursor ?? null } };
+  } catch (error) {
+    const statusCode = (error as { statusCode?: number }).statusCode ?? 502;
+    return reply.code(statusCode).send({ error: statusCode === 403 ? 'n8n_api_forbidden' : 'n8n_request_failed', message: statusCode === 403 ? 'A chave do n8n não tem permissão para listar workflows e execuções.' : 'Não foi possível carregar workflows reais do n8n. Confira a integração e tente novamente.' });
+  }
+});
+
+app.post('/api/integrations/n8n/workflows/:id/:action', { preHandler: app.authenticate, config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {
+  const params = z.object({ id: n8nWorkflowIdSchema, action: z.enum(['publish', 'unpublish']) }).safeParse(request.params);
+  if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Workflow ou ação inválidos.' });
+  if (!process.env.N8N_BASE_URL || !process.env.N8N_API_KEY) return reply.code(503).send({ error: 'n8n_not_configured', message: 'Configure a URL segura do n8n e a chave da API no Coolify.' });
+  if (!await isIntegrationEnabled(request.user.organizationId, 'n8n')) return reply.code(409).send({ error: 'integration_disconnected', message: 'Reative o n8n em Integrações antes de alterar workflows.' });
+  const { id, action } = params.data;
+  try {
+    await n8nApiRequest(`/workflows/${encodeURIComponent(id)}/${action}`, { method: 'POST', body: '{}' });
+    const verified = await n8nApiRequest(`/workflows/${encodeURIComponent(id)}`) as Record<string, unknown>;
+    const active = verified.active === true;
+    if (active !== (action === 'publish')) return reply.code(502).send({ error: 'n8n_publish_not_confirmed', message: 'O n8n não confirmou o estado solicitado. Atualize a lista antes de tentar novamente.' });
+    return { data: { id, active, name: verified.name ?? '' } };
+  } catch (error) {
+    const statusCode = (error as { statusCode?: number }).statusCode ?? 502;
+    const permission = statusCode === 403;
+    return reply.code(statusCode).send({ error: permission ? 'n8n_api_forbidden' : 'n8n_workflow_action_failed', message: permission ? `A chave da API precisa da permissão workflow:${action === 'publish' ? 'publish' : 'unpublish'}.` : 'Não foi possível alterar o workflow. Confira o status no n8n e tente novamente.' });
   }
 });
 

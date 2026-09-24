@@ -566,12 +566,32 @@ const automationTemplates = [
 
 function Automations({ notify }) {
   const { records: items, loading, error, refresh, create, update, remove: deleteRecord } = useWorkspaceRecords('automations');
+  const [n8nData, setN8nData] = useState(null);
+  const [n8nError, setN8nError] = useState('');
+  const [n8nLoading, setN8nLoading] = useState(false);
   const [form, setForm] = useState(false);
   const [editing, setEditing] = useState(null);
   const [busy, setBusy] = useState('');
   const [draft, setDraft] = useState({ name: '', detail: '', trigger: 'Novo lead recebido', action: 'Criar tarefa de follow-up' });
   const triggers = [...new Set(automationTemplates.map((item) => item.trigger))];
   const actions = [...new Set(automationTemplates.map((item) => item.action))];
+  const refreshN8n = useCallback(async () => {
+    setN8nLoading(true);
+    try { const result = await apiRequest('/api/integrations/n8n/workflows'); setN8nData(result.data); setN8nError(''); }
+    catch (err) { setN8nData(null); setN8nError(err.message || 'Não foi possível consultar o n8n.'); }
+    finally { setN8nLoading(false); }
+  }, []);
+  useEffect(() => { refreshN8n(); }, [refreshN8n]);
+  const changeN8nWorkflow = async (workflow) => {
+    const action = workflow.active ? 'unpublish' : 'publish';
+    setBusy(`n8n:${workflow.id}`);
+    try {
+      await apiRequest(`/api/integrations/n8n/workflows/${encodeURIComponent(workflow.id)}/${action}`, { method: 'POST', body: '{}' });
+      await refreshN8n();
+      notify(action === 'publish' ? 'Workflow publicado e confirmado pelo n8n.' : 'Workflow despublicado e confirmado pelo n8n.');
+    } catch (err) { notify(err.message || 'O n8n não confirmou a alteração do workflow.'); }
+    finally { setBusy(''); }
+  };
   const addTemplate = async (template) => {
     if (items.some((item) => item.templateId === template.id)) { notify('Este modelo ja esta na sua lista.'); return; }
     setBusy(template.id);
@@ -601,15 +621,25 @@ function Automations({ notify }) {
   };
   const availableTemplates = automationTemplates.filter((template) => !items.some((item) => item.templateId === template.id));
   return <>
-    <div className="ns-metrics ns-metrics-three"><Metric label="Fluxos salvos" value={String(items.length).padStart(2, '0')} note="Configuracao armazenada no workspace" icon={Sparkles} /><Metric label="Em rascunho" value={String(items.filter((item) => item.status !== 'connected').length).padStart(2, '0')} note="Aguardando conexao de execucao" icon={Clock3} /><Metric label="Modelos disponiveis" value={String(availableTemplates.length).padStart(2, '0')} note="Prontos para adicionar" icon={Activity} /></div>
-    <div className="ns-section-heading"><div><h2>Modelos prontos</h2><p>Adicione um fluxo ao workspace. Ele fica como rascunho ate a integracao de execucao ser configurada.</p></div><button type="button" className="ns-primary" onClick={openNew}><Plus size={15} />Criar fluxo</button></div>
+    <div className="ns-metrics ns-metrics-three"><Metric label="Workflows no n8n" value={n8nData ? String(n8nData.workflows.length).padStart(2, '0') : '—'} note={n8nData ? `${n8nData.workflows.filter((workflow) => workflow.active).length} publicados` : 'Aguardando conexão real'} icon={Sparkles} /><Metric label="Execuções recentes" value={n8nData ? String(n8nData.executions.length).padStart(2, '0') : '—'} note="Histórico consultado no n8n" icon={Activity} /><Metric label="Modelos do workspace" value={String(items.length).padStart(2, '0')} note="Configurações salvas neste app" icon={Clock3} /></div>
+    <section className="ns-automation-history" aria-labelledby="n8n-workflows-title">
+      <div className="ns-section-heading"><div><h2 id="n8n-workflows-title">Workflows reais do n8n</h2><p>Estado e execuções vêm da API do n8n. Publicar/despublicar altera o workflow remoto.</p></div><button type="button" className="ns-secondary" onClick={refreshN8n} disabled={n8nLoading}><RefreshCw size={14} />{n8nLoading ? 'Atualizando...' : 'Atualizar n8n'}</button></div>
+      {n8nError && <div className="dashboard-data-error" role="status">{n8nError}</div>}
+      {n8nLoading && !n8nData && <div className="ns-empty-history">Consultando workflows e execuções no servidor...</div>}
+      {n8nData && n8nData.workflows.length === 0 && <div className="ns-empty-history">A API conectou, mas ainda não há workflows no n8n.</div>}
+      {n8nData?.workflows.map((workflow) => <article className="ns-automation-row ns-n8n-workflow-row" key={workflow.id}><span className="ns-flow-icon"><Sparkles size={18} /></span><span className="ns-flow-main"><b>{workflow.name || 'Workflow sem nome'}</b><small>{workflow.triggerCount} gatilho(s) · atualizado {workflow.updatedAt ? new Date(workflow.updatedAt).toLocaleString('pt-BR') : 'sem data'}</small></span><span className={`ns-automation-status ${workflow.active ? 'is-active' : ''}`}>{workflow.active ? 'Publicado' : 'Rascunho'}</span><button type="button" className={workflow.active ? 'ns-secondary' : 'ns-primary'} disabled={busy === `n8n:${workflow.id}`} onClick={() => changeN8nWorkflow(workflow)}>{busy === `n8n:${workflow.id}` ? 'Salvando...' : workflow.active ? 'Despublicar' : 'Publicar'}</button></article>)}
+      <div className="ns-section-heading ns-n8n-executions-heading"><div><h2>Execuções recentes</h2><p>Os dados de entrada/saída não são carregados para proteger informações de clientes.</p></div></div>
+      {n8nData?.executions.map((run) => { const state = String(run.status || 'unknown'); const Icon = state === 'success' ? CheckCircle2 : ['error', 'crashed'].includes(state) ? AlertCircle : Clock3; return <div className="ns-run-row" key={run.id}><Icon size={15} /><span><b>{run.workflowName}</b> · {state}</span><small>{run.startedAt ? new Date(run.startedAt).toLocaleString('pt-BR') : 'Aguardando execução'}</small></div>; })}
+      {n8nData && n8nData.executions.length === 0 && <div className="ns-empty-history">Nenhuma execução recente registrada no n8n.</div>}
+    </section>
+    <div className="ns-section-heading"><div><h2>Modelos do workspace</h2><p>Estes modelos são rascunhos locais e ainda não criam workflows no n8n.</p></div><button type="button" className="ns-primary" onClick={openNew}><Plus size={15} />Criar rascunho</button></div>
     {loading && <div className="ns-empty-history">Carregando fluxos salvos...</div>}
     {error && <div className="dashboard-data-error" role="alert">{error}<button type="button" onClick={refresh}>Tentar novamente</button></div>}
     {!loading && items.length > 0 && <div className="ns-automation-list">{items.map((item) => <article className="ns-automation-row" key={item.id}><span className="ns-flow-icon"><Sparkles size={18} /></span><span className="ns-flow-main"><b>{item.name}</b><small>{item.detail || item.systems}</small></span><span className="ns-flow-trigger"><small>Quando</small><b>{item.trigger}</b></span><span className="ns-flow-run"><small>Entao</small><b>{item.action || 'Acao nao configurada'}</b></span><span className="ns-automation-status">Rascunho</span><div className="ns-automation-row-actions"><IconButton label="Ver integracoes" onClick={() => navigateTo('Integracoes')}><Link2 size={15} /></IconButton><IconButton label={`Editar ${item.name}`} onClick={() => openEdit(item)}><Pencil size={15} /></IconButton><IconButton label={`Excluir ${item.name}`} onClick={() => remove(item)}><Trash2 size={15} /></IconButton></div></article>)}</div>}
     {items.length === 0 && !loading && <div className="ns-automation-empty"><Sparkles size={19} /><div><b>Nenhum fluxo configurado</b><span>Escolha um dos modelos abaixo para comecar. Nada sera executado sem ativacao explicita.</span></div></div>}
     <div className="ns-automation-template-grid">{availableTemplates.map((template) => <article className="ns-automation-template" key={template.id}><div className="ns-automation-template-icon"><Sparkles size={17} /></div><span className="ns-automation-template-system">{template.systems}</span><h3>{template.name}</h3><p>{template.detail}</p><div className="ns-automation-template-flow"><span><small>Quando</small><b>{template.trigger}</b></span><ArrowUpRight size={14} /><span><small>Entao</small><b>{template.action}</b></span></div><button type="button" className="ns-secondary" disabled={busy === template.id} onClick={() => addTemplate(template)}><Plus size={14} />{busy === template.id ? 'Adicionando...' : 'Adicionar fluxo'}</button></article>)}</div>
-    <div className="ns-info-note"><ShieldCheck size={17} /><span>Os modelos sao gravados no banco de dados. A execucao automatica ainda depende de conectar o n8n e associar cada gatilho a um workflow ativo.</span></div>
-    {form && <div className="ns-integration-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setForm(false); }}><form className="ns-integration-modal ns-automation-modal" onSubmit={saveDraft}><header><span className="ns-integration-logo sign"><Sparkles size={18} /></span><div><h2>{editing ? 'Editar fluxo' : 'Criar fluxo'}</h2><p>Salvo no workspace como rascunho.</p></div><button type="button" aria-label="Fechar" onClick={() => setForm(false)}><X size={17} /></button></header><div className="ns-integration-fields"><label>Nome<input autoFocus required maxLength="70" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="Ex.: Acompanhar novo cliente" /></label><label>Descricao<input value={draft.detail} onChange={(event) => setDraft({ ...draft, detail: event.target.value })} placeholder="O que este fluxo deve fazer?" /></label><label>Quando isso acontecer<select value={draft.trigger} onChange={(event) => setDraft({ ...draft, trigger: event.target.value })}>{triggers.map((item) => <option key={item}>{item}</option>)}</select></label><label>Entao fazer<select value={draft.action} onChange={(event) => setDraft({ ...draft, action: event.target.value })}>{actions.map((item) => <option key={item}>{item}</option>)}</select></label></div><div className="ns-integration-modal-note"><ShieldCheck size={15} />Para executar, conecte o n8n em Integracoes e associe o gatilho a um workflow.</div><footer><button type="button" className="ns-secondary" onClick={() => setForm(false)}>Cancelar</button><button type="submit" className="ns-primary" disabled={busy === 'save'}><Check size={14} />{busy === 'save' ? 'Salvando...' : editing ? 'Salvar rascunho' : 'Criar rascunho'}</button></footer></form></div>}
+    <div className="ns-info-note"><ShieldCheck size={17} /><span>Publicar um workflow no n8n não conecta sozinho os gatilhos internos do Nexo. Essa associação ainda precisa ser implementada antes de tratar os modelos locais como automações ativas.</span></div>
+    {form && <div className="ns-integration-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setForm(false); }}><form className="ns-integration-modal ns-automation-modal" onSubmit={saveDraft}><header><span className="ns-integration-logo sign"><Sparkles size={18} /></span><div><h2>{editing ? 'Editar rascunho' : 'Criar rascunho'}</h2><p>Esta configuração fica salva no workspace.</p></div><button type="button" aria-label="Fechar" onClick={() => setForm(false)}><X size={17} /></button></header><div className="ns-integration-fields"><label>Nome<input autoFocus required maxLength="70" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="Ex.: Acompanhar novo cliente" /></label><label>Descrição<input value={draft.detail} onChange={(event) => setDraft({ ...draft, detail: event.target.value })} placeholder="O que este fluxo deve fazer?" /></label><label>Quando isso acontecer<select value={draft.trigger} onChange={(event) => setDraft({ ...draft, trigger: event.target.value })}>{triggers.map((item) => <option key={item}>{item}</option>)}</select></label><label>Então fazer<select value={draft.action} onChange={(event) => setDraft({ ...draft, action: event.target.value })}>{actions.map((item) => <option key={item}>{item}</option>)}</select></label></div><div className="ns-integration-modal-note"><ShieldCheck size={15} />Salvar não cria nem executa um workflow no n8n.</div><footer><button type="button" className="ns-secondary" onClick={() => setForm(false)}>Cancelar</button><button type="submit" className="ns-primary" disabled={busy === 'save'}><Check size={14} />{busy === 'save' ? 'Salvando...' : editing ? 'Salvar rascunho' : 'Criar rascunho'}</button></footer></form></div>}
   </>;
 }
 
