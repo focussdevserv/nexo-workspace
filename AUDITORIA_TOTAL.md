@@ -247,3 +247,12 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - O documento é identificado como rascunho/modelo HTML para revisão e informa que o download não registra assinatura. Campos comerciais e de identificação ainda precisam ser revisados antes de uso externo; não há provedor de assinatura configurado.
 - A criação manual do rascunho agora exige cliente cadastrado, valor válido, escopo e prazo; pode preencher escopo/prazo/valor com o serviço selecionado no catálogo e grava o texto-base no contrato.
 - Adicionados testes da política de estados e da renderização do modelo. API: 21/21 testes; build da API e do frontend passaram. Sem contrato de teste ou assinatura fictícia em produção.
+
+## Auditoria total em andamento - Meu Dia e Repositórios - 24/09/2026
+
+- Recarreguei o app autenticado em produção. `/api/health` respondeu HTTP 200 com PostgreSQL conectado; n8n `/healthz` respondeu HTTP 200. Os sete pedidos do Meu Dia (usuário, leads, projetos, tarefas, agenda, propostas, cobranças e notificações) responderam HTTP 200 após nova navegação, sem erros novos no console. O histórico antigo do navegador continha respostas 5xx de WAHA/notificações durante deploys anteriores; não reproduzi essas falhas nesta leitura.
+- Produção tem zero cobranças cadastradas. Não criei cobrança, mensagem nem registro fictício para testar.
+- Corrigido o Meu Dia: contagem passa a considerar apenas tarefas abertas com prazo hoje; filtro, estilo concluído e alternância reconhecem estados em português com/sem acento e estados em inglês (`completed`/`done`).
+- Corrigida a tela de Repositórios: removida uma referência a `activeRepo` inexistente que lançaria erro ao renderizar um repositório salvo. A seção agora identifica claramente que commits/deploys não estão sincronizados e não exibe atividade demonstrativa.
+- Validação local: `npm run build`, `npm run api:build`, `npm --prefix api test` (21/21) e `git diff --check` passaram. O bundle ainda excede o aviso Vite de 500 kB (507,69 kB); divisão de código segue como melhoria de desempenho.
+- A auditoria é incremental e permanece aberta. Ainda faltam validação ponta a ponta dos módulos de CRM, projetos e cobrança com registros normais, OAuth e Calendar em conta autorizada, WAHA pareado, automações n8n executadas, e-mail entregue, arquivos, assinatura eletrônica, GitHub, Sentry, monitoramento externo, acessibilidade/responsividade por módulo e varredura dos controles de exportação/paginação.

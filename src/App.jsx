@@ -90,6 +90,14 @@ function workspacePageFromPath(pathname) {
   return navGroups.flatMap((group) => group.items).find((item) => workspacePageSlug(item.label) === slug)?.label || null;
 }
 
+function normalizedTaskStatus(task) {
+  return String(task?.state || task?.status || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+}
+
+function isCompletedTask(task) {
+  return ['concluida', 'concluido', 'completed', 'done'].includes(normalizedTaskStatus(task));
+}
+
 function WorkspaceShell() {
   const [activeNav, setActiveNav] = useState(() => {
     const routedPage = workspacePageFromPath(window.location.pathname);
@@ -229,14 +237,13 @@ function WorkspaceShell() {
   const initials = (currentUser?.name || '').trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase();
   const dateChip = new Intl.DateTimeFormat('pt-BR', { weekday: 'short', day: '2-digit', month: 'short' }).format(today);
 
+  const todaysTasks = useMemo(() => tasks.filter((task) => String(task.dueAt || task.dueDate || task.due || '').slice(0, 10) === todayIso), [tasks, todayIso]);
   const visibleTasks = useMemo(() => {
-    const dueToday = tasks.filter((task) => String(task.dueAt || task.dueDate || task.due || '').slice(0, 10) === todayIso);
-    const normalizedState = (task) => String(task.state || task.status || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-    if (taskFilter === 'Em andamento') return dueToday.filter((task) => normalizedState(task) === 'em andamento');
-    if (taskFilter === 'Pendente') return dueToday.filter((task) => ['pendente', 'a fazer', 'aberta', 'novo'].includes(normalizedState(task)));
-    if (taskFilter === 'Concluída') return dueToday.filter((task) => ['concluida', 'concluido', 'completed', 'done'].includes(normalizedState(task)));
-    return dueToday;
-  }, [taskFilter, tasks, todayIso]);
+    if (taskFilter === 'Em andamento') return todaysTasks.filter((task) => normalizedTaskStatus(task) === 'em andamento');
+    if (taskFilter === 'Pendente') return todaysTasks.filter((task) => ['pendente', 'a fazer', 'aberta', 'novo'].includes(normalizedTaskStatus(task)));
+    if (taskFilter === 'Concluída') return todaysTasks.filter(isCompletedTask);
+    return todaysTasks;
+  }, [taskFilter, todaysTasks]);
 
   const notify = (message) => {
     setToast(message);
@@ -246,7 +253,7 @@ function WorkspaceShell() {
   const toggleTask = async (id) => {
     const task = tasks.find((item) => item.id === id);
     if (!task) return;
-    const state = ['Concluída', 'Concluido', 'completed'].includes(task.state) ? 'Pendente' : 'Concluída';
+    const state = isCompletedTask(task) ? 'Pendente' : 'Concluída';
     try { const result = await apiRequest(`/api/workspace/tasks/${id}`, { method: 'PATCH', body: JSON.stringify({ data: { state, status: state } }) }); setTasks((current) => current.map((item) => item.id === id ? { ...item, ...result.data, state } : item)); }
     catch (error) { setDashboardError(error.message || 'Não foi possível atualizar a tarefa.'); }
   };
@@ -310,7 +317,7 @@ function WorkspaceShell() {
             </div>
             </section>
             <div className="tasks-area">
-              <div className="section-heading task-heading"><div className="section-title-group"><h2>Tarefas de hoje</h2><span className="count-pill">{tasks.filter((task) => task.state !== 'Concluída').length} tarefas</span></div><div className="task-tabs">{['Todas', 'Em andamento', 'Pendente', 'Concluída'].map((item) => <button key={item} className={taskFilter === item ? 'selected' : ''} aria-pressed={taskFilter === item} onClick={() => setTaskFilter(item)}>{item}</button>)}</div></div>
+              <div className="section-heading task-heading"><div className="section-title-group"><h2>Tarefas de hoje</h2><span className="count-pill">{todaysTasks.filter((task) => !isCompletedTask(task)).length} abertas hoje</span></div><div className="task-tabs">{['Todas', 'Em andamento', 'Pendente', 'Concluída'].map((item) => <button key={item} className={taskFilter === item ? 'selected' : ''} aria-pressed={taskFilter === item} onClick={() => setTaskFilter(item)}>{item}</button>)}</div></div>
               <div className="task-grid">
                 {visibleTasks.slice(0, 4).map((task) => <TaskCard key={task.id} task={task} onToggle={() => toggleTask(task.id)} onOpen={() => { setActiveNav('Tarefas'); }} />)}
                 {visibleTasks.length === 0 && <div className="empty-filter">Nenhuma tarefa com vencimento hoje. Crie uma tarefa ou consulte todas em Tarefas.</div>}
@@ -355,7 +362,7 @@ function LeadCard({ lead, onAction, onMore }) {
 }
 
 function TaskCard({ task, onToggle, onOpen }) {
-  const done = task.state === 'Concluída';
+  const done = isCompletedTask(task);
   return <article className={`task-card ${task.featured ? 'featured' : ''} ${done ? 'done' : ''}`}>
     <div className="task-time"><span>{task.time}</span><span className="today-pill">Hoje</span><div className="task-avatar-stack"><Avatar initials={task.initials} color={task.initials === 'MS' ? 'rose' : task.initials === 'TM' ? 'amber' : 'blue'} small />{task.featured && <Avatar initials="GS" color="teal" small />}</div></div>
     <button className="task-title-button" onClick={onOpen}><h3>{task.title}</h3></button><p className="task-company"><BriefcaseBusiness size={13} />{task.company}</p><p className="task-detail">{task.detail}</p>
