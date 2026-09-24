@@ -201,9 +201,10 @@ function WorkspaceShell() {
 
   const visibleTasks = useMemo(() => {
     const dueToday = tasks.filter((task) => String(task.dueAt || task.dueDate || task.due || '').slice(0, 10) === todayIso);
-    if (taskFilter === 'Em andamento') return dueToday.filter((task) => task.state === 'Em andamento');
-    if (taskFilter === 'Pendente') return dueToday.filter((task) => task.state === 'Pendente');
-    if (taskFilter === 'Conclu�') return dueToday.filter((task) => ['Conclu�', 'Concluido', 'completed'].includes(task.state));
+    const normalizedState = (task) => String(task.state || task.status || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    if (taskFilter === 'Em andamento') return dueToday.filter((task) => normalizedState(task) === 'em andamento');
+    if (taskFilter === 'Pendente') return dueToday.filter((task) => ['pendente', 'a fazer', 'aberta', 'novo'].includes(normalizedState(task)));
+    if (taskFilter === 'Concluída') return dueToday.filter((task) => ['concluida', 'concluido', 'completed', 'done'].includes(normalizedState(task)));
     return dueToday;
   }, [taskFilter, tasks, todayIso]);
 
