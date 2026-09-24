@@ -84,7 +84,12 @@ function readLocalValue(key, fallback) { try { return JSON.parse(localStorage.ge
 function amountValue(value) { return Number(String(value || '').replace(/[^\d,]/g, '').replace(',', '.')) || 0; }
 
 function WorkspaceShell() {
-  const [activeNav, setActiveNav] = useState('Meu Dia');
+  const [activeNav, setActiveNav] = useState(() => {
+    try {
+      const savedPage = sessionStorage.getItem('nexo.workspace.activePage');
+      return navGroups.some((group) => group.items.some((item) => item.label === savedPage)) ? savedPage : 'Meu Dia';
+    } catch { return 'Meu Dia'; }
+  });
   const [createOpen, setCreateOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -132,6 +137,10 @@ function WorkspaceShell() {
     const clock = window.setInterval(() => setNow(new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })), 60_000);
     return () => window.clearInterval(clock);
   }, [refreshDashboard]);
+
+  useEffect(() => {
+    try { sessionStorage.setItem('nexo.workspace.activePage', activeNav); } catch { /* storage can be unavailable in restricted browser contexts */ }
+  }, [activeNav]);
 
   useEffect(() => {
     const navigate = (event) => { if (event.detail && navGroups.some((group) => group.items.some((item) => item.label === event.detail))) setActiveNav(event.detail); };
