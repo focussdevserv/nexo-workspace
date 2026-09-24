@@ -15,6 +15,7 @@ export const users = pgTable('users', {
   passwordHash: text('password_hash').notNull(),
   role: text('role').$type<'owner' | 'admin' | 'member'>().default('owner').notNull(),
   active: boolean('active').default(true).notNull(),
+  notificationsReadAt: timestamp('notifications_read_at', { withTimezone: true }).defaultNow().notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [uniqueIndex('users_email_unique').on(table.email), index('users_organization_idx').on(table.organizationId)]);
 

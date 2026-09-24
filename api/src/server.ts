@@ -272,6 +272,56 @@ app.get('/api/integrations/status', { preHandler: app.authenticate }, async () =
   { name: 'Sentry', configured: Boolean(process.env.SENTRY_DSN) },
 ] }));
 
+app.post('/api/integrations/:provider/test', { preHandler: app.authenticate, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
+  const params = z.object({ provider: z.enum(['mercadopago', 'evolution', 'waha', 'resend', 'github', 'google', 'n8n', 'sentry']) }).safeParse(request.params);
+  if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Integração inválida.' });
+  const provider = params.data.provider;
+  const unavailable = (message: string) => reply.code(503).send({ error: 'integration_not_configured', message });
+  try {
+    if (provider === 'mercadopago') {
+      if (!env.MERCADOPAGO_ACCESS_TOKEN) return unavailable('Configure MERCADOPAGO_ACCESS_TOKEN nas variáveis do serviço API no Coolify.');
+      const methods = await mercadoPago<Array<{ id: string }>>('/v1/payment_methods');
+      return { data: { status: 'connected', message: `Mercado Pago respondeu. ${methods.length} meios de pagamento disponíveis.` } };
+    }
+    if (provider === 'waha') {
+      if (!env.WAHA_API_URL || !env.WAHA_API_KEY) return unavailable('Configure WAHA_API_URL e WAHA_API_KEY no serviço API.');
+      const sessions = await wahaRequest<Array<{ name?: string }>>('/api/sessions');
+      return { data: { status: 'connected', message: `WAHA respondeu. ${sessions.length} sessão(ões) encontrada(s).` } };
+    }
+    if (provider === 'evolution') {
+      const baseUrl = process.env.EVOLUTION_API_URL?.replace(/\/$/, '');
+      const apiKey = process.env.EVOLUTION_API_KEY;
+      if (!baseUrl || !apiKey) return unavailable('Configure EVOLUTION_API_URL e EVOLUTION_API_KEY no serviço API.');
+      const response = await fetch(`${baseUrl}/instance/fetchInstances`, { headers: { apikey: apiKey, Accept: 'application/json' }, signal: AbortSignal.timeout(12_000) });
+      if (!response.ok) return reply.code(502).send({ error: 'integration_test_failed', message: `Evolution API respondeu com HTTP ${response.status}. Confira a URL e a chave configuradas.` });
+      const instances = await response.json().catch(() => []);
+      return { data: { status: 'connected', message: `Evolution API respondeu. ${Array.isArray(instances) ? instances.length : 0} instância(s) encontrada(s).` } };
+    }
+    if (provider === 'resend') {
+      const apiKey = process.env.RESEND_API_KEY;
+      if (!apiKey) return unavailable('Configure RESEND_API_KEY no serviço API.');
+      const response = await fetch('https://api.resend.com/domains', { headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' }, signal: AbortSignal.timeout(12_000) });
+      if (!response.ok) return reply.code(502).send({ error: 'integration_test_failed', message: `Resend respondeu com HTTP ${response.status}. Confira a chave configurada.` });
+      const result = await response.json() as { data?: unknown[] };
+      return { data: { status: 'connected', message: `Resend respondeu. ${result.data?.length ?? 0} domínio(s) disponível(is).` } };
+    }
+    if (provider === 'github') {
+      const token = process.env.GITHUB_TOKEN;
+      if (!token) return unavailable('Configure GITHUB_TOKEN no serviço API.');
+      const response = await fetch('https://api.github.com/user', { headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' }, signal: AbortSignal.timeout(12_000) });
+      if (!response.ok) return reply.code(502).send({ error: 'integration_test_failed', message: `GitHub respondeu com HTTP ${response.status}. Confira o token e as permissões.` });
+      const result = await response.json() as { login?: string };
+      return { data: { status: 'connected', message: `GitHub conectado como ${result.login || 'usuário autenticado'}.` } };
+    }
+    if (provider === 'google') return { data: { status: 'setup_required', message: 'As credenciais do Google não concluem a autorização. O fluxo OAuth precisa ser finalizado antes de testar Gmail, Calendar, Drive e Meet.' } };
+    if (provider === 'n8n') return { data: { status: 'setup_required', message: 'Configure uma URL base e uma chave de API do n8n para validar a conexão sem disparar um workflow.' } };
+    return { data: { status: 'setup_required', message: 'O DSN do Sentry está no servidor, mas validar a ingestão exige enviar um evento de teste que criaria um evento no projeto.' } };
+  } catch (error) {
+    app.log.warn({ provider, error: error instanceof Error ? error.name : 'unknown' }, 'Integration connection test failed');
+    return reply.code(502).send({ error: 'integration_test_failed', message: 'Não foi possível confirmar a conexão. Confira o serviço, a URL e as credenciais no Coolify.' });
+  }
+});
+
 app.post('/api/auth/login', { config: { rateLimit: { max: 5, timeWindow: '15 minutes' } } }, async (request, reply) => {
   const body = parseBody(loginSchema, request.body, reply); if (!body) return;
   const [user] = await db.select().from(users).where(and(
@@ -304,6 +354,58 @@ app.get('/api/billing/payment-methods', { preHandler: app.authenticate }, async 
     if (error instanceof Error && error.message === 'mercadopago_not_configured') return reply.code(503).send({ error: 'payment_provider_unavailable', message: 'Mercado Pago ainda não está configurado no servidor.' });
     return reply.code(502).send({ error: 'payment_methods_unavailable', message: 'Não foi possível consultar os meios de pagamento da conta.' });
   }
+});
+
+const notificationRoutes: Record<string, string> = {
+  leads: 'Leads', clients: 'Clientes', client: 'Clientes', proposals: 'Propostas', projects: 'Projetos',
+  tasks: 'Tarefas', events: 'Agenda', tickets: 'Tickets', approvals: 'Aprovações',
+  billing_order: 'Cobranças', billing_subscription: 'Assinaturas',
+};
+const notificationLabels: Record<string, string> = {
+  leads: 'lead', clients: 'cliente', client: 'cliente', proposals: 'proposta', projects: 'projeto',
+  tasks: 'tarefa', events: 'reunião', tickets: 'ticket de suporte', approvals: 'aprovação',
+  billing_order: 'cobrança', billing_subscription: 'assinatura',
+};
+
+app.get('/api/notifications', { preHandler: app.authenticate }, async (request) => {
+  const [owner] = await db.select({ readAt: users.notificationsReadAt }).from(users).where(eq(users.id, request.user.sub)).limit(1);
+  const rows = await db.select({
+    id: activityEvents.id, entityType: activityEvents.entityType, entityId: activityEvents.entityId,
+    action: activityEvents.action, payload: activityEvents.payload, createdAt: activityEvents.createdAt,
+  }).from(activityEvents).where(eq(activityEvents.organizationId, request.user.organizationId))
+    .orderBy(desc(activityEvents.createdAt)).limit(200);
+  const readAt = owner?.readAt ?? new Date(0);
+  const data = rows.flatMap((event) => {
+    const label = notificationLabels[event.entityType];
+    const route = notificationRoutes[event.entityType];
+    if (!label || !route || !['created', 'updated', 'provider_updated'].includes(event.action)) return [];
+    const payload = event.payload as Record<string, unknown>;
+    const subject = String(payload.label || payload.name || payload.title || '').trim();
+    const titleMap: Record<string, [string, string]> = {
+      leads: ['Novo lead recebido', 'Lead atualizado'], clients: ['Cliente cadastrado', 'Cliente atualizado'], client: ['Cliente cadastrado', 'Cliente atualizado'],
+      proposals: ['Nova proposta', 'Proposta atualizada'], projects: ['Projeto criado', 'Projeto atualizado'],
+      tasks: ['Nova tarefa', 'Tarefa atualizada'], events: ['Reunião agendada', 'Reunião atualizada'],
+      tickets: ['Novo ticket de suporte', 'Ticket de suporte atualizado'], approvals: ['Nova aprovação', 'Aprovação atualizada'],
+      billing_order: ['Cobrança criada', event.action === 'provider_updated' ? 'Pagamento atualizado' : 'Cobrança atualizada'],
+      billing_subscription: ['Assinatura criada', 'Assinatura atualizada'],
+    };
+    const title = titleMap[event.entityType]?.[event.action === 'created' ? 0 : 1] || `${label[0]?.toUpperCase()}${label.slice(1)} atualizado`;
+    const amountDetail = typeof payload.amount === 'number' ? `R$ ${payload.amount.toFixed(2).replace('.', ',')}` : '';
+    const statusDetail = typeof payload.status === 'string' ? `Status: ${payload.status}` : '';
+    const detail = [subject, amountDetail, statusDetail].filter(Boolean).join(' · ') || `${title}.`;
+    return [{
+      id: event.id, entityId: event.entityId, entityType: event.entityType, page: route,
+      title,
+      detail, createdAt: event.createdAt, unread: event.createdAt > readAt,
+    }];
+  });
+  return { data, unreadCount: data.filter((item) => item.unread).length, readAt };
+});
+
+app.post('/api/notifications/read', { preHandler: app.authenticate }, async (request) => {
+  const readAt = new Date();
+  await db.update(users).set({ notificationsReadAt: readAt }).where(eq(users.id, request.user.sub));
+  return { data: { readAt } };
 });
 
 app.get('/api/billing/orders', { preHandler: app.authenticate }, async (request) => {

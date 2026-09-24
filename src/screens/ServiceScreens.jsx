@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import './service.css';
 import './integrations.css';
+import './integration-dialog.css';
 import './automations.css';
 import './subscriptions.css';
 import './billing.css';
@@ -332,6 +333,9 @@ function Integrations({ notify }) {
   const [integrationStatus, setIntegrationStatus] = useState({});
   const [statusLoading, setStatusLoading] = useState(true);
   const [filter, setFilter] = useState('Todas');
+  const [configuring, setConfiguring] = useState(null);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState(null);
   const refreshStatus = async () => {
     setStatusLoading(true);
     try {
@@ -342,14 +346,35 @@ function Integrations({ notify }) {
   };
   useEffect(() => { refreshStatus(); }, []);
   const categories = ['Todas', 'Pagamentos', 'WhatsApp', 'E-mail', 'Produtividade', 'Desenvolvimento', 'Automacoes', 'Monitoramento'];
+  const setup = {
+    'Mercado Pago': { provider: 'mercadopago', vars: ['MERCADOPAGO_ACCESS_TOKEN', 'MERCADOPAGO_WEBHOOK_SECRET'], note: 'O access token fica somente no serviço API. O teste consulta os meios de pagamento sem criar uma cobrança.' },
+    'Evolution API': { provider: 'evolution', vars: ['EVOLUTION_API_URL', 'EVOLUTION_API_KEY'], note: 'Informe a URL base da Evolution API e a chave global. O teste lista as instâncias sem exibir a chave.' },
+    WAHA: { provider: 'waha', vars: ['WAHA_API_URL', 'WAHA_API_KEY'], note: 'No Coolify, WAHA_API_URL pode apontar para http://waha:3000 quando o serviço está no mesmo Compose.' },
+    Resend: { provider: 'resend', vars: ['RESEND_API_KEY'], note: 'O teste consulta os domínios da conta. Ele não envia e-mails.' },
+    'Google Workspace': { provider: 'google', vars: ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET'], note: 'Depois de cadastrar as credenciais no Google Cloud, ainda será preciso concluir o OAuth e autorizar as APIs que deseja usar.' },
+    GitHub: { provider: 'github', vars: ['GITHUB_TOKEN'], note: 'O teste consulta a identidade do token. Use um token com o menor conjunto de permissões necessário.' },
+    n8n: { provider: 'n8n', vars: ['N8N_WEBHOOK_URL'], note: 'A URL de webhook não será chamada no teste para evitar disparar automações por engano. O health check autenticado ainda precisa ser configurado.' },
+    Sentry: { provider: 'sentry', vars: ['SENTRY_DSN'], note: 'O teste não envia um evento artificial ao Sentry, para não criar um incidente falso no projeto.' },
+  };
+  const testConnection = async () => {
+    if (!configuring) return;
+    setTesting(true); setTestResult(null);
+    try {
+      const result = await apiRequest(`/api/integrations/${setup[configuring.name].provider}/test`, { method: 'POST', body: '{}' });
+      setTestResult({ status: result.data.status, message: result.data.message });
+      if (result.data.status === 'connected') await refreshStatus();
+    } catch (error) { setTestResult({ status: 'error', message: error.message || 'Falha ao testar a conexão.' }); }
+    finally { setTesting(false); }
+  };
   const providerCategory = (name) => name === 'Mercado Pago' ? 'Pagamentos' : ['Evolution API', 'WAHA'].includes(name) ? 'WhatsApp' : name === 'Resend' ? 'E-mail' : name === 'Google Workspace' ? 'Produtividade' : name === 'GitHub' ? 'Desenvolvimento' : name === 'n8n' ? 'Automacoes' : 'Monitoramento';
   const visible = integrations.filter((item) => filter === 'Todas' || providerCategory(item.name) === filter);
   const configuredCount = Object.values(integrationStatus).filter(Boolean).length;
   return <>
     <div className="ns-integration-intro"><span><Link2 size={18} /></span><div><b>Status das integracoes do servidor</b><small>{statusLoading ? 'Consultando a configuracao segura do servidor...' : `${configuredCount} de ${integrations.length} servicos com credenciais configuradas.`}</small></div><button className="ns-integration-refresh" type="button" onClick={refreshStatus} disabled={statusLoading}><RefreshCw size={15} className={statusLoading ? 'ns-spinning' : ''} />Atualizar</button></div>
     <div className="ns-integration-filters" role="group" aria-label="Filtrar integracoes">{categories.map((item) => <button type="button" aria-pressed={filter === item} className={filter === item ? 'active' : ''} key={item} onClick={() => setFilter(item)}>{item}</button>)}</div>
-    <div className="ns-integration-grid">{visible.map((item) => { const Icon = item.icon; const configured = Boolean(integrationStatus[item.name]); return <article className="ns-integration-card" key={item.name}><div className="ns-integration-top"><span className={`ns-integration-logo ${item.color}`}><Icon size={20} /></span><span className={`ns-connection-badge ${configured ? 'configured' : ''}`}><i />{configured ? 'Credencial presente' : 'Nao configurada'}</span></div><h3>{item.name}</h3><p>{item.detail}</p><div className="ns-integration-actions"><button className="ns-integration-configure" type="button" onClick={() => notify(`${item.name}: configure as credenciais nas variaveis de ambiente do Coolify. Este painel nao armazena segredos nem confirma uma conexao testada.`)}><Settings2 size={14} />Configuracao segura</button></div></article>; })}</div>
-    <div className="ns-info-note"><ShieldCheck size={17} /><span>Este status confirma somente a presenca das credenciais no servidor. Uma conexao so sera considerada ativa quando o teste real do provedor estiver implementado.</span></div>
+    <div className="ns-integration-grid">{visible.map((item) => { const Icon = item.icon; const configured = Boolean(integrationStatus[item.name]); return <article className="ns-integration-card" key={item.name}><div className="ns-integration-top"><span className={`ns-integration-logo ${item.color}`}><Icon size={20} /></span><span className={`ns-connection-badge ${configured ? 'configured' : ''}`}><i />{configured ? 'Credenciais no servidor' : 'Nao configurada'}</span></div><h3>{item.name}</h3><p>{item.detail}</p><div className="ns-integration-actions"><button className="ns-integration-configure" type="button" onClick={() => { setConfiguring(item); setTestResult(null); }}><Settings2 size={14} />Configurar e testar</button></div></article>; })}</div>
+    <div className="ns-info-note"><ShieldCheck size={17} /><span>As chaves ficam no Coolify. Abra cada serviço para ver as variáveis necessárias e testar a conexão no servidor; nenhum segredo é exibido nesta tela.</span></div>
+    {configuring && <div className="ns-integration-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !testing) setConfiguring(null); }}><section className="ns-integration-modal" role="dialog" aria-modal="true" aria-labelledby="integration-dialog-title"><header><span className={`ns-integration-logo ${configuring.color}`}><configuring.icon size={18} /></span><div><h2 id="integration-dialog-title">{configuring.name}</h2><p>{integrationStatus[configuring.name] ? 'Credenciais detectadas no servidor.' : 'Configure as variáveis no Coolify para habilitar este serviço.'}</p></div><button type="button" aria-label="Fechar" onClick={() => !testing && setConfiguring(null)}><X size={17} /></button></header><div className="integration-setup-content"><b>Variáveis necessárias</b><ul>{setup[configuring.name].vars.map((name) => <li key={name}><code>{name}</code></li>)}</ul><p>{setup[configuring.name].note}</p><div className="ns-integration-modal-note"><ShieldCheck size={15} />As chaves permanecem no Coolify e nunca são enviadas ao navegador.</div>{testResult && <div className={`integration-test-result ${testResult.status}`} role="status"><span>{testResult.status === 'connected' ? 'Conexão confirmada' : testResult.status === 'setup_required' ? 'Integração ainda incompleta' : 'Não foi possível conectar'}</span><p>{testResult.message}</p></div>}</div><footer><button type="button" className="ns-secondary" onClick={() => refreshStatus()} disabled={statusLoading}><RefreshCw size={14} />Atualizar status</button><button type="button" className="ns-primary" onClick={testConnection} disabled={testing}><Check size={14} />{testing ? 'Testando...' : 'Testar conexão'}</button></footer></section></div>}
   </>;
 }
 
