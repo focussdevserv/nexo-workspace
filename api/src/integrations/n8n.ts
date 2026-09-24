@@ -27,6 +27,15 @@ export function n8nApiKeyFailureMessage(status: number) {
   return `n8n recusou a autenticação com HTTP ${status}. Confira a chave e as permissões no n8n.`;
 }
 
+export function n8nApiValidationMessage(status: number, body: unknown) {
+  if (status === 401 || status === 403) return n8nApiKeyFailureMessage(status);
+  if (status >= 500) return 'A instância n8n encontrou um erro interno ao processar a solicitação.';
+  const source = body && typeof body === 'object' && !Array.isArray(body) ? body as Record<string, unknown> : {};
+  const raw = typeof source.message === 'string' ? source.message : typeof source.error === 'string' ? source.error : '';
+  const safe = raw.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 240);
+  return safe ? `n8n recusou a solicitação (HTTP ${status}): ${safe}` : `n8n recusou a solicitação com HTTP ${status}.`;
+}
+
 export function mapN8nCollections(workflowEntries: unknown[], executionEntries: unknown[]) {
   const workflows = workflowEntries.filter((entry): entry is N8nWorkflowSummary => Boolean(entry) && typeof entry === 'object' && !Array.isArray(entry))
     .map((item) => ({

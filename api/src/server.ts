@@ -15,7 +15,7 @@ import { db, pool } from './db/index.js';
 import { activityEvents, billingOrders, billingSubscriptions, clients, organizations, users, workspaceRecords } from './db/schema.js';
 import { isSafeWorkspaceData } from './security/workspace-data.js';
 import { renderProposalEmail } from './email/proposal.js';
-import { mapN8nCollections, n8nAutomationTemplates, buildN8nAutomationWorkflow, n8nApiKeyFailureMessage, type N8nAutomationTemplateId } from './integrations/n8n.js';
+import { mapN8nCollections, n8nAutomationTemplates, buildN8nAutomationWorkflow, n8nApiKeyFailureMessage, n8nApiValidationMessage, type N8nAutomationTemplateId } from './integrations/n8n.js';
 
 const env = z.object({
   PORT: z.coerce.number().int().positive().default(3001),
@@ -756,8 +756,9 @@ async function n8nApiRequest(path: string, init: RequestInit = {}) {
   const data = body ? (() => { try { return JSON.parse(body) as unknown; } catch { return null; } })() : null;
   if (!response.ok) {
     const statusCode = response.status === 401 || response.status === 403 ? 403 : response.status === 404 ? 404 : response.status >= 500 ? 502 : 400;
-    app.log.warn({ statusCode: response.status, path }, 'n8n API request failed');
-    throw Object.assign(new Error(response.status === 401 || response.status === 403 ? 'n8n_api_forbidden' : 'n8n_api_request_failed'), { statusCode });
+    const safeMessage = n8nApiValidationMessage(response.status, data);
+    app.log.warn({ statusCode: response.status, path, providerMessage: safeMessage }, 'n8n API request failed');
+    throw Object.assign(new Error(response.status === 401 || response.status === 403 ? 'n8n_api_forbidden' : 'n8n_api_request_failed'), { statusCode, providerMessage: safeMessage });
   }
   return data;
 }
@@ -892,7 +893,8 @@ app.post('/api/workspace/automations/:id/n8n-workflow', { preHandler: app.authen
   } catch (error) {
     if (remoteWorkflowId) { try { await n8nApiRequest(`/workflows/${encodeURIComponent(remoteWorkflowId)}`, { method: 'DELETE' }); } catch { app.log.error({ workflowId: remoteWorkflowId }, 'Could not clean up n8n workflow after failed link'); } }
     const statusCode = (error as { statusCode?: number }).statusCode ?? 502;
-    const message = statusCode === 403 ? 'A chave de API precisa de permissões credential:list, credential:create, credential:update e workflow:create.' : 'Não foi possível criar e vincular o workflow. Atualize a integração e tente novamente.';
+    const providerMessage = (error as { providerMessage?: string }).providerMessage;
+    const message = statusCode === 403 ? 'A chave de API precisa de permissões credential:list, credential:create, credential:update e workflow:create.' : providerMessage ?? 'Não foi possível criar e vincular o workflow. Atualize a integração e tente novamente.';
     return reply.code(statusCode).send({ error: 'n8n_workflow_create_failed', message });
   }
 });

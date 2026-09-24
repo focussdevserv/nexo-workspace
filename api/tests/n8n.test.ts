@@ -1,10 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildN8nAutomationWorkflow, mapN8nCollections, n8nApiKeyFailureMessage, n8nAutomationTemplates } from '../src/integrations/n8n.ts';
+import { buildN8nAutomationWorkflow, mapN8nCollections, n8nApiKeyFailureMessage, n8nApiValidationMessage, n8nAutomationTemplates } from '../src/integrations/n8n.ts';
 
 test('distinguishes an invalid n8n API key from missing workflow scopes', () => {
   assert.match(n8nApiKeyFailureMessage(401), /chave.*ativa/i);
   assert.match(n8nApiKeyFailureMessage(403), /escopos.*workflow:list.*workflow:read/i);
+});
+
+test('surfaces safe n8n validation details and suppresses server internals', () => {
+  assert.match(n8nApiValidationMessage(400, { message: 'body.nodes should NOT have additional properties' }), /body\.nodes/);
+  assert.match(n8nApiValidationMessage(500, { message: 'database password=secret' }), /erro interno/);
+  assert.equal(n8nApiValidationMessage(400, { details: 'secret' }), 'n8n recusou a solicitação com HTTP 400.');
 });
 
 test('maps n8n workflow and execution lists to safe summaries', () => {
