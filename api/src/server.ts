@@ -716,6 +716,15 @@ app.post('/api/workspace/:resource', { preHandler: app.authenticate }, async (re
   const [saved] = await db.transaction(async (tx) => {
     const created = await tx.insert(workspaceRecords).values({ organizationId: request.user.organizationId, createdBy: request.user.sub, resource: params.data.resource, data: body.data }).returning();
     await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: params.data.resource, entityId: created[0]!.id, action: 'created', payload: { label: body.data.name ?? body.data.title ?? body.data.clientName ?? '' } });
+    if (params.data.resource === 'leads') {
+      const leadName = String(body.data.name ?? body.data.title ?? 'novo lead');
+      const due = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      const [task] = await tx.insert(workspaceRecords).values({ organizationId: request.user.organizationId, createdBy: request.user.sub, resource: 'tasks', data: {
+        title: `Primeiro contato · ${leadName}`, client: String(body.data.company ?? leadName), project: '', due, status: 'A fazer', priority: 'Alta', assignee: '',
+        automationKey: 'lead-first-contact', sourceLeadId: created[0]!.id,
+      } }).returning();
+      await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'tasks', entityId: task!.id, action: 'created', payload: { automation: 'lead-first-contact', leadId: created[0]!.id } });
+    }
     return created;
   });
   return reply.code(201).send({ data: { ...saved!.data, id: saved!.id, createdAt: saved!.createdAt, updatedAt: saved!.updatedAt } });
@@ -731,6 +740,22 @@ app.patch('/api/workspace/:resource/:id', { preHandler: app.authenticate }, asyn
     if (!current) return undefined;
     const [saved] = await tx.update(workspaceRecords).set({ data: { ...current.data, ...body.data }, updatedAt: new Date() }).where(eq(workspaceRecords.id, current.id)).returning();
     await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: params.data.resource, entityId: current.id, action: 'updated', payload: { fields: Object.keys(body.data) } });
+    const completedStatuses = new Set(['Concluído', 'Concluido', 'Publicado', 'Entregue']);
+    const projectName = String(body.data.name ?? current.data.name ?? current.data.title ?? 'Projeto');
+    if (params.data.resource === 'projects' && completedStatuses.has(String(body.data.status ?? '')) && !completedStatuses.has(String(current.data.status ?? ''))) {
+      const [existingFollowUp] = await tx.select({ id: workspaceRecords.id }).from(workspaceRecords).where(and(
+        eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'tasks'), isNull(workspaceRecords.archivedAt),
+        sql`${workspaceRecords.data}->>'automationKey' = 'project-delivery-follow-up'`, sql`${workspaceRecords.data}->>'projectId' = ${current.id}`,
+      )).limit(1);
+      if (!existingFollowUp) {
+        const due = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+        const [task] = await tx.insert(workspaceRecords).values({ organizationId: request.user.organizationId, createdBy: request.user.sub, resource: 'tasks', data: {
+          title: `Acompanhamento da entrega · ${projectName}`, client: String(body.data.client ?? current.data.client ?? ''), project: projectName, projectId: current.id,
+          due, status: 'A fazer', priority: 'Normal', assignee: '', automationKey: 'project-delivery-follow-up',
+        } }).returning();
+        await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'tasks', entityId: task!.id, action: 'created', payload: { automation: 'project-delivery-follow-up', projectId: current.id } });
+      }
+    }
     return saved;
   });
   if (!updated) return reply.code(404).send({ error: 'not_found', message: 'Registro não encontrado.' });
