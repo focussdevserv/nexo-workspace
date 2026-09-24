@@ -168,3 +168,12 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - Coolify marked commit `fe46c51` as Success; the deployment log confirmed PostgreSQL and API healthy, then the web container started.
 - `https://focussdev.space/` returned HTTP 200 with the new frontend bundle. The bundle includes the ticket save confirmation from the database-backed flow. `/api/health` returned HTTP 200 and `database: connected`.
 - No ticket was created as a test. End-to-end create/edit still needs a deliberate real ticket in normal business use.
+
+## Revalidacao de producao — 24/09/2026
+
+- `https://focussdev.space/api/health` respondeu HTTP 200 com `database: connected`; `https://flow.pagfocuss.tech/healthz` respondeu HTTP 200.
+- A API autenticou no n8n com `GET /api/v1/workflows?limit=1`; o teste do app confirmou a chave e retornou zero workflows. A chave no container foi verificada sem revelar o valor: 268 bytes incluindo quebra de linha. Não há automações remotas ativas ainda.
+- O deploy do commit `882fced` publicou a correção de diagnóstico 401/403. O fluxo de criação remota de workflow ainda não foi comprovado; a tela continua listando um modelo local e nenhum workflow remoto.
+- A aba aberta manteve o bundle antigo até recarga forçada; o HTML servido não tinha política explícita de cache. Foi adicionada política `no-cache` para `index.html` e cache imutável para assets com hash; aguardando publicação e validação no domínio.
+- Validação local: `npm run build`, `npm --prefix api test` (12/12), `npm --prefix api run build` e `git diff --check` passaram. O Vite mantém aviso de chunk JavaScript acima de 500 kB.
+- Limite desta etapa: não enviei mensagens, e-mails nem pagamentos. Não criei registros adicionais de clientes/projetos. `output/` permaneceu intacto.
