@@ -146,6 +146,47 @@ async function wahaRequest<T = Record<string, unknown>>(path: string, init: Requ
   return payload as T;
 }
 
+const integrationProviders = ['mercadopago', 'evolution', 'waha', 'resend', 'google', 'github', 'n8n', 'sentry'] as const;
+type IntegrationProvider = typeof integrationProviders[number];
+type IntegrationControl = { provider?: string; enabled?: boolean; lastTestStatus?: string | null; lastTestMessage?: string | null; testedAt?: string | null };
+
+function integrationConfigured(provider: IntegrationProvider) {
+  return ({
+    mercadopago: Boolean(env.MERCADOPAGO_ACCESS_TOKEN),
+    evolution: Boolean(process.env.EVOLUTION_API_URL && process.env.EVOLUTION_API_KEY),
+    waha: Boolean(env.WAHA_API_URL && env.WAHA_API_KEY),
+    resend: Boolean(process.env.RESEND_API_KEY),
+    google: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
+    github: Boolean(process.env.GITHUB_TOKEN),
+    n8n: Boolean(process.env.N8N_BASE_URL),
+    sentry: Boolean(process.env.SENTRY_DSN),
+  })[provider];
+}
+
+async function findIntegrationControl(organizationId: string, provider: IntegrationProvider) {
+  const [row] = await db.select().from(workspaceRecords).where(and(
+    eq(workspaceRecords.organizationId, organizationId), eq(workspaceRecords.resource, 'integration-controls'),
+    sql`${workspaceRecords.data}->>'provider' = ${provider}`, isNull(workspaceRecords.archivedAt),
+  )).limit(1);
+  return row;
+}
+
+async function saveIntegrationControl(organizationId: string, userId: string, provider: IntegrationProvider, patch: Partial<IntegrationControl>) {
+  const current = await findIntegrationControl(organizationId, provider);
+  const data = { ...(current?.data || {}), provider, ...patch };
+  if (current) {
+    const [saved] = await db.update(workspaceRecords).set({ data, updatedAt: new Date() }).where(eq(workspaceRecords.id, current.id)).returning();
+    return saved?.data as IntegrationControl | undefined;
+  }
+  const [created] = await db.insert(workspaceRecords).values({ organizationId, resource: 'integration-controls', data, createdBy: userId }).returning();
+  return created?.data as IntegrationControl | undefined;
+}
+
+async function isIntegrationEnabled(organizationId: string, provider: IntegrationProvider) {
+  const control = await findIntegrationControl(organizationId, provider);
+  return control?.data.enabled !== false;
+}
+
 function paymentDetailsFromOrder(order: Record<string, any>) {
   const payment = order.transactions?.payments?.[0] ?? {};
   const method = payment.payment_method ?? {};
@@ -198,6 +239,7 @@ async function findOwnedWahaSession(organizationId: string, id: string) {
 
 app.get('/api/integrations/waha/sessions', { preHandler: app.authenticate }, async (request, reply) => {
   if (!env.WAHA_API_URL || !env.WAHA_API_KEY) return reply.code(503).send({ error: 'waha_not_configured', message: 'WAHA ainda não está configurada no servidor.' });
+  if (!await isIntegrationEnabled(request.user.organizationId, 'waha')) return reply.code(409).send({ error: 'integration_disconnected', message: 'WAHA está desconectada no Nexo. Reative em Integrações para continuar.' });
   const owned = await db.select().from(workspaceRecords).where(and(eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'whatsapp-sessions'), isNull(workspaceRecords.archivedAt))).orderBy(desc(workspaceRecords.createdAt));
   const remote = await wahaRequest<Array<Record<string, any>>>('/api/sessions');
   const byName = new Map(remote.map((session) => [String(session.name || ''), session]));
@@ -211,6 +253,7 @@ app.get('/api/integrations/waha/sessions', { preHandler: app.authenticate }, asy
 app.post('/api/integrations/waha/sessions', { preHandler: app.authenticate, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
   const body = parseBody(z.object({ label: z.string().trim().min(2).max(80) }), request.body, reply); if (!body) return;
   if (!env.WAHA_API_URL || !env.WAHA_API_KEY) return reply.code(503).send({ error: 'waha_not_configured', message: 'WAHA ainda não está configurada no servidor.' });
+  if (!await isIntegrationEnabled(request.user.organizationId, 'waha')) return reply.code(409).send({ error: 'integration_disconnected', message: 'WAHA está desconectada no Nexo. Reative em Integrações para continuar.' });
   const slug = body.label.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 24) || 'whatsapp';
   const sessionName = `org-${request.user.organizationId.replaceAll('-', '').slice(0, 8)}-${slug}-${randomUUID().slice(0, 8)}`;
   try {
@@ -230,6 +273,7 @@ app.post('/api/integrations/waha/sessions', { preHandler: app.authenticate, conf
 app.get('/api/integrations/waha/sessions/:id/qr', { preHandler: app.authenticate }, async (request, reply) => {
   const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
   if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Sessão inválida.' });
+  if (!await isIntegrationEnabled(request.user.organizationId, 'waha')) return reply.code(409).send({ error: 'integration_disconnected', message: 'WAHA está desconectada no Nexo.' });
   const row = await findOwnedWahaSession(request.user.organizationId, params.data.id);
   if (!row) return reply.code(404).send({ error: 'not_found', message: 'Sessão não encontrada.' });
   try {
@@ -244,6 +288,7 @@ app.get('/api/integrations/waha/sessions/:id/qr', { preHandler: app.authenticate
 app.post('/api/integrations/waha/sessions/:id/:action', { preHandler: app.authenticate }, async (request, reply) => {
   const params = z.object({ id: z.string().uuid(), action: z.enum(['start', 'stop', 'restart', 'logout']) }).safeParse(request.params);
   if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Ação ou sessão inválida.' });
+  if (!await isIntegrationEnabled(request.user.organizationId, 'waha')) return reply.code(409).send({ error: 'integration_disconnected', message: 'WAHA está desconectada no Nexo. Reative em Integrações para continuar.' });
   const row = await findOwnedWahaSession(request.user.organizationId, params.data.id);
   if (!row) return reply.code(404).send({ error: 'not_found', message: 'Sessão não encontrada.' });
   await wahaRequest(`/api/sessions/${encodeURIComponent(wahaSessionName(row))}/${params.data.action}`, { method: 'POST', body: '{}' });
@@ -253,6 +298,7 @@ app.post('/api/integrations/waha/sessions/:id/:action', { preHandler: app.authen
 app.delete('/api/integrations/waha/sessions/:id', { preHandler: app.authenticate }, async (request, reply) => {
   const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
   if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Sessão inválida.' });
+  if (!await isIntegrationEnabled(request.user.organizationId, 'waha')) return reply.code(409).send({ error: 'integration_disconnected', message: 'WAHA está desconectada no Nexo. Reative em Integrações para continuar.' });
   const row = await findOwnedWahaSession(request.user.organizationId, params.data.id);
   if (!row) return reply.code(404).send({ error: 'not_found', message: 'Sessão não encontrada.' });
   await wahaRequest(`/api/sessions/${encodeURIComponent(wahaSessionName(row))}`, { method: 'DELETE' }).catch((error) => { if ((error as { statusCode?: number }).statusCode !== 404) throw error; });
@@ -261,64 +307,107 @@ app.delete('/api/integrations/waha/sessions/:id', { preHandler: app.authenticate
   return reply.code(204).send();
 });
 
-app.get('/api/integrations/status', { preHandler: app.authenticate }, async () => ({ data: [
-  { name: 'Mercado Pago', configured: Boolean(env.MERCADOPAGO_ACCESS_TOKEN) },
-  { name: 'Evolution API', configured: Boolean(process.env.EVOLUTION_API_URL && process.env.EVOLUTION_API_KEY) },
-  { name: 'WAHA', configured: Boolean(env.WAHA_API_URL && env.WAHA_API_KEY) },
-  { name: 'Resend', configured: Boolean(process.env.RESEND_API_KEY) },
-  { name: 'Google Workspace', configured: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) },
-  { name: 'GitHub', configured: Boolean(process.env.GITHUB_TOKEN) },
-  { name: 'n8n', configured: Boolean(process.env.N8N_WEBHOOK_URL) },
-  { name: 'Sentry', configured: Boolean(process.env.SENTRY_DSN) },
-] }));
+app.get('/api/integrations/status', { preHandler: app.authenticate }, async (request) => {
+  const controls = await db.select().from(workspaceRecords).where(and(
+    eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'integration-controls'), isNull(workspaceRecords.archivedAt),
+  ));
+  const controlByProvider = new Map(controls.map((row) => [String(row.data.provider), row.data as IntegrationControl]));
+  const names: Record<IntegrationProvider, string> = { mercadopago: 'Mercado Pago', evolution: 'Evolution API', waha: 'WAHA', resend: 'Resend', google: 'Google Workspace', github: 'GitHub', n8n: 'n8n', sentry: 'Sentry' };
+  return { data: integrationProviders.map((provider) => {
+    const control = controlByProvider.get(provider);
+    const configured = integrationConfigured(provider);
+    return { name: names[provider], provider, configured, enabled: configured && control?.enabled !== false, lastTestStatus: control?.lastTestStatus || null, lastTestMessage: control?.lastTestMessage || null, testedAt: control?.testedAt || null };
+  }) };
+});
+
+app.post('/api/integrations/:provider/connection', { preHandler: app.authenticate }, async (request, reply) => {
+  const params = z.object({ provider: z.enum(integrationProviders) }).safeParse(request.params);
+  if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Integração inválida.' });
+  const body = parseBody(z.object({ enabled: z.boolean() }), request.body, reply); if (!body) return;
+  const provider = params.data.provider;
+  if (body.enabled && !integrationConfigured(provider)) return reply.code(409).send({ error: 'integration_not_configured', message: 'Configure as credenciais no Coolify antes de reativar esta integração.' });
+  if (!body.enabled && provider === 'waha' && await isIntegrationEnabled(request.user.organizationId, 'waha')) {
+    const sessions = await db.select().from(workspaceRecords).where(and(eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'whatsapp-sessions'), isNull(workspaceRecords.archivedAt)));
+    const remote = await wahaRequest<Array<Record<string, any>>>('/api/sessions');
+    const working = new Set(remote.filter((session) => session.status === 'WORKING').map((session) => String(session.name || '')));
+    for (const session of sessions) {
+      const sessionName = wahaSessionName(session);
+      if (!working.has(sessionName)) continue;
+      await wahaRequest(`/api/sessions/${encodeURIComponent(sessionName)}/stop`, { method: 'POST', body: '{}' }).catch((error) => {
+        if ((error as { statusCode?: number }).statusCode !== 404) throw error;
+      });
+    }
+  }
+  const control = await saveIntegrationControl(request.user.organizationId, request.user.sub, provider, { enabled: body.enabled, ...(body.enabled ? { lastTestStatus: null, lastTestMessage: null, testedAt: null } : {}) });
+  await db.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'integration', action: body.enabled ? 'enabled' : 'disabled', payload: { provider } });
+  return { data: { provider, enabled: control?.enabled !== false } };
+});
 
 app.post('/api/integrations/:provider/test', { preHandler: app.authenticate, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
   const params = z.object({ provider: z.enum(['mercadopago', 'evolution', 'waha', 'resend', 'github', 'google', 'n8n', 'sentry']) }).safeParse(request.params);
   if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Integração inválida.' });
   const provider = params.data.provider;
-  const unavailable = (message: string) => reply.code(503).send({ error: 'integration_not_configured', message });
+  const unavailable = async (message: string) => {
+    await saveIntegrationControl(request.user.organizationId, request.user.sub, provider, { lastTestStatus: 'not_configured', lastTestMessage: message, testedAt: new Date().toISOString() });
+    return reply.code(503).send({ error: 'integration_not_configured', message });
+  };
+  const failed = async (message: string) => {
+    await saveIntegrationControl(request.user.organizationId, request.user.sub, provider, { lastTestStatus: 'error', lastTestMessage: message, testedAt: new Date().toISOString() });
+    return reply.code(502).send({ error: 'integration_test_failed', message });
+  };
+  if (!await isIntegrationEnabled(request.user.organizationId, provider)) return { data: { status: 'disconnected', message: 'Esta integração está desativada no Nexo. Reative para testar ou usar novamente.' } };
+  const tested = async (status: string, message: string) => {
+    await saveIntegrationControl(request.user.organizationId, request.user.sub, provider, { lastTestStatus: status, lastTestMessage: message, testedAt: new Date().toISOString() });
+    return { data: { status, message } };
+  };
   try {
     if (provider === 'mercadopago') {
       if (!env.MERCADOPAGO_ACCESS_TOKEN) return unavailable('Configure MERCADOPAGO_ACCESS_TOKEN nas variáveis do serviço API no Coolify.');
       const methods = await mercadoPago<Array<{ id: string }>>('/v1/payment_methods');
-      return { data: { status: 'connected', message: `Mercado Pago respondeu. ${methods.length} meios de pagamento disponíveis.` } };
+      return tested('connected', `Mercado Pago respondeu. ${methods.length} meios de pagamento disponíveis.`);
     }
     if (provider === 'waha') {
       if (!env.WAHA_API_URL || !env.WAHA_API_KEY) return unavailable('Configure WAHA_API_URL e WAHA_API_KEY no serviço API.');
       const sessions = await wahaRequest<Array<{ name?: string }>>('/api/sessions');
-      return { data: { status: 'connected', message: `WAHA respondeu. ${sessions.length} sessão(ões) encontrada(s).` } };
+      return tested('connected', `WAHA respondeu. ${sessions.length} sessão(ões) encontrada(s).`);
     }
     if (provider === 'evolution') {
       const baseUrl = process.env.EVOLUTION_API_URL?.replace(/\/$/, '');
       const apiKey = process.env.EVOLUTION_API_KEY;
       if (!baseUrl || !apiKey) return unavailable('Configure EVOLUTION_API_URL e EVOLUTION_API_KEY no serviço API.');
       const response = await fetch(`${baseUrl}/instance/fetchInstances`, { headers: { apikey: apiKey, Accept: 'application/json' }, signal: AbortSignal.timeout(12_000) });
-      if (!response.ok) return reply.code(502).send({ error: 'integration_test_failed', message: `Evolution API respondeu com HTTP ${response.status}. Confira a URL e a chave configuradas.` });
+      if (!response.ok) return failed(`Evolution API respondeu com HTTP ${response.status}. Confira a URL e a chave configuradas.`);
       const instances = await response.json().catch(() => []);
-      return { data: { status: 'connected', message: `Evolution API respondeu. ${Array.isArray(instances) ? instances.length : 0} instância(s) encontrada(s).` } };
+      return tested('connected', `Evolution API respondeu. ${Array.isArray(instances) ? instances.length : 0} instância(s) encontrada(s).`);
     }
     if (provider === 'resend') {
       const apiKey = process.env.RESEND_API_KEY;
       if (!apiKey) return unavailable('Configure RESEND_API_KEY no serviço API.');
       const response = await fetch('https://api.resend.com/domains', { headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' }, signal: AbortSignal.timeout(12_000) });
-      if (!response.ok) return reply.code(502).send({ error: 'integration_test_failed', message: `Resend respondeu com HTTP ${response.status}. Confira a chave configurada.` });
+      if (!response.ok) return failed(`Resend respondeu com HTTP ${response.status}. Confira a chave configurada.`);
       const result = await response.json() as { data?: unknown[] };
-      return { data: { status: 'connected', message: `Resend respondeu. ${result.data?.length ?? 0} domínio(s) disponível(is).` } };
+      return tested('connected', `Resend respondeu. ${result.data?.length ?? 0} domínio(s) disponível(is).`);
     }
     if (provider === 'github') {
       const token = process.env.GITHUB_TOKEN;
       if (!token) return unavailable('Configure GITHUB_TOKEN no serviço API.');
       const response = await fetch('https://api.github.com/user', { headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' }, signal: AbortSignal.timeout(12_000) });
-      if (!response.ok) return reply.code(502).send({ error: 'integration_test_failed', message: `GitHub respondeu com HTTP ${response.status}. Confira o token e as permissões.` });
+      if (!response.ok) return failed(`GitHub respondeu com HTTP ${response.status}. Confira o token e as permissões.`);
       const result = await response.json() as { login?: string };
-      return { data: { status: 'connected', message: `GitHub conectado como ${result.login || 'usuário autenticado'}.` } };
+      return tested('connected', `GitHub conectado como ${result.login || 'usuário autenticado'}.`);
     }
-    if (provider === 'google') return { data: { status: 'setup_required', message: 'As credenciais do Google não concluem a autorização. O fluxo OAuth precisa ser finalizado antes de testar Gmail, Calendar, Drive e Meet.' } };
-    if (provider === 'n8n') return { data: { status: 'setup_required', message: 'Configure uma URL base e uma chave de API do n8n para validar a conexão sem disparar um workflow.' } };
-    return { data: { status: 'setup_required', message: 'O DSN do Sentry está no servidor, mas validar a ingestão exige enviar um evento de teste que criaria um evento no projeto.' } };
+    if (provider === 'google') return tested('setup_required', 'As credenciais do Google não concluem a autorização. O fluxo OAuth precisa ser finalizado antes de testar Gmail, Calendar, Drive e Meet.');
+    if (provider === 'n8n') {
+      const baseUrl = process.env.N8N_BASE_URL?.replace(/\/$/, '');
+      if (!baseUrl) return unavailable('Configure N8N_BASE_URL no serviço API.');
+      const response = await fetch(`${baseUrl}/healthz`, { signal: AbortSignal.timeout(8_000) });
+      if (!response.ok) return failed(`n8n respondeu com HTTP ${response.status} no health check.`);
+      return tested('connected', 'n8n respondeu ao health check interno.');
+    }
+    return tested('setup_required', 'O DSN do Sentry está no servidor, mas validar a ingestão exige enviar um evento de teste que criaria um evento no projeto.');
   } catch (error) {
     app.log.warn({ provider, error: error instanceof Error ? error.name : 'unknown' }, 'Integration connection test failed');
-    return reply.code(502).send({ error: 'integration_test_failed', message: 'Não foi possível confirmar a conexão. Confira o serviço, a URL e as credenciais no Coolify.' });
+    return failed('Não foi possível confirmar a conexão. Confira o serviço, a URL e as credenciais no Coolify.');
   }
 });
 
@@ -346,7 +435,8 @@ app.get('/api/auth/me', { preHandler: app.authenticate }, async (request, reply)
   return { user, organization };
 });
 
-app.get('/api/billing/payment-methods', { preHandler: app.authenticate }, async (_request, reply) => {
+app.get('/api/billing/payment-methods', { preHandler: app.authenticate }, async (request, reply) => {
+  if (!await isIntegrationEnabled(request.user.organizationId, 'mercadopago')) return reply.code(409).send({ error: 'integration_disconnected', message: 'Mercado Pago está desconectado no Nexo. Reative em Integrações para usar pagamentos.' });
   try {
     const methods = await mercadoPago<Array<Record<string, unknown>>>('/v1/payment_methods');
     return { data: methods.filter((method) => method.status === 'active').map((method) => ({ id: method.id, name: method.name, paymentType: method.payment_type_id, thumbnail: method.secure_thumbnail ?? method.thumbnail })) };
@@ -415,6 +505,7 @@ app.get('/api/billing/orders', { preHandler: app.authenticate }, async (request)
 
 app.post('/api/billing/orders', { preHandler: app.authenticate, config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {
   const body = parseBody(paymentOrderSchema, request.body, reply); if (!body) return;
+  if (!await isIntegrationEnabled(request.user.organizationId, 'mercadopago')) return reply.code(409).send({ error: 'integration_disconnected', message: 'Mercado Pago está desconectado no Nexo. Reative em Integrações para usar pagamentos.' });
   if (!env.MERCADOPAGO_ACCESS_TOKEN) return reply.code(503).send({ error: 'payment_provider_unavailable', message: 'Mercado Pago ainda não está configurado no servidor.' });
   if (body.clientId) {
     const [client] = await db.select({ id: clients.id }).from(clients).where(and(eq(clients.id, body.clientId), eq(clients.organizationId, request.user.organizationId))).limit(1);
@@ -464,6 +555,7 @@ app.get('/api/billing/subscriptions', { preHandler: app.authenticate }, async (r
 
 app.post('/api/billing/subscriptions', { preHandler: app.authenticate, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
   const body = parseBody(subscriptionSchema, request.body, reply); if (!body) return;
+  if (!await isIntegrationEnabled(request.user.organizationId, 'mercadopago')) return reply.code(409).send({ error: 'integration_disconnected', message: 'Mercado Pago está desconectado no Nexo. Reative em Integrações para usar assinaturas.' });
   if (!env.MERCADOPAGO_ACCESS_TOKEN) return reply.code(503).send({ error: 'payment_provider_unavailable', message: 'Mercado Pago ainda não está configurado no servidor.' });
   if (body.clientId) {
     const [client] = await db.select({ id: clients.id }).from(clients).where(and(eq(clients.id, body.clientId), eq(clients.organizationId, request.user.organizationId))).limit(1);
@@ -504,6 +596,7 @@ app.patch('/api/billing/subscriptions/:id/status', { preHandler: app.authenticat
   const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
   if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Identificador de assinatura inválido.' });
   const body = parseBody(z.object({ status: z.enum(['authorized', 'paused', 'canceled']) }), request.body, reply); if (!body) return;
+  if (!await isIntegrationEnabled(request.user.organizationId, 'mercadopago')) return reply.code(409).send({ error: 'integration_disconnected', message: 'Mercado Pago está desconectado no Nexo.' });
   const [subscription] = await db.select().from(billingSubscriptions).where(and(eq(billingSubscriptions.id, params.data.id), eq(billingSubscriptions.organizationId, request.user.organizationId))).limit(1);
   if (!subscription) return reply.code(404).send({ error: 'not_found', message: 'Assinatura não encontrada.' });
   if (!subscription.mpSubscriptionId) return reply.code(409).send({ error: 'subscription_not_started', message: 'A assinatura ainda não foi criada no Mercado Pago.' });

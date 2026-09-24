@@ -335,12 +335,19 @@ function Integrations({ notify }) {
   const [filter, setFilter] = useState('Todas');
   const [configuring, setConfiguring] = useState(null);
   const [testing, setTesting] = useState(false);
+  const [changingConnection, setChangingConnection] = useState('');
   const [testResult, setTestResult] = useState(null);
-  const refreshStatus = async () => {
+  const refreshStatus = async (verifyConnections = true) => {
     setStatusLoading(true);
     try {
       const { data } = await apiRequest('/api/integrations/status');
-      setIntegrationStatus(Object.fromEntries(data.map((item) => [item.name, Boolean(item.configured)])));
+      let latest = data;
+      if (verifyConnections) {
+        const candidates = data.filter((item) => item.configured && item.enabled);
+        await Promise.all(candidates.map((item) => apiRequest(`/api/integrations/${item.provider}/test`, { method: 'POST', body: '{}' }).catch(() => null)));
+        if (candidates.length) latest = (await apiRequest('/api/integrations/status')).data;
+      }
+      setIntegrationStatus(Object.fromEntries(latest.map((item) => [item.name, item])));
     } catch (error) { notify(error.message || 'Nao foi possivel consultar o status das integracoes.'); }
     finally { setStatusLoading(false); }
   };
@@ -353,26 +360,57 @@ function Integrations({ notify }) {
     Resend: { provider: 'resend', vars: ['RESEND_API_KEY'], note: 'O teste consulta os domínios da conta. Ele não envia e-mails.' },
     'Google Workspace': { provider: 'google', vars: ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET'], note: 'Depois de cadastrar as credenciais no Google Cloud, ainda será preciso concluir o OAuth e autorizar as APIs que deseja usar.' },
     GitHub: { provider: 'github', vars: ['GITHUB_TOKEN'], note: 'O teste consulta a identidade do token. Use um token com o menor conjunto de permissões necessário.' },
-    n8n: { provider: 'n8n', vars: ['N8N_WEBHOOK_URL'], note: 'A URL de webhook não será chamada no teste para evitar disparar automações por engano. O health check autenticado ainda precisa ser configurado.' },
+    n8n: { provider: 'n8n', vars: ['N8N_BASE_URL'], note: 'O teste consulta o health check interno. A API usa http://n8n:5678 na rede privada do Compose; nenhum webhook é disparado.' },
     Sentry: { provider: 'sentry', vars: ['SENTRY_DSN'], note: 'O teste não envia um evento artificial ao Sentry, para não criar um incidente falso no projeto.' },
   };
   const testConnection = async () => {
     if (!configuring) return;
+    if (integrationStatus[configuring.name]?.enabled === false) { setTestResult({ status: 'disconnected', message: 'Reative esta integração no Nexo antes de testar a conexão.' }); return; }
     setTesting(true); setTestResult(null);
     try {
       const result = await apiRequest(`/api/integrations/${setup[configuring.name].provider}/test`, { method: 'POST', body: '{}' });
       setTestResult({ status: result.data.status, message: result.data.message });
-      if (result.data.status === 'connected') await refreshStatus();
+      if (result.data.status === 'connected') await refreshStatus(false);
     } catch (error) { setTestResult({ status: 'error', message: error.message || 'Falha ao testar a conexão.' }); }
     finally { setTesting(false); }
   };
+  const changeConnection = async (item, enabled) => {
+    if (!enabled) {
+      const details = item.name === 'WAHA'
+        ? 'Isso pausa as sessões WhatsApp ativas. A chave continuará guardada no Coolify.'
+        : 'O Nexo deixará de usar esta integração. As credenciais continuarão guardadas no Coolify.';
+      if (!window.confirm(`Desconectar ${item.name}? ${details}`)) return;
+    }
+    setChangingConnection(item.name);
+    try {
+      await apiRequest(`/api/integrations/${setup[item.name].provider}/connection`, { method: 'POST', body: JSON.stringify({ enabled }) });
+      await refreshStatus();
+      notify(enabled ? `${item.name} reativada no Nexo. Teste a conexão para confirmar.` : `${item.name} desconectada do Nexo.`);
+    } catch (error) { notify(error.message || `Não foi possível ${enabled ? 'reativar' : 'desconectar'} ${item.name}.`); }
+    finally { setChangingConnection(''); }
+  };
+  const connectionLabel = (item) => {
+    const state = integrationStatus[item.name];
+    if (!state) return statusLoading ? 'Consultando status…' : 'Status indisponível';
+    if (!state.configured) return 'Não configurada';
+    if (!state.enabled) return 'Desconectada no Nexo';
+    if (state.lastTestStatus === 'connected') return 'Conectada no último teste';
+    if (state.lastTestStatus === 'setup_required') return 'Configuração incompleta';
+    if (state.lastTestStatus === 'error') return 'Falha no último teste';
+    return 'Credenciais configuradas · testar';
+  };
+  const connectionTone = (item) => {
+    const state = integrationStatus[item.name];
+    return state?.enabled && state.lastTestStatus === 'connected' ? 'connected' : !state?.configured || state?.enabled === false ? 'disconnected' : 'pending';
+  };
   const providerCategory = (name) => name === 'Mercado Pago' ? 'Pagamentos' : ['Evolution API', 'WAHA'].includes(name) ? 'WhatsApp' : name === 'Resend' ? 'E-mail' : name === 'Google Workspace' ? 'Produtividade' : name === 'GitHub' ? 'Desenvolvimento' : name === 'n8n' ? 'Automacoes' : 'Monitoramento';
   const visible = integrations.filter((item) => filter === 'Todas' || providerCategory(item.name) === filter);
-  const configuredCount = Object.values(integrationStatus).filter(Boolean).length;
+  const connectedCount = Object.values(integrationStatus).filter((item) => item?.configured && item?.enabled && item?.lastTestStatus === 'connected').length;
+  const configuredCount = Object.values(integrationStatus).filter((item) => item?.configured).length;
   return <>
-    <div className="ns-integration-intro"><span><Link2 size={18} /></span><div><b>Status das integracoes do servidor</b><small>{statusLoading ? 'Consultando a configuracao segura do servidor...' : `${configuredCount} de ${integrations.length} servicos com credenciais configuradas.`}</small></div><button className="ns-integration-refresh" type="button" onClick={refreshStatus} disabled={statusLoading}><RefreshCw size={15} className={statusLoading ? 'ns-spinning' : ''} />Atualizar</button></div>
+    <div className="ns-integration-intro"><span><Link2 size={18} /></span><div><b>Status real das integra??es</b><small>{statusLoading ? "Consultando a configura??o segura do servidor?" : `${connectedCount} conectada(s) no ?ltimo teste ? ${configuredCount} com credenciais no servidor.`}</small></div><button className="ns-integration-refresh" type="button" onClick={refreshStatus} disabled={statusLoading}><RefreshCw size={15} className={statusLoading ? "ns-spinning" : ""} />Atualizar</button></div>
     <div className="ns-integration-filters" role="group" aria-label="Filtrar integracoes">{categories.map((item) => <button type="button" aria-pressed={filter === item} className={filter === item ? 'active' : ''} key={item} onClick={() => setFilter(item)}>{item}</button>)}</div>
-    <div className="ns-integration-grid">{visible.map((item) => { const Icon = item.icon; const configured = Boolean(integrationStatus[item.name]); return <article className="ns-integration-card" key={item.name}><div className="ns-integration-top"><span className={`ns-integration-logo ${item.color}`}><Icon size={20} /></span><span className={`ns-connection-badge ${configured ? 'configured' : ''}`}><i />{configured ? 'Credenciais no servidor' : 'Nao configurada'}</span></div><h3>{item.name}</h3><p>{item.detail}</p><div className="ns-integration-actions"><button className="ns-integration-configure" type="button" onClick={() => { setConfiguring(item); setTestResult(null); }}><Settings2 size={14} />Configurar e testar</button></div></article>; })}</div>
+    <div className="ns-integration-grid">{visible.map((item) => { const Icon = item.icon; const state = integrationStatus[item.name]; const tone = connectionTone(item); const testedAt = state?.testedAt ? new Date(state.testedAt).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }) : ""; return <article className="ns-integration-card" key={item.name}><div className="ns-integration-top"><span className={`ns-integration-logo ${item.color}`}><Icon size={20} /></span><span className={`ns-connection-badge ${tone}`}><i />{connectionLabel(item)}</span></div><h3>{item.name}</h3><p>{item.detail}</p>{state?.testedAt && <small className="ns-integration-last-test" title={state.lastTestMessage || ""}>?ltimo teste ? {testedAt}</small>}<div className="ns-integration-actions"><button className="ns-integration-configure" type="button" onClick={() => { setConfiguring(item); setTestResult(null); }}><Settings2 size={14} />Detalhes e teste</button>{state?.configured && <button className={`ns-integration-toggle ${state.enabled ? "disconnect" : "reconnect"}`} type="button" disabled={changingConnection === item.name || statusLoading} onClick={() => changeConnection(item, !state.enabled)}>{changingConnection === item.name ? <RefreshCw size={14} className="ns-spinning" /> : state.enabled ? <Unplug size={14} /> : <Check size={14} />}{state.enabled ? "Desconectar" : "Reativar"}</button>}</div></article>; })}</div>
     <div className="ns-info-note"><ShieldCheck size={17} /><span>As chaves ficam no Coolify. Abra cada serviço para ver as variáveis necessárias e testar a conexão no servidor; nenhum segredo é exibido nesta tela.</span></div>
     {configuring && <div className="ns-integration-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !testing) setConfiguring(null); }}><section className="ns-integration-modal" role="dialog" aria-modal="true" aria-labelledby="integration-dialog-title"><header><span className={`ns-integration-logo ${configuring.color}`}><configuring.icon size={18} /></span><div><h2 id="integration-dialog-title">{configuring.name}</h2><p>{integrationStatus[configuring.name] ? 'Credenciais detectadas no servidor.' : 'Configure as variáveis no Coolify para habilitar este serviço.'}</p></div><button type="button" aria-label="Fechar" onClick={() => !testing && setConfiguring(null)}><X size={17} /></button></header><div className="integration-setup-content"><b>Variáveis necessárias</b><ul>{setup[configuring.name].vars.map((name) => <li key={name}><code>{name}</code></li>)}</ul><p>{setup[configuring.name].note}</p><div className="ns-integration-modal-note"><ShieldCheck size={15} />As chaves permanecem no Coolify e nunca são enviadas ao navegador.</div>{testResult && <div className={`integration-test-result ${testResult.status}`} role="status"><span>{testResult.status === 'connected' ? 'Conexão confirmada' : testResult.status === 'setup_required' ? 'Integração ainda incompleta' : 'Não foi possível conectar'}</span><p>{testResult.message}</p></div>}</div><footer><button type="button" className="ns-secondary" onClick={() => refreshStatus()} disabled={statusLoading}><RefreshCw size={14} />Atualizar status</button><button type="button" className="ns-primary" onClick={testConnection} disabled={testing}><Check size={14} />{testing ? 'Testando...' : 'Testar conexão'}</button></footer></section></div>}
   </>;

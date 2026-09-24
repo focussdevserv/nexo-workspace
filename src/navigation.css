@@ -29,3 +29,17 @@
   .top-actions{grid-column:auto;grid-row:auto}
 }
 @media(prefers-reduced-motion:reduce){.side-nav#workspace-mobile-navigation{transition:none}}
+/* Refined sidebar hierarchy on desktop and the mobile drawer. */
+.side-nav{background:linear-gradient(180deg,#fff 0%,#fbfcfe 100%);border-right-color:#e5eaf0}
+.side-brand{border-radius:10px;transition:background .16s ease}
+.side-brand:hover{background:#f3f6fa}
+.side-nav-link{position:relative;min-height:34px;border:1px solid transparent;transition:background .16s ease,color .16s ease,border-color .16s ease}
+.side-nav-link:hover{background:#f1f5fa;border-color:#e9eef5;color:#254f91}
+.side-nav-link.active{background:linear-gradient(100deg,#edf3ff,#f5f8ff);border-color:#e1eaff;color:#1e57ba;box-shadow:0 2px 5px #152e4b0a}
+.side-nav-link.active:before{position:absolute;left:-1px;top:7px;bottom:7px;width:3px;border-radius:0 4px 4px 0;background:#3472e3;content:""}
+.side-nav-link:focus-visible,.side-brand:focus-visible,.profile-shortcut:focus-visible{outline:3px solid #a9c5f3;outline-offset:2px}
+.profile-shortcut{margin-top:7px;border:1px solid #e8edf2;border-radius:11px;background:#fff;transition:border-color .16s ease,background .16s ease}
+.profile-shortcut:hover{border-color:#d9e3ef;background:#f8fafc}
+.nav-group-title{padding-left:11px;letter-spacing:1px}
+@media(max-width:1080px){.side-nav#workspace-mobile-navigation{background:#fff;box-shadow:none}.side-nav#workspace-mobile-navigation.mobile-open{box-shadow:18px 0 48px #0b16252e}.side-nav#workspace-mobile-navigation .side-nav-scroll{padding-inline:1px}.side-nav#workspace-mobile-navigation .nav-group{padding-block:7px 4px}}
+@media(prefers-reduced-motion:reduce){.side-brand,.side-nav-link,.profile-shortcut{transition:none}}

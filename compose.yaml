@@ -23,6 +23,8 @@ services:
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       N8N_WEBHOOK_URL: ${N8N_WEBHOOK_URL:-}
+      N8N_BASE_URL: ${N8N_BASE_URL:-http://n8n:5678}
+      N8N_EDITOR_BASE_URL: ${SERVICE_URL_N8N_5678:-https://n8n.focussdev.space/}
       SENTRY_DSN: ${SENTRY_DSN:-}
       TRUST_PROXY: "true"
     expose:
@@ -70,6 +72,43 @@ services:
     volumes:
       - waha_sessions:/app/.sessions
 
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:2.40.5
+    restart: unless-stopped
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: "5432"
+      DB_POSTGRESDB_DATABASE: nexo
+      DB_POSTGRESDB_USER: nexo
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD}
+      DB_POSTGRESDB_SCHEMA: n8n
+      N8N_ENCRYPTION_KEY: ${SERVICE_PASSWORD_64_N8N:?Coolify deve gerar e manter SERVICE_PASSWORD_64_N8N}
+      SERVICE_URL_N8N_5678: /
+      N8N_HOST: ${SERVICE_FQDN_N8N_5678:-n8n.focussdev.space}
+      N8N_PORT: "5678"
+      N8N_PROTOCOL: https
+      N8N_EDITOR_BASE_URL: ${SERVICE_URL_N8N_5678:-https://n8n.focussdev.space/}
+      WEBHOOK_URL: ${SERVICE_URL_N8N_5678:-https://n8n.focussdev.space/}
+      N8N_PROXY_HOPS: "1"
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
+      GENERIC_TIMEZONE: America/Sao_Paulo
+      TZ: America/Sao_Paulo
+    expose:
+      - "5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5678/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+
   postgres:
     image: postgres:17-alpine
     restart: unless-stopped
@@ -90,3 +129,4 @@ services:
 volumes:
   nexo_postgres:
   waha_sessions:
+  n8n_data:

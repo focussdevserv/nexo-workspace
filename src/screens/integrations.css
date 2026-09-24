@@ -27,3 +27,24 @@
 @media(max-width:720px){.ns-integration-filters{padding-bottom:7px}.ns-integration-modal{padding:13px}.ns-integration-grid{grid-template-columns:1fr}.ns-integration-card{min-height:140px}}
 @media(max-width:760px){.ns-integration-filters{flex-wrap:nowrap;overflow-x:auto;padding:1px 1px 8px;scrollbar-width:thin}.ns-screen .ns-integration-filters button{flex:none}.ns-integration-card{min-height:155px}.ns-connection-badge{font-size:8px;padding:5px 7px}}
 @media(prefers-reduced-motion:reduce){.ns-spinning{animation:none}}
+.ns-integration-card{min-height:190px}
+.ns-integration-top{align-items:flex-start}
+.ns-connection-badge{max-width:72%;justify-content:flex-start;white-space:normal;line-height:1.25;text-align:left}
+.ns-connection-badge.connected{border-color:#cdebd7;background:#eff9f3;color:#277344}
+.ns-connection-badge.connected i{background:#32a565;box-shadow:0 0 0 3px #dff3e5}
+.ns-connection-badge.pending{border-color:#f1e4c8;background:#fffaf0;color:#9b6a18}
+.ns-connection-badge.pending i{background:#d6a448;box-shadow:0 0 0 3px #f9efd9}
+.ns-connection-badge.disconnected{border-color:#e4e8ed;background:#f6f7f9;color:#788392}
+.ns-connection-badge.disconnected i{background:#9aa5b2}
+.ns-connection-badge.error{border-color:#f1d3d3;background:#fff6f6;color:#a83d3d}
+.ns-connection-badge.error i{background:#c35050}
+.ns-integration-last-test{display:block;max-width:100%;overflow:hidden;margin-top:6px;color:#8a95a4;font-size:9px;text-overflow:ellipsis;white-space:nowrap}
+.ns-integration-actions{gap:8px;align-items:center;justify-content:space-between}
+.ns-screen .ns-integration-toggle{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:35px;padding:8px 10px;border:1px solid #e4e8ed;border-radius:8px;background:#fff;color:#657285;font-size:10px;font-weight:650;line-height:1;white-space:nowrap;transition:background .15s,border-color .15s,color .15s}
+.ns-screen .ns-integration-toggle.disconnect{border-color:#f0dddd;color:#a55252}
+.ns-screen .ns-integration-toggle.disconnect:hover:not(:disabled){border-color:#e9c3c3;background:#fff7f7;color:#8e3333}
+.ns-screen .ns-integration-toggle.reconnect{border-color:#d6eade;color:#357e4b}
+.ns-screen .ns-integration-toggle.reconnect:hover:not(:disabled){border-color:#b7d9c2;background:#f2faf4;color:#24653a}
+.ns-screen .ns-integration-toggle:disabled{cursor:wait;opacity:.58}
+.ns-screen .ns-integration-toggle:focus-visible{outline:3px solid #9bb9ef;outline-offset:2px}
+@media(max-width:760px){.ns-integration-card{min-height:160px}.ns-integration-actions{justify-content:flex-start;flex-wrap:wrap}}
