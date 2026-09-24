@@ -56,5 +56,5 @@ test('creates authenticated webhook workflows without retaining execution data',
   assert.equal(Object.hasOwn(workflow, 'meta'), false);
   assert.equal(JSON.stringify(workflow).includes('credential-secret'), false);
   assert.deepEqual(n8nAutomationTemplates['new-lead-follow-up'], { eventKey: 'lead.created', taskKind: 'lead' });
-  assert.equal(Object.hasOwn(n8nAutomationTemplates, 'overdue-payment-reminder'), false);
+  assert.deepEqual(n8nAutomationTemplates['overdue-payment-reminder'], { eventKey: 'payment.overdue', taskKind: 'overduePayment' });
 });

@@ -584,11 +584,11 @@ const automationTemplates = [
   { id: 'new-lead-follow-up', name: 'Acompanhar lead novo', detail: 'Cria uma tarefa para responder e qualificar o contato.', trigger: 'Novo lead recebido', action: 'Criar tarefa de follow-up', systems: 'CRM + Tarefas' },
   { id: 'proposal-accepted-project', name: 'Preparar projeto vendido', detail: 'Ao aceitar a proposta, cria uma tarefa para iniciar o projeto e conferir o escopo.', trigger: 'Proposta aceita', action: 'Criar tarefa de início do projeto', systems: 'Propostas + Tarefas' },
   { id: 'payment-confirmed', name: 'Acompanhar pagamento confirmado', detail: 'O Mercado Pago atualiza a cobrança; este fluxo cria uma tarefa para a equipe revisar o recebimento.', trigger: 'Pagamento confirmado', action: 'Criar tarefa de conferência', systems: 'Mercado Pago + Tarefas' },
-  { id: 'overdue-payment-reminder', name: 'Lembrar cobranca vencida', detail: 'Prepara um lembrete para a equipe enviar ao cliente com o link da cobranca.', trigger: 'Cobranca vencida', action: 'Criar tarefa de cobranca', systems: 'Financeiro + Tarefas' },
+  { id: 'overdue-payment-reminder', name: 'Revisar cobrança vencida', detail: 'Quando uma cobrança pendente ultrapassar o vencimento, cria uma tarefa interna para conferir o pagamento no Mercado Pago e decidir se deve emitir uma nova cobrança. Não envia mensagens ao cliente.', trigger: 'Cobrança pendente vencida', action: 'Criar tarefa interna de revisão', systems: 'Financeiro + Tarefas + n8n' },
   { id: 'project-delivery-follow-up', name: 'Acompanhar entrega', detail: 'Cria um retorno alguns dias depois da publicacao do projeto.', trigger: 'Projeto publicado', action: 'Criar tarefa de acompanhamento', systems: 'Projetos + Tarefas' },
   { id: 'new-support-ticket', name: 'Atender novo chamado', detail: 'Cria uma tarefa para a equipe tratar o pedido de suporte recebido.', trigger: 'Novo ticket criado', action: 'Criar tarefa de atendimento', systems: 'Atendimento + Tarefas' },
 ];
-const n8nSupportedTemplateIds = new Set(['new-lead-follow-up', 'proposal-accepted-project', 'payment-confirmed', 'project-delivery-follow-up', 'new-support-ticket']);
+const n8nSupportedTemplateIds = new Set(['new-lead-follow-up', 'proposal-accepted-project', 'payment-confirmed', 'overdue-payment-reminder', 'project-delivery-follow-up', 'new-support-ticket']);
 
 function Automations({ notify }) {
   const { records: items, loading, error, refresh, create, update, remove: deleteRecord } = useWorkspaceRecords('automations');

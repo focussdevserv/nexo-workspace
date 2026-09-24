@@ -67,6 +67,7 @@ export const n8nAutomationTemplates = {
   'new-lead-follow-up': { eventKey: 'lead.created', taskKind: 'lead' },
   'proposal-accepted-project': { eventKey: 'proposal.accepted', taskKind: 'proposal' },
   'payment-confirmed': { eventKey: 'payment.confirmed', taskKind: 'payment' },
+  'overdue-payment-reminder': { eventKey: 'payment.overdue', taskKind: 'overduePayment' },
   'project-delivery-follow-up': { eventKey: 'project.published', taskKind: 'project' },
   'new-support-ticket': { eventKey: 'ticket.created', taskKind: 'ticket' },
 } as const;

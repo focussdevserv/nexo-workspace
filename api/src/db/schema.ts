@@ -1,5 +1,5 @@
 import { relations } from 'drizzle-orm';
-import { boolean, index, jsonb, numeric, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import { boolean, index, integer, jsonb, numeric, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 
 export const organizations = pgTable('organizations', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -68,7 +68,26 @@ export const billingOrders = pgTable('billing_orders', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
   index('billing_orders_org_created_idx').on(table.organizationId, table.createdAt),
+  index('billing_orders_pending_due_idx').on(table.status, table.dueAt),
   uniqueIndex('billing_orders_mp_order_unique').on(table.mpOrderId),
+]);
+
+export const billingOverdueEvents = pgTable('billing_overdue_events', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  organizationId: uuid('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
+  billingOrderId: uuid('billing_order_id').notNull().references(() => billingOrders.id, { onDelete: 'cascade' }),
+  eventId: uuid('event_id').defaultRandom().notNull(),
+  attempts: integer('attempts').default(0).notNull(),
+  nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).defaultNow().notNull(),
+  deliveredAt: timestamp('delivered_at', { withTimezone: true }),
+  discardedAt: timestamp('discarded_at', { withTimezone: true }),
+  lastError: text('last_error'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('billing_overdue_events_order_unique').on(table.billingOrderId),
+  uniqueIndex('billing_overdue_events_event_unique').on(table.eventId),
+  index('billing_overdue_events_retry_idx').on(table.deliveredAt, table.discardedAt, table.nextAttemptAt),
 ]);
 
 export const billingSubscriptions = pgTable('billing_subscriptions', {
