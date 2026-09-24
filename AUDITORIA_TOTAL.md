@@ -90,7 +90,7 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 
 ## Atualizacao de implementacao ? WhatsApp WAHA ? 24/09/2026
 
-- Caixa de entrada consulta sessoes WAHA ativas, permite escolher uma sessao, cria conversas com telefone e identifica o JID brasileiro; novas conversas sao persistidas antes de selecionar o registro do banco.
+- Caixa de entrada consulta sessoes WAHA ativas, permite escolher uma sessao, cria conversas com telefone e identifica o JID brasileiro; novas conversas sao persistidas antes de selecionar o registro do banco. O botao de QR agora tambem tenta iniciar sessoes em estado FAILED.
 - Envio de texto usa endpoint autenticado, limite de requisicoes, verificacao de propriedade da sessao/conversa, idempotencia, persistencia de estado e confirmacao do WAHA. Webhook valida segredo em tempo constante, registra entrada, atualiza confirmacoes e evita duplicidade.
-- Compose configura eventos `message` e `message.ack` e envia cabecalho secreto ao app. A sessao/mensagem real nao foi exercitada nesta revisao para evitar envio a cliente sem controle.
+- Compose configura eventos `message` e `message.ack` e envia cabecalho secreto ao app. A sess?o de produ??o existente aparece como FAILED e o provedor ainda n?o forneceu QR ap?s abrir a a??o; envio de mensagem real n?o foi exercitado para evitar contato sem controle.
 - `npm run build`, `npm --prefix api run build` e `git diff --check` passaram depois das alteracoes. A implantacao precisa ser confirmada por health check e bundle apos o push.
