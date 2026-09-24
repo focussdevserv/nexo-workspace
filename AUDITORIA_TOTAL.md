@@ -233,3 +233,10 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - Reorganizado o aviso de autorização, URI de retorno e botão para leitura em coluna. A conferência visual desktop/celular mostrou que o conteúdo não comprime mais esses controles lado a lado.
 - Google continua indisponível até adicionar `GOOGLE_CLIENT_ID` e `GOOGLE_CLIENT_SECRET` no serviço API do Coolify; o app informa isso e mantém autorização desabilitada.
 - Testes da API: 18/18; build Vite passou. Na validação móvel, viewport de 390 px sem overflow horizontal; console do navegador sem erros. Após o deploy, o domínio e `/api/health` voltaram a HTTP 200 com banco conectado.
+
+## Sites e arquivos — continuidade da auditoria — 24/09/2026
+
+- Cadastros de sites/domínios/hospedagens usam os registros autenticados do workspace, mostram carregamento/erro e vinculam novos ativos a um cliente existente por `clientId`. Status inicial passa a ser `Não verificado`; DNS, renovação automática e uptime só são apresentados quando há dados.
+- Métricas de renovação agora usam datas cadastradas (incluindo formatos anteriores aceitos) e respeitam o filtro da tela. Remoção usa o endpoint real do workspace.
+- A página Arquivos deixou de afirmar um consumo fixo de 18,6 GB/100 GB e agora informa que o armazenamento Google Drive não está conectado.
+- Build Vite, 18 testes da API e `git diff --check` passaram. A criação de registro em produção não foi simulada; a persistência precisa ser validada na operação normal com um cliente real cadastrado.
