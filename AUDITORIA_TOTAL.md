@@ -226,3 +226,10 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - Inspecao de producao encontrou 88 servicos ja cadastrados. Quatro nomes repetidos existem porque o catalogo original apresenta o mesmo nome em grupos distintos; mantive essas variantes e alterei a chave de importacao para grupo + nome.
 - A selecao de servico em proposta agora guarda e resolve o ID do registro, evitando escolher o template errado para variantes com o mesmo nome.
 - Foram repetidos os 18 testes da API e builds; todos passaram. Bundle Vite em 504.99 kB.
+
+## Interface de integrações — reauditoria em produção — 24/09/2026
+
+- Corrigido o diálogo do Google Workspace: agora distingue credenciais OAuth ausentes, credenciais configuradas e conta Google autorizada. Antes qualquer objeto de status era interpretado como credencial detectada, mesmo quando o servidor reportava a integração como não configurada.
+- Reorganizado o aviso de autorização, URI de retorno e botão para leitura em coluna. A conferência visual desktop/celular mostrou que o conteúdo não comprime mais esses controles lado a lado.
+- Google continua indisponível até adicionar `GOOGLE_CLIENT_ID` e `GOOGLE_CLIENT_SECRET` no serviço API do Coolify; o app informa isso e mantém autorização desabilitada.
+- Testes da API: 18/18; build Vite passou. Na validação móvel, viewport de 390 px sem overflow horizontal; console do navegador sem erros. Após o deploy, o domínio e `/api/health` voltaram a HTTP 200 com banco conectado.
