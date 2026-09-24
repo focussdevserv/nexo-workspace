@@ -103,6 +103,5 @@ export function buildN8nAutomationWorkflow(input: {
     connections: { 'Evento do Nexo': { main: [[{ node: 'Executar ação no Nexo', type: 'main', index: 0 }]] } },
     settings: { executionTimeout: 15, saveDataSuccessExecution: 'none', saveDataErrorExecution: 'none', saveManualExecutions: false, callerPolicy: 'none' },
     staticData: null,
-    meta: { templateId: `nexo:${input.templateId}` },
   };
 }
