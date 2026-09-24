@@ -1,0 +1,62 @@
+/* Consistent, readable forms across workspace modules and the client portal. */
+.app-shell .repo-modal-backdrop,
+.app-shell .com-modal-backdrop,
+.app-shell .goal-modal-backdrop,
+.app-shell .team-modal-backdrop,
+.app-shell .work-modal-backdrop,
+.app-shell .cp-modal-backdrop,
+.cp-public-page .cp-modal-backdrop { z-index: 100; }
+
+.app-shell :is(.repo-modal,.cp-modal,.com-create-modal,.goal-modal,.team-modal,.work-compose-modal),
+.cp-public-page .cp-modal { color: #202b3a; font-family: Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; font-size: 13px; }
+.app-shell :is(.repo-modal,.cp-modal,.com-create-modal,.goal-modal,.team-modal,.work-compose-modal)>header h2,
+.cp-public-page .cp-modal>header h2 { font-size: 18px; line-height: 1.35; letter-spacing: -.35px; }
+.app-shell :is(.repo-modal,.com-create-modal,.goal-modal,.team-modal,.work-compose-modal)>label,
+.app-shell :is(.goal-modal-fields,.team-modal-fields,.com-client-fields,.com-deal-edit-fields,.com-service-editor-fields,.file-detail-fields,.task-detail-fields,.project-detail-fields) label,
+.app-shell .cp-message-field,
+.cp-public-page .cp-public-message label { color: #4d596a; font-size: 11px; line-height: 1.45; font-weight: 600; }
+.app-shell :is(.repo-modal,.cp-modal,.com-create-modal,.goal-modal,.team-modal,.work-compose-modal) input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]),
+.app-shell :is(.repo-modal,.cp-modal,.com-create-modal,.goal-modal,.team-modal,.work-compose-modal) select,
+.app-shell :is(.repo-modal,.cp-modal,.com-create-modal,.goal-modal,.team-modal,.work-compose-modal) textarea,
+.app-shell :is(.goal-modal-fields,.team-modal-fields,.com-client-fields,.com-deal-edit-fields,.com-service-editor-fields,.file-detail-fields,.task-detail-fields,.project-detail-fields) input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]),
+.app-shell :is(.goal-modal-fields,.team-modal-fields,.com-client-fields,.com-deal-edit-fields,.com-service-editor-fields,.file-detail-fields,.task-detail-fields,.project-detail-fields) select,
+.app-shell :is(.goal-modal-fields,.team-modal-fields,.com-client-fields,.com-deal-edit-fields,.com-service-editor-fields,.file-detail-fields,.task-detail-fields,.project-detail-fields) textarea,
+.app-shell .cp-modal textarea,
+.cp-public-page .cp-public-message textarea { min-height: 40px; border: 1px solid #dce2e9; border-radius: 8px; background: #fff; color: #273345; padding: 9px 11px; font: 400 12px/1.4 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+.app-shell :is(.repo-modal,.cp-modal,.com-create-modal,.goal-modal,.team-modal,.work-compose-modal) input::placeholder,
+.app-shell :is(.repo-modal,.cp-modal,.com-create-modal,.goal-modal,.team-modal,.work-compose-modal) textarea::placeholder,
+.app-shell :is(.goal-modal-fields,.team-modal-fields,.com-client-fields,.com-deal-edit-fields,.com-service-editor-fields,.file-detail-fields,.task-detail-fields,.project-detail-fields) input::placeholder,
+.cp-public-page .cp-public-message textarea::placeholder { color: #9aa5b3; }
+.app-shell :is(.repo-modal,.cp-modal,.com-create-modal,.goal-modal,.team-modal,.work-compose-modal) input:focus,
+.app-shell :is(.repo-modal,.cp-modal,.com-create-modal,.goal-modal,.team-modal,.work-compose-modal) select:focus,
+.app-shell :is(.repo-modal,.cp-modal,.com-create-modal,.goal-modal,.team-modal,.work-compose-modal) textarea:focus,
+.app-shell :is(.goal-modal-fields,.team-modal-fields,.com-client-fields,.com-deal-edit-fields,.com-service-editor-fields,.file-detail-fields,.task-detail-fields,.project-detail-fields) input:focus,
+.app-shell :is(.goal-modal-fields,.team-modal-fields,.com-client-fields,.com-deal-edit-fields,.com-service-editor-fields,.file-detail-fields,.task-detail-fields,.project-detail-fields) select:focus,
+.app-shell :is(.goal-modal-fields,.team-modal-fields,.com-client-fields,.com-deal-edit-fields,.com-service-editor-fields,.file-detail-fields,.task-detail-fields,.project-detail-fields) textarea:focus,
+.cp-public-page .cp-public-message textarea:focus { outline: 0; border-color: #7195d5; box-shadow: 0 0 0 3px rgb(61 111 209 / 13%); }
+.app-shell :is(.repo-modal,.cp-modal,.com-create-modal,.goal-modal,.team-modal,.work-compose-modal)>footer button,
+.app-shell :is(.repo-modal,.cp-modal,.com-create-modal,.goal-modal,.team-modal,.work-compose-modal) footer .admin-primary,
+.app-shell :is(.repo-modal,.cp-modal,.com-create-modal,.goal-modal,.team-modal,.work-compose-modal) footer .admin-secondary { min-height: 38px; font-size: 11px; }
+.app-shell :is(.repo-modal,.cp-modal,.com-create-modal,.goal-modal,.team-modal,.work-compose-modal)>p,
+.app-shell :is(.goal-form-error,.team-modal-note,.work-modal-note,.cp-modal-note) { font-size: 10px; line-height: 1.55; }
+
+.app-shell .settings-fields .settings-field { gap: 7px; font-size: 11px; }
+.app-shell .settings-fields .settings-field input,
+.app-shell .settings-fields .settings-field select { height: 40px; padding: 9px 11px; border-radius: 8px; font: 400 12px/1.4 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+.app-shell .settings-fields .settings-field>small { font-size: 10px; line-height: 1.5; }
+.app-shell .com-add-contact-form input,
+.app-shell .com-client-note-form textarea { min-height: 40px; font-size: 12px; }
+.app-shell .approval-revision-form textarea { min-height: 88px; border: 1px solid #dce2e9; border-radius: 8px; padding: 10px 11px; color: #273345; font: 400 12px/1.5 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+.cp-public-page .cp-public-message textarea { width: 100%; }
+
+@media(max-width:600px) {
+  .app-shell :is(.repo-modal-backdrop,.com-modal-backdrop,.goal-modal-backdrop,.team-modal-backdrop,.work-modal-backdrop,.cp-modal-backdrop),
+  .cp-public-page .cp-modal-backdrop { align-items: end; padding: 12px; }
+  .app-shell :is(.repo-modal,.cp-modal,.com-create-modal,.goal-modal,.team-modal,.work-compose-modal),
+  .cp-public-page .cp-modal { width: 100%; max-height: min(88dvh,760px); padding: 18px; border-radius: 16px; }
+  .app-shell :is(.goal-modal-fields,.team-modal-fields,.com-client-fields,.com-deal-edit-fields,.com-service-editor-fields,.task-detail-fields,.project-detail-fields) { grid-template-columns: minmax(0,1fr); }
+  .app-shell :is(.goal-modal-fields,.team-modal-fields,.com-client-fields,.com-deal-edit-fields,.com-service-editor-fields,.task-detail-fields,.project-detail-fields) .wide,
+  .app-shell :is(.goal-modal-fields,.team-modal-fields,.com-client-fields,.com-deal-edit-fields,.com-service-editor-fields,.task-detail-fields,.project-detail-fields) label { grid-column: auto; }
+  .app-shell :is(.repo-modal,.cp-modal,.com-create-modal,.goal-modal,.team-modal,.work-compose-modal)>footer,
+  .cp-public-page .cp-modal>footer { flex-wrap: wrap; }
+}

@@ -14,6 +14,7 @@ import { PublicClientPortal } from './screens/ClientPortalScreens.jsx';
 import WorkspaceAccess from './screens/WorkspaceAccess.jsx';
 import { apiRequest } from './lib/workspace-api.js';
 import { purgeFictitiousLocalData } from './lib/demo-data.js';
+import './screens/forms-polish.css';
 
 purgeFictitiousLocalData();
 
