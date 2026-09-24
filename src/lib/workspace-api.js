@@ -1,18 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 
 export async function apiRequest(path, options = {}) {
-  const token = sessionStorage.getItem('nexo.api.token');
   const response = await fetch(path, {
     ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(options.headers || {}),
-    },
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
   });
   const payload = await response.json().catch(() => ({}));
   if (response.status === 401) {
-    sessionStorage.removeItem('nexo.api.token');
     window.dispatchEvent(new CustomEvent('nexo:session-expired'));
   }
   if (!response.ok) throw new Error(payload.message || 'Não foi possível concluir a solicitação.');
@@ -24,7 +19,6 @@ export function useWorkspaceRecords(resource) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const refresh = useCallback(async () => {
-    if (!sessionStorage.getItem('nexo.api.token')) { setRecords([]); setLoading(false); return; }
     setLoading(true);
     try { const result = await apiRequest(`/api/workspace/${resource}`); setRecords(result.data || []); setError(''); }
     catch (err) { setError(err.message || 'Falha ao carregar os dados.'); }

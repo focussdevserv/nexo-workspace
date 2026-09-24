@@ -37,33 +37,29 @@ function MercadoPagoBrick({ amount, onSubmit, onError }) {
 }
 
 function PaymentAccess({ onConnected }) {
-  const [mode, setMode] = useState('login');
-  const [form, setForm] = useState({ organizationName: '', name: '', email: '', password: '', bootstrapToken: '' });
+  const [form, setForm] = useState({ email: 'contato@focussdev.art', password: '' });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const submit = async (event) => {
     event.preventDefault(); setBusy(true); setError('');
     try {
-      const response = await fetch(mode === 'login' ? '/api/auth/login' : '/api/auth/register', {
-        method: 'POST', headers: { 'Content-Type': 'application/json', ...(mode === 'register' ? { 'x-bootstrap-token': form.bootstrapToken } : {}) },
-        body: JSON.stringify(mode === 'login' ? { email: form.email, password: form.password } : { organizationName: form.organizationName, name: form.name, email: form.email, password: form.password }),
-      });
+      const response = await fetch('/api/auth/login', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: form.email.trim().toLowerCase(), password: form.password }) });
       const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload.message || 'Não foi possível entrar. Confira os dados.');
-      sessionStorage.setItem('nexo.api.token', payload.token); onConnected(payload.token);
-    } catch (err) { setError(err.message || 'Falha de conexão com o servidor.'); }
+      if (!response.ok) throw new Error(payload.message || 'Nao foi possivel entrar. Confira seus dados.');
+      setForm((current) => ({ ...current, password: '' })); onConnected(true);
+    } catch (err) { setError(err.message || 'Falha de conexao com o servidor.'); }
     finally { setBusy(false); }
   };
-  return <section className="pay-access"><span className="pay-access-icon"><LockKeyhole size={19} /></span><span className="pay-eyebrow">FINANCEIRO PROTEGIDO</span><h2>{mode === 'login' ? 'Conecte sua conta Nexo' : 'Ative o primeiro acesso'}</h2><p>As cobranças reais ficam isoladas por empresa e exigem autenticação.</p><form onSubmit={submit}>
-    {mode === 'register' && <><label>Nome da empresa<input required value={form.organizationName} onChange={(e) => setForm({ ...form, organizationName: e.target.value })} /></label><label>Seu nome<input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label><label>Token de ativação<input required value={form.bootstrapToken} onChange={(e) => setForm({ ...form, bootstrapToken: e.target.value })} /></label></>}
-    <label>E-mail<input required type="email" autoComplete="username" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></label><label>Senha<input required type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} minLength={mode === 'login' ? 1 : 12} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /></label>
-    {error && <p className="pay-error" role="alert">{error}</p>}<button className="ns-primary" disabled={busy}>{busy ? <LoaderCircle className="spin" size={15} /> : <KeyRound size={15} />}{mode === 'login' ? 'Entrar no financeiro' : 'Criar conta proprietária'}</button>
-  </form><button className="pay-mode-switch" onClick={() => { setError(''); setMode(mode === 'login' ? 'register' : 'login'); }}>{mode === 'login' ? 'Primeiro acesso? Criar a conta da empresa' : 'Já tem acesso? Entrar'}</button><small className="pay-access-note">O token de ativação é usado uma vez. Não compartilhe credenciais no chat.</small></section>;
+  return <section className="pay-access"><span className="pay-access-icon"><LockKeyhole size={19} /></span><span className="pay-eyebrow">FINANCEIRO PROTEGIDO</span><h2>Entre no workspace</h2><p>O acesso financeiro e restrito a conta proprietaria.</p><form onSubmit={submit}>
+    <label>E-mail<input required type="email" autoCapitalize="none" autoComplete="username" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} /></label><label>Senha<input required type="password" autoComplete="current-password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} /></label>
+    {error && <p className="pay-error" role="alert">{error}</p>}<button className="ns-primary" disabled={busy}>{busy ? <LoaderCircle className="spin" size={15} /> : <KeyRound size={15} />}{busy ? 'Verificando...' : 'Entrar no financeiro'}</button>
+  </form><small className="pay-access-note">O cadastro de novas contas esta desativado.</small></section>;
 }
 
 export function PaymentConsole({ kind = 'orders', notify = () => {} }) {
   const subscriptionMode = kind === 'subscriptions';
-  const [token, setToken] = useState(() => sessionStorage.getItem('nexo.api.token') || '');
+  const [token, setToken] = useState(false);
+  useEffect(() => { let active = true; fetch('/api/auth/me', { credentials: 'same-origin' }).then((response) => { if (active) setToken(response.ok); }).catch(() => { if (active) setToken(false); }); return () => { active = false; }; }, []);
   const [items, setItems] = useState([]);
   const [methods, setMethods] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -80,12 +76,12 @@ export function PaymentConsole({ kind = 'orders', notify = () => {} }) {
     { value: 'debit_card', label: 'Cartão de débito disponível' },
   ].filter((choice) => methods.some((method) => choice.value === 'pix' ? method.id === 'pix' || method.paymentType === 'bank_transfer' : choice.value === 'boleto' ? method.paymentType === 'ticket' : method.paymentType === choice.value));
   const request = useCallback(async (url, options = {}) => {
-    const response = await fetch(url, { ...options, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...(options.headers || {}) } });
+    const response = await fetch(url, { ...options, credentials: 'same-origin', headers: { 'Content-Type': 'application/json', ...(options.headers || {}) } });
     const payload = await response.json().catch(() => ({}));
-    if (response.status === 401) { sessionStorage.removeItem('nexo.api.token'); setToken(''); throw new Error('Sua sessão expirou. Entre novamente.'); }
+    if (response.status === 401) { setToken(false); window.dispatchEvent(new CustomEvent('nexo:session-expired')); throw new Error('Sua sessao expirou. Entre novamente.'); }
     if (!response.ok) throw new Error(payload.message || 'Não foi possível concluir a ação.');
     return payload;
-  }, [token]);
+  }, []);
   const refresh = useCallback(async () => {
     if (!token) return;
     setError('');
@@ -146,7 +142,7 @@ export function PaymentConsole({ kind = 'orders', notify = () => {} }) {
       <button className="ns-secondary" onClick={() => { setResult(null); resetForm(); }}>Fechar</button></section>;
   }
   return <div className="pay-workspace">
-    <div className="pay-toolbar"><div><span className="pay-eyebrow">MERCADO PAGO · API DE ORDERS E ASSINATURAS</span><h2>{subscriptionMode ? 'Cobranças recorrentes' : 'Cobranças de clientes'}</h2><p>{subscriptionMode ? 'Crie renovações automáticas após autorização do cliente.' : 'Pix com QR Code, boleto e cartões dentro do financeiro.'}</p></div><div className="pay-toolbar-actions"><button className="ns-secondary" onClick={() => { sessionStorage.removeItem('nexo.api.token'); setToken(''); }}><LockKeyhole size={14} />Sair</button><button className="ns-primary" onClick={() => { resetForm(); setError(''); setModal(true); }}><Plus size={15} />{subscriptionMode ? 'Nova assinatura' : 'Nova cobrança'}</button></div></div>
+    <div className="pay-toolbar"><div><span className="pay-eyebrow">MERCADO PAGO · API DE ORDERS E ASSINATURAS</span><h2>{subscriptionMode ? 'Cobranças recorrentes' : 'Cobranças de clientes'}</h2><p>{subscriptionMode ? 'Crie renovações automáticas após autorização do cliente.' : 'Pix com QR Code, boleto e cartões dentro do financeiro.'}</p></div><div className="pay-toolbar-actions"><button className="ns-secondary" onClick={() => { fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }).finally(() => { setToken(false); window.dispatchEvent(new CustomEvent('nexo:session-expired')); }); }}><LockKeyhole size={14} />Sair</button><button className="ns-primary" onClick={() => { resetForm(); setError(''); setModal(true); }}><Plus size={15} />{subscriptionMode ? 'Nova assinatura' : 'Nova cobrança'}</button></div></div>
     <div className="pay-method-strip">{(subscriptionMode ? ['Cartões autorizados', 'Pix e boleto via adesão no Mercado Pago'] : ['Pix · QR Code e Copia e Cola', 'Boleto bancário', 'Crédito e débito']).map((label) => <span key={label}><CheckCircle2 size={15} />{label}</span>)}</div>
     {error && <div className="pay-error-banner"><AlertCircle size={16} />{error}<button onClick={() => setError('')} aria-label="Fechar aviso"><X size={14} /></button></div>}
     <div className="pay-list-head"><div><b>{items.length} {subscriptionMode ? 'assinaturas' : 'cobranças'}</b><small>Dados sincronizados com o backend Nexo</small></div><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar cliente" /><button className="ns-secondary" onClick={refresh}><RefreshCw size={14} />Atualizar</button></div>

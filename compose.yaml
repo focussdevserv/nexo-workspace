@@ -10,7 +10,7 @@ services:
       HOST: 0.0.0.0
       DATABASE_URL: postgres://nexo:${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD}@postgres:5432/nexo
       JWT_SECRET: ${JWT_SECRET:?Defina JWT_SECRET no Coolify}
-      BOOTSTRAP_TOKEN: ${BOOTSTRAP_TOKEN:?Defina BOOTSTRAP_TOKEN no Coolify}
+      OWNER_EMAIL: ${OWNER_EMAIL:-contato@focussdev.art}
       APP_ORIGIN: ${APP_ORIGIN:-https://focussdev.space}
       MERCADOPAGO_ACCESS_TOKEN: ${MERCADOPAGO_ACCESS_TOKEN:-}
       MERCADOPAGO_WEBHOOK_SECRET: ${MERCADOPAGO_WEBHOOK_SECRET:-}

@@ -50,12 +50,12 @@ Coolify lista Ubuntu 24.04 LTS como compatível. A documentação informa mínim
 3. Configure as variáveis do recurso:
    - `POSTGRES_PASSWORD`: saída de `openssl rand -hex 32`;
    - `JWT_SECRET`: outro valor de `openssl rand -hex 32`;
-   - `BOOTSTRAP_TOKEN`: gere um terceiro token com `openssl rand -hex 32`;
+   - `OWNER_EMAIL`: `contato@focussdev.art`;
    - `APP_ORIGIN`: `https://focussdev.space`.
 4. Atribua o domínio `https://focussdev.space` ao serviço `web`, porta interna `80`. Não publique portas do Postgres nem da API.
 5. Faça o deploy. A API aplica as migrações Drizzle ao iniciar; o volume `nexo_postgres` mantém os dados entre atualizações do container.
 6. Confirme `https://focussdev.space/api/health` e `https://focussdev.space`.
-7. A primeira conta é criada por `POST /api/auth/register`, enviando `x-bootstrap-token: <BOOTSTRAP_TOKEN>`. O cadastro só funciona enquanto ainda não existir usuário; o token nunca deve ser colocado no front-end.
+7. O acesso e exclusivo ao e-mail `OWNER_EMAIL`. O cadastro publico foi removido e o servidor apaga usuarios adicionais somente quando encontra a conta proprietaria configurada.
 
 ## Estado atual e próximo trabalho
 

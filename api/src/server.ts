@@ -4,6 +4,7 @@ import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import jwt from '@fastify/jwt';
 import rateLimit from '@fastify/rate-limit';
+import cookie from '@fastify/cookie';
 import argon2 from 'argon2';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { resolve } from 'node:path';
@@ -17,8 +18,8 @@ const env = z.object({
   PORT: z.coerce.number().int().positive().default(3001),
   HOST: z.string().default('0.0.0.0'),
   JWT_SECRET: z.string().min(32),
+  OWNER_EMAIL: z.string().email().default('contato@focussdev.art').transform((value) => value.trim().toLowerCase()),
   APP_ORIGIN: z.string().default('http://localhost:5173'),
-  BOOTSTRAP_TOKEN: z.string().default(''),
   MERCADOPAGO_ACCESS_TOKEN: z.string().optional(),
   MERCADOPAGO_WEBHOOK_SECRET: z.string().optional(),
   WAHA_API_URL: z.string().url().optional(),
@@ -27,21 +28,30 @@ const env = z.object({
 
 const app = Fastify({ logger: true, bodyLimit: 1024 * 1024, trustProxy: process.env.TRUST_PROXY === 'true' });
 await app.register(helmet);
+await app.register(cookie);
 await app.register(cors, { origin: env.APP_ORIGIN.split(',').map((origin) => z.string().url().parse(origin.trim())), credentials: true });
 await app.register(rateLimit, { max: 120, timeWindow: '1 minute' });
-await app.register(jwt, { secret: env.JWT_SECRET, sign: { expiresIn: '8h' } });
+await app.register(jwt, { secret: env.JWT_SECRET, cookie: { cookieName: 'nexo_session', signed: false }, sign: { expiresIn: '8h' } });
+
+const allowedOrigins = env.APP_ORIGIN.split(',').map((origin) => z.string().url().parse(origin.trim()));
+let ownerAccountId: string | null = null;
+app.addHook('onRequest', async (request, reply) => {
+  if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method) || request.url.startsWith('/api/integrations/mercadopago/webhook')) return;
+  const origin = request.headers.origin;
+  if (!origin || !allowedOrigins.includes(origin)) return reply.code(403).send({ error: 'origin_forbidden', message: 'Origem da solicitacao nao autorizada.' });
+});
 
 app.decorate('authenticate', async (request: FastifyRequest, reply: FastifyReply) => {
-  try { await request.jwtVerify(); }
-  catch { return reply.code(401).send({ error: 'unauthorized', message: 'Sessão inválida ou expirada.' }); }
+  try {
+    await request.jwtVerify({ onlyCookie: true });
+    const [owner] = await db.select({ id: users.id }).from(users).where(and(
+      eq(users.id, request.user.sub), eq(users.id, ownerAccountId ?? '00000000-0000-0000-0000-000000000000'),
+      eq(users.organizationId, request.user.organizationId), eq(users.active, true),
+    )).limit(1);
+    if (!owner) return reply.code(401).send({ error: 'unauthorized', message: 'Sessao invalida ou expirada.' });
+  } catch { return reply.code(401).send({ error: 'unauthorized', message: 'Sessao invalida ou expirada.' }); }
 });
 
-const registerSchema = z.object({
-  organizationName: z.string().trim().min(2).max(120),
-  name: z.string().trim().min(2).max(120),
-  email: z.string().trim().email().max(254).transform((value) => value.toLowerCase()),
-  password: z.string().min(12).max(128),
-});
 const loginSchema = z.object({ email: z.string().trim().email().transform((value) => value.toLowerCase()), password: z.string().min(1).max(128) });
 const clientSchema = z.object({
   name: z.string().trim().min(2).max(180),
@@ -262,39 +272,25 @@ app.get('/api/integrations/status', { preHandler: app.authenticate }, async () =
   { name: 'Sentry', configured: Boolean(process.env.SENTRY_DSN) },
 ] }));
 
-app.post('/api/auth/register', { config: { rateLimit: { max: 5, timeWindow: '1 hour' } } }, async (request, reply) => {
-  const body = parseBody(registerSchema, request.body, reply); if (!body) return;
-  const suppliedToken = request.headers['x-bootstrap-token'];
-  const expectedToken = Buffer.from(env.BOOTSTRAP_TOKEN);
-  const receivedToken = Buffer.from(typeof suppliedToken === 'string' ? suppliedToken : '');
-  if (!expectedToken.length || expectedToken.length !== receivedToken.length || !timingSafeEqual(expectedToken, receivedToken)) return reply.code(403).send({ error: 'bootstrap_forbidden', message: 'Cadastro inicial não autorizado.' });
-  const passwordHash = await argon2.hash(body.password, { type: argon2.argon2id });
-  const result = await db.transaction(async (tx) => {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(928461237)`);
-    const [existingEmail] = await tx.select({ id: users.id }).from(users).where(eq(users.email, body.email)).limit(1);
-    if (existingEmail) return { conflict: 'email' as const };
-    const [existingUser] = await tx.select({ id: users.id }).from(users).limit(1);
-    if (existingUser) return { conflict: 'bootstrap_closed' as const };
-    const [organization] = await tx.insert(organizations).values({ name: body.organizationName }).returning({ id: organizations.id, name: organizations.name });
-    const [user] = await tx.insert(users).values({ organizationId: organization!.id, name: body.name, email: body.email, passwordHash }).returning({ id: users.id, name: users.name, email: users.email, role: users.role, organizationId: users.organizationId });
-    await tx.insert(activityEvents).values({ organizationId: organization!.id, actorUserId: user!.id, entityType: 'organization', entityId: organization!.id, action: 'created' });
-    return { organization: organization!, user: user! };
-  });
-  if ('conflict' in result) return reply.code(409).send(result.conflict === 'email' ? { error: 'email_in_use', message: 'Este e-mail já possui uma conta.' } : { error: 'bootstrap_closed', message: 'A conta inicial já foi criada.' });
-  const token = app.jwt.sign({ sub: result.user.id, organizationId: result.organization.id, role: result.user.role });
-  return reply.code(201).send({ token, user: result.user, organization: result.organization });
+app.post('/api/auth/login', { config: { rateLimit: { max: 5, timeWindow: '15 minutes' } } }, async (request, reply) => {
+  const body = parseBody(loginSchema, request.body, reply); if (!body) return;
+  const [user] = await db.select().from(users).where(and(
+    eq(users.email, body.email), eq(users.active, true), sql`lower(${users.email}) = ${env.OWNER_EMAIL}`,
+  )).limit(1);
+  if (!user || !(await argon2.verify(user.passwordHash, body.password))) return reply.code(401).send({ error: 'invalid_credentials', message: 'E-mail ou senha incorretos.' });
+  const token = app.jwt.sign({ sub: user.id, organizationId: user.organizationId, role: 'owner' });
+  reply.setCookie('nexo_session', token, { path: '/', httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict', maxAge: 8 * 60 * 60 });
+  const [organization] = await db.select({ id: organizations.id, name: organizations.name }).from(organizations).where(eq(organizations.id, user.organizationId)).limit(1);
+  return { user: { id: user.id, name: user.name, email: user.email, role: 'owner', organizationId: user.organizationId }, organization };
 });
 
-app.post('/api/auth/login', { config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (request, reply) => {
-  const body = parseBody(loginSchema, request.body, reply); if (!body) return;
-  const [user] = await db.select().from(users).where(eq(users.email, body.email)).limit(1);
-  if (!user || !user.active || !(await argon2.verify(user.passwordHash, body.password))) return reply.code(401).send({ error: 'invalid_credentials', message: 'E-mail ou senha incorretos.' });
-  const token = app.jwt.sign({ sub: user.id, organizationId: user.organizationId, role: user.role });
-  return { token, user: { id: user.id, name: user.name, email: user.email, role: user.role, organizationId: user.organizationId } };
+app.post('/api/auth/logout', async (_request, reply) => {
+  reply.clearCookie('nexo_session', { path: '/', httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict' });
+  return reply.code(204).send();
 });
 
 app.get('/api/auth/me', { preHandler: app.authenticate }, async (request, reply) => {
-  const [user] = await db.select({ id: users.id, name: users.name, email: users.email, role: users.role, organizationId: users.organizationId }).from(users).where(and(eq(users.id, request.user.sub), eq(users.active, true))).limit(1);
+  const [user] = await db.select({ id: users.id, name: users.name, email: users.email, role: users.role, organizationId: users.organizationId }).from(users).where(and(eq(users.id, request.user.sub), eq(users.active, true), sql`lower(${users.email}) = ${env.OWNER_EMAIL}`)).limit(1);
   if (!user) return reply.code(401).send({ error: 'unauthorized', message: 'Conta indisponível.' });
   const [organization] = await db.select({ id: organizations.id, name: organizations.name }).from(organizations).where(eq(organizations.id, user.organizationId)).limit(1);
   return { user, organization };
@@ -568,6 +564,15 @@ app.setErrorHandler((error, _request, reply) => {
 app.addHook('onClose', async () => { await pool.end(); });
 try {
   if (process.env.RUN_MIGRATIONS !== 'false') await migrate(db, { migrationsFolder: resolve(process.cwd(), 'drizzle') });
+  const removedAccounts = await db.transaction(async (tx) => {
+    const [owner] = await tx.select({ id: users.id }).from(users).where(sql`lower(${users.email}) = ${env.OWNER_EMAIL}`).limit(1);
+    if (!owner) return null;
+    const removed = await tx.delete(users).where(sql`${users.id} <> ${owner.id}`).returning({ id: users.id });
+    await tx.update(users).set({ active: true, role: 'owner' }).where(eq(users.id, owner.id));
+    return { ownerId: owner.id, removedCount: removed.length };
+  });
+  if (removedAccounts === null) app.log.error('Owner account is missing; no user accounts were removed.');
+  else { ownerAccountId = removedAccounts.ownerId; if (removedAccounts.removedCount > 0) app.log.info({ removedAccounts: removedAccounts.removedCount }, 'Removed non-owner accounts.'); }
   await app.listen({ port: env.PORT, host: env.HOST });
 }
 catch (error) { app.log.error(error); process.exit(1); }
