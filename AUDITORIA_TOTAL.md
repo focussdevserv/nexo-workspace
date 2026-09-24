@@ -10,7 +10,7 @@ O Nexo já tem uma base real: login restrito ao proprietário, API com banco Pos
 
 Ainda não é correto classificar todas as integrações como operacionais. Em várias delas o app só testa credenciais ou registra rascunhos. Os maiores bloqueios para uso diário são conversas WhatsApp sem envio/recebimento ligado ao provedor, automações n8n que não executam fluxos, arquivos sem upload real, assinatura eletrônica sem provedor e registros relacionados sem `clientId` em todos os caminhos. Site, e-mail e Calendar também precisam de operações reais, não apenas teste de conexão.
 
-**Validação desta revisão:** `npm run build` passou; `npm --prefix api run build` passou; o domínio respondeu HTTP 200, `/api/health` confirmou o banco conectado e a VPS serviu o bundle do commit `ed22e29`.
+**Validação desta revisão:** `npm run build` passou; `npm --prefix api run build` passou; o domínio respondeu HTTP 200, `/api/health` confirmou o banco conectado e a VPS serviu o bundle do commit `6772be5`.
 
 ## O que já funciona de verdade
 
