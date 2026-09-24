@@ -94,3 +94,9 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - Envio de texto usa endpoint autenticado, limite de requisicoes, verificacao de propriedade da sessao/conversa, idempotencia, persistencia de estado e confirmacao do WAHA. Webhook valida segredo em tempo constante, registra entrada, atualiza confirmacoes e evita duplicidade.
 - Compose configura eventos `message` e `message.ack` e envia cabecalho secreto ao app. A sess?o de produ??o estava como FAILED; a corre??o publicada permitiu reinici?-la e gerar o QR no app, que agora aguarda leitura. A caixa de entrada mostra corretamente que ainda n?o h? sess?o conectada. Envio/recebimento real n?o foi exercitado antes do pareamento e sem conversa controlada.
 - `npm run build`, `npm --prefix api run build` e `git diff --check` passaram depois das alteracoes. A implantacao precisa ser confirmada por health check e bundle apos o push.
+
+
+## Atualiza??o de implementa??o ? navega??o e auditoria financeira ? 24/09/2026
+
+- A auditoria confirmou que cobran?as e assinaturas j? enviam `clientId` quando o operador escolhe um cliente existente; a API valida o v?nculo na mesma organiza??o. A limita??o remanescente ? comprovar a exibi??o no portal com dados controlados.
+- Implementadas URLs est?veis `/app/<m?dulo>`, abertura direta por endere?o, sincroniza??o com Voltar/Avan?ar e migra??o da rota inicial ao m?dulo preservado. Rotas `/portal/<slug>` continuam p?blicas. Build de produ??o do frontend passou; comportamento de navegador e deploy ainda pendentes de valida??o nesta revis?o.

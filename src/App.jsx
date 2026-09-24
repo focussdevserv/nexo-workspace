@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity, ArrowDownRight, ArrowRight, ArrowUpRight, Bell, BriefcaseBusiness,
   CalendarDays, Check, CheckSquare, ChevronDown, ChevronRight, CircleDollarSign,
@@ -82,14 +82,23 @@ function Avatar({ initials, color = 'blue', small = false, online = false }) {
 
 function readLocalValue(key, fallback) { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? fallback; } catch { return fallback; } }
 function amountValue(value) { return Number(String(value || '').replace(/[^\d,]/g, '').replace(',', '.')) || 0; }
+function workspacePageSlug(label) { return label.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''); }
+function workspacePageFromPath(pathname) {
+  if (!pathname.startsWith('/app/')) return null;
+  const slug = decodeURIComponent(pathname.slice('/app/'.length)).replace(/\/+$/, '');
+  return navGroups.flatMap((group) => group.items).find((item) => workspacePageSlug(item.label) === slug)?.label || null;
+}
 
 function WorkspaceShell() {
   const [activeNav, setActiveNav] = useState(() => {
+    const routedPage = workspacePageFromPath(window.location.pathname);
+    if (routedPage) return routedPage;
     try {
       const savedPage = sessionStorage.getItem('nexo.workspace.activePage');
       return navGroups.some((group) => group.items.some((item) => item.label === savedPage)) ? savedPage : 'Meu Dia';
     } catch { return 'Meu Dia'; }
   });
+  const initialRouteSync = useRef(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -171,6 +180,26 @@ function WorkspaceShell() {
   useEffect(() => {
     try { sessionStorage.setItem('nexo.workspace.activePage', activeNav); } catch { /* storage can be unavailable in restricted browser contexts */ }
   }, [activeNav]);
+
+  useEffect(() => {
+    const path = `/app/${workspacePageSlug(activeNav)}`;
+    if (!initialRouteSync.current) {
+      initialRouteSync.current = true;
+      if (window.location.pathname !== path) window.history.replaceState({ nexo: true }, '', path);
+      return;
+    }
+    if (window.location.pathname !== path) window.history.pushState({ nexo: true }, '', path);
+  }, [activeNav]);
+
+  useEffect(() => {
+    const restoreRoute = () => {
+      const page = workspacePageFromPath(window.location.pathname);
+      if (page) setActiveNav(page);
+      else { window.history.replaceState({ nexo: true }, '', '/app/meu-dia'); setActiveNav('Meu Dia'); }
+    };
+    window.addEventListener('popstate', restoreRoute);
+    return () => window.removeEventListener('popstate', restoreRoute);
+  }, []);
 
   useEffect(() => {
     const navigate = (event) => { if (event.detail && navGroups.some((group) => group.items.some((item) => item.label === event.detail))) { setActiveNav(event.detail); setMobileMenuOpen(false); } };
