@@ -162,3 +162,9 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - Replaced the browser-only ticket list with the authenticated workspace-record API. Creating a ticket now persists it to PostgreSQL; status, priority, owner, and details edits use PATCH. Loading and API errors are visible with a retry action.
 - Ticket creation now reaches the backend ticket event hook, so a published compatible n8n workflow can receive it. No sample ticket or customer record was created.
 - Frontend/API builds and the existing 11 API tests passed. The change still needs production deploy verification.
+
+## PRODUCTION VERIFICATION - SUPPORT TICKETS - 2026-09-24
+
+- Coolify marked commit `fe46c51` as Success; the deployment log confirmed PostgreSQL and API healthy, then the web container started.
+- `https://focussdev.space/` returned HTTP 200 with the new frontend bundle. The bundle includes the ticket save confirmation from the database-backed flow. `/api/health` returned HTTP 200 and `database: connected`.
+- No ticket was created as a test. End-to-end create/edit still needs a deliberate real ticket in normal business use.
