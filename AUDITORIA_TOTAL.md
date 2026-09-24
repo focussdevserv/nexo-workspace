@@ -140,3 +140,12 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - O teste autenticado em producao retornou HTTP 200: 1/1 dominio verificado e remetente configurado. O teste consulta dominios e nao envia mensagens.
 - Commit `366600e` publicado e deploy Coolify confirmado. Frontend e API compilaram; os 8 testes unitarios passaram sem criar registros de teste no banco.
 - Nenhum e-mail real foi enviado. Ainda falta validar recebimento e resposta com uma proposta e destinatario autorizados. Contratos, cobrancas e notificacoes ainda nao enviam e-mail.
+
+## Continuação da auditoria operacional — 24/09/2026
+
+- Revalidação local: `npm run build`, `npm --prefix api run build`, `npm --prefix api test` (8/8) e `git diff --check` passaram. Revalidação pública: `https://focussdev.space/api/health` e `https://n8n.pagfocuss.tech/healthz` retornaram HTTP 200. Health 200 confirma disponibilidade do endpoint, não autenticação nem execução de workflows.
+- DNS: `focussdev.space` e `n8n.pagfocuss.tech` resolvem para `2.25.239.145`; `n8n.focussdev.space` ainda não resolve. O painel Hostinger aberto pertence a uma conta que só mostra `pagfocuss.tech`, embora o domínio `focussdev.space` esteja registrado na Hostinger. Não foi possível editar a zona DNS nesta conta.
+- O navegador mostra intersticial de segurança ao abrir `n8n.pagfocuss.tech`. Não inserir senha ou chave API nessa origem até remover o bloqueio e confirmar o hostname seguro.
+- Google Auth Platform: o projeto `Nexo Workspace` está External/Testing, com `emprisefocussdev@gmail.com` incluído como usuário de teste. A marca ainda acusa domínio autorizado ausente para `focussdev.space`. Não há cliente OAuth web ativo; sem DNS/validação de domínio e uma forma segura de guardar o segredo diretamente no serviço API, o OAuth não foi habilitado no Coolify. URI de callback planejada: `https://focussdev.space/api/integrations/google/callback`.
+- Prioridades operacionais mantidas: (1) acessar a conta/zona DNS correta, publicar e verificar `focussdev.space` e criar hostname seguro para n8n; (2) gerar a chave API do n8n na origem validada e salvá-la somente no Coolify; (3) concluir cliente OAuth Google e armazenar credenciais somente no Coolify; (4) testar QR/pareamento WAHA e mensagens reais controladas; (5) implementar CRUD/ativação/execução/logs de workflows n8n; (6) continuar testes E2E sem registros artificiais para financeiro, documentos, arquivos, Gmail e portal.
+- A pasta `output/` já estava não rastreada antes desta revisão e foi preservada.
