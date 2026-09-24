@@ -1,81 +1,88 @@
-import React, { useState } from 'react';
-import { ArrowRight, Check, CheckCircle2, CircleDollarSign, Clock3, Copy, FileText, MessageCircle, Paperclip, Send, Settings2, ShieldCheck, X } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { ArrowRight, Check, CheckCircle2, CircleDollarSign, Copy, ExternalLink, FileCheck2, FolderKanban, MessageCircle, Send, ShieldCheck, X } from 'lucide-react';
 import './client-portal.css';
+import { apiRequest, useWorkspaceRecords } from '../lib/workspace-api.js';
 
-const clientList = [];
-const VISIBILITY_KEY = 'nexo.portal.visibility.v1';
-const ACTIVITY_KEY = 'nexo.portal.activity.v1';
-const APPROVAL_KEY = 'nexo.portal.approvals.v1';
-function readJSON(key, fallback) { try { return JSON.parse(localStorage.getItem(key) || 'null') || fallback; } catch { return fallback; } }
-function saveJSON(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* storage is best effort for this front-end preview */ } }
+const money = (value) => Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const relatedTo = (row, client) => row.clientId === client.id || String(row.client ?? row.clientName ?? '') === String(client.name ?? client.title ?? '');
 
-export function ClientPortalAdmin({ notify }) {
+export function ClientPortalAdmin({ notify = () => {} }) {
+  const clients = useWorkspaceRecords('clients');
+  const projects = useWorkspaceRecords('projects');
+  const tasks = useWorkspaceRecords('tasks');
+  const contracts = useWorkspaceRecords('contracts');
   const [clientId, setClientId] = useState('');
-  const [visibilityByClient, setVisibilityByClient] = useState(() => readJSON(VISIBILITY_KEY, {}));
-  const [customizing, setCustomizing] = useState(false);
-  const [reviewOpen, setReviewOpen] = useState(false);
-  const [messageOpen, setMessageOpen] = useState(false);
-  const [message, setMessage] = useState('');
-  const client = clientList.find((item) => item.id === clientId);
-  if (!client) return <section className="cp-empty-state"><h2>Nenhum cliente disponível no portal</h2><p>Cadastre clientes e configure a publicação do portal para compartilhar acessos reais.</p></section>;
-  const visibility = { project: true, files: true, payments: true, support: true, ...(visibilityByClient[clientId] || {}) };
-  const approvalState = readJSON(APPROVAL_KEY, {})[clientId] || 'Aguardando revisão';
-  const activity = readJSON(ACTIVITY_KEY, {})[clientId] || [
-    { title: 'Briefing aprovado', time: 'Ontem, 15:40' },
-    { title: 'Arquivo enviado pela agência', time: '22 set, 10:18' },
-  ];
-  const publicUrl = `${window.location.origin}/portal/${client.id}`;
-  const addActivity = (title) => {
-    const all = readJSON(ACTIVITY_KEY, {});
-    const next = { ...all, [clientId]: [{ title, time: new Date().toLocaleString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) }, ...(all[clientId] || activity)].slice(0, 8) };
-    saveJSON(ACTIVITY_KEY, next);
+  const [portalUrl, setPortalUrl] = useState('');
+  const [busy, setBusy] = useState(false);
+  const client = clients.records.find((item) => item.id === clientId) || null;
+  const visibility = { project: true, tasks: true, contracts: true, ...(client?.portalVisibility || {}) };
+  const clientProjects = useMemo(() => projects.records.filter((item) => client && relatedTo(item, client)), [projects.records, client]);
+  const clientTasks = useMemo(() => tasks.records.filter((item) => client && relatedTo(item, client)), [tasks.records, client]);
+  const clientContracts = useMemo(() => contracts.records.filter((item) => client && relatedTo(item, client)), [contracts.records, client]);
+  const createLink = async () => {
+    if (!client) return;
+    setBusy(true);
+    try { const result = await apiRequest(`/api/workspace/clients/${client.id}/portal-link`, { method: 'POST', body: '{}' }); setPortalUrl(result.data.url); notify('Link seguro do portal criado.'); }
+    catch (error) { notify(error.message || 'Não foi possível criar o link do portal.'); }
+    finally { setBusy(false); }
   };
-  const copyLink = async () => {
-    try { await navigator.clipboard.writeText(publicUrl); notify('Link do portal copiado.'); }
-    catch { window.prompt('Copie o link do portal:', publicUrl); }
+  const toggleVisibility = async (key) => {
+    if (!client) return;
+    try { await clients.update(client.id, { portalVisibility: { ...visibility, [key]: !visibility[key] } }); notify('Seções do portal atualizadas.'); }
+    catch (error) { notify(error.message || 'Não foi possível salvar as seções.'); }
   };
-  const decide = (status) => {
-    const states = readJSON(APPROVAL_KEY, {}); states[clientId] = status; saveJSON(APPROVAL_KEY, states);
-    addActivity(status === 'Aprovada' ? `${client.document} aprovado pelo cliente` : `Alteração solicitada em ${client.document}`);
-    setReviewOpen(false); notify(status === 'Aprovada' ? 'Aprovação registrada na prévia do portal.' : 'Pedido de alteração registrado na prévia.');
-  };
-  const sendMessage = (event) => { event.preventDefault(); if (!message.trim()) return; addActivity(`Mensagem do cliente: ${message.trim()}`); setMessage(''); setMessageOpen(false); notify('Mensagem adicionada à prévia do histórico.'); };
-  const updateVisibility = (key) => setVisibilityByClient((current) => { const next = { ...current, [clientId]: { ...visibility, [key]: !visibility[key] } }; saveJSON(VISIBILITY_KEY, next); return next; });
+  const copyLink = async () => { try { await navigator.clipboard.writeText(portalUrl); notify('Link copiado.'); } catch { notify('Não foi possível copiar o link neste navegador.'); } };
 
+  if (!clients.records.length && !clients.loading) return <section className="cp-empty-state"><h2>Nenhum cliente cadastrado</h2><p>Cadastre um cliente no CRM para preparar o acesso ao portal.</p><button className="admin-primary" onClick={() => window.dispatchEvent(new CustomEvent('nexo:navigate', { detail: 'Clientes' }))}>Abrir clientes <ArrowRight size={14} /></button></section>;
   return <div className="client-portal-admin">
-    <div className="cp-admin-toolbar"><label>Prévia do cliente<select value={clientId} onChange={(event) => setClientId(event.target.value)}>{clientList.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label><div><button className="admin-secondary" onClick={() => setCustomizing((value) => !value)}><Settings2 size={14} />Personalizar portal</button><button className="admin-secondary" onClick={copyLink}><Copy size={14} />Copiar link</button><a className="admin-primary" href={publicUrl} target="_blank" rel="noreferrer">Abrir portal <ArrowRight size={14} /></a></div></div>
-    {customizing && <section className="cp-customize"><div><b>Seções visíveis para {client.name}</b><small>As mudanças atualizam a prévia e ficam guardadas neste navegador.</small></div><div>{[['project', 'Projeto e progresso'], ['files', 'Arquivos e aprovações'], ['payments', 'Pagamentos'], ['support', 'Mensagens e suporte']].map(([key, label]) => <label key={key}><input type="checkbox" checked={visibility[key]} onChange={() => updateVisibility(key)} />{label}</label>)}</div></section>}
-    <section className="cp-preview-shell"><header className="cp-preview-bar"><span className="cp-brand"><span className="brand-glyph"><i /><b /><em /></span>nexo <i /> Portal do cliente</span><span className="cp-client-chip"><span className={`cp-avatar ${client.tone}`}>{client.initials}</span>{client.contact} · {client.name}</span></header>
-      <div className="cp-welcome"><div><span className="cp-overline">ÁREA DO CLIENTE</span><h2>Olá, {client.contact.split(' ')[0]} 👋</h2><p>Acompanhe o andamento dos seus serviços e fale com a equipe.</p></div><span className="cp-online"><i /> Equipe disponível</span></div>
-      <div className="cp-client-content">
-        <div className="cp-cards-grid">
-          {visibility.project && <article className="cp-info-card cp-project-card"><div className="cp-card-heading"><span className="cp-card-icon green"><CheckCircle2 size={17} /></span><small>PROJETO EM ANDAMENTO</small><button onClick={() => notify(`Abrindo detalhes de ${client.project}.`)}>Ver detalhes <ArrowRight size={12} /></button></div><h3>{client.project}</h3><p>Próxima entrega prevista para {client.delivery}</p><div className="cp-project-progress"><div><i style={{ width: `${client.progress}%` }} /></div><b>{client.progress}%</b></div><small className="cp-muted">Design aprovado · Desenvolvimento em andamento</small></article>}
-          {visibility.files && <article className="cp-info-card"><div className="cp-card-heading"><span className="cp-card-icon blue"><FileText size={17} /></span><small>DOCUMENTO PARA REVISAR</small></div><h3>{client.document}</h3><p>Enviado pela agência · Hoje às 09:20</p><div className="cp-approval-row"><span className={`cp-approval-state ${approvalState === 'Aprovada' ? 'approved' : approvalState === 'Alteração solicitada' ? 'changes' : ''}`}><i />{approvalState}</span><button className="cp-action-button" onClick={() => setReviewOpen(true)}>{approvalState === 'Aguardando revisão' ? 'Revisar documento' : 'Ver decisão'} <ArrowRight size={12} /></button></div></article>}
-          {visibility.payments && <article className="cp-info-card"><div className="cp-card-heading"><span className="cp-card-icon amber"><CircleDollarSign size={17} /></span><small>PRÓXIMO PAGAMENTO</small></div><strong className="cp-payment-amount">{client.payment}</strong><p>Vencimento em {client.due}</p><button className="cp-action-button" onClick={() => notify('A área de pagamento será ligada ao Mercado Pago depois do backend.')}>Ver cobrança <ArrowRight size={12} /></button></article>}
-        </div>
-        <div className="cp-lower-grid"><section className="cp-activity"><div className="cp-section-title"><div><h3>Atividade recente</h3><p>Atualizações compartilhadas com o cliente.</p></div><button onClick={() => setMessageOpen(true)}><MessageCircle size={14} />Falar com a agência</button></div>{activity.map((entry, index) => <div className="cp-activity-row" key={`${entry.title}-${index}`}><span className="cp-activity-icon"><CheckCircle2 size={14} /></span><b>{entry.title}</b><time>{entry.time}</time></div>)}</section>{visibility.support && <aside className="cp-contact-card"><span className="cp-card-icon indigo"><MessageCircle size={17} /></span><h3>Precisa de ajuda?</h3><p>Envie uma mensagem e nossa equipe continua o atendimento por aqui.</p><button className="admin-primary" onClick={() => setMessageOpen(true)}><Send size={14} />Enviar mensagem</button><small><ShieldCheck size={12} />Resposta registrada no histórico do cliente</small></aside>}</div>
-      </div>
-    </section>
-    <div className="cp-preview-note">Prévia interativa · aprovações e mensagens são demonstrações locais.</div>
-    {reviewOpen && <div className="cp-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setReviewOpen(false); }}><section className="cp-modal"><header><div><span className="cp-overline">REVISÃO DO CLIENTE</span><h2>{client.document}</h2></div><button aria-label="Fechar" onClick={() => setReviewOpen(false)}><X size={17} /></button></header><div className="cp-file-preview"><FileText size={30} /><b>{client.document}.pdf</b><small>Prévia do documento para aprovação</small></div><p>Confira o material enviado. Você pode aprovar ou pedir ajustes; a ação será registrada no histórico de demonstração.</p><footer><button className="admin-secondary" onClick={() => decide('Alteração solicitada')}>Solicitar alteração</button><button className="admin-primary" onClick={() => decide('Aprovada')}><Check size={14} />Aprovar documento</button></footer></section></div>}
-    {messageOpen && <div className="cp-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setMessageOpen(false); }}><form className="cp-modal" onSubmit={sendMessage}><header><div><span className="cp-overline">MENSAGEM DO CLIENTE</span><h2>Falar com a agência</h2></div><button type="button" aria-label="Fechar" onClick={() => setMessageOpen(false)}><X size={17} /></button></header><label className="cp-message-field">Mensagem<textarea required maxLength={500} rows={4} value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Escreva sua mensagem..." /></label><small className="cp-modal-note">A mensagem será adicionada ao histórico desta prévia.</small><footer><button type="button" className="admin-secondary" onClick={() => setMessageOpen(false)}>Cancelar</button><button className="admin-primary" type="submit"><Send size={14} />Enviar mensagem</button></footer></form></div>}
+    <div className="cp-admin-toolbar"><label>Cliente<select value={clientId} onChange={(event) => { setClientId(event.target.value); setPortalUrl(''); }}><option value="">Selecione um cliente</option>{clients.records.map((item) => <option value={item.id} key={item.id}>{item.name || item.title}</option>)}</select></label><div><button className="admin-primary" disabled={!client || busy} onClick={createLink}>{busy ? 'Gerando link…' : 'Gerar link seguro'} <ShieldCheck size={14} /></button>{portalUrl && <><button className="admin-secondary" onClick={copyLink}><Copy size={14} />Copiar link</button><a className="admin-secondary" href={portalUrl} target="_blank" rel="noreferrer">Abrir portal <ExternalLink size={14} /></a></>}</div></div>
+    {client && <>
+      <section className="cp-customize"><div><b>Conteúdo compartilhado com {client.name}</b><small>Os dados vêm do cadastro e dos registros relacionados no workspace.</small></div><div>{[['project', 'Projetos'], ['tasks', 'Tarefas'], ['contracts', 'Contratos']].map(([key, label]) => <label key={key}><input type="checkbox" checked={visibility[key]} onChange={() => toggleVisibility(key)} />{label}</label>)}</div></section>
+      <section className="cp-preview-shell"><header className="cp-preview-bar"><span className="cp-brand">nexo <i /> Portal do cliente</span><span className="cp-client-chip">{client.person || client.name} · {client.name}</span></header><div className="cp-welcome"><div><span className="cp-overline">ÁREA DO CLIENTE</span><h2>Olá, {(client.person || client.name || 'cliente').split(' ')[0]}</h2><p>Acompanhe seus projetos e documentos compartilhados pela Focuss Dev.</p></div><span className="cp-online"><i />Portal ativo</span></div><div className="cp-client-content"><div className="cp-cards-grid">
+        {visibility.project && <article className="cp-info-card cp-project-card"><div className="cp-card-heading"><span className="cp-card-icon green"><FolderKanban size={17} /></span><small>PROJETOS</small></div><h3>{clientProjects.length} projeto(s)</h3><p>{clientProjects.filter((item) => !['Concluído', 'Entregue', 'Publicado'].includes(item.status)).map((item) => item.name || item.title).join(' · ') || 'Nenhum projeto aberto'}</p></article>}
+        {visibility.contracts && <article className="cp-info-card"><div className="cp-card-heading"><span className="cp-card-icon blue"><FileCheck2 size={17} /></span><small>CONTRATOS</small></div><h3>{clientContracts.length} documento(s)</h3><p>{clientContracts.map((item) => `${item.title || item.name} · ${item.status}`).join(' · ') || 'Nenhum contrato cadastrado'}</p></article>}
+        {visibility.tasks && <article className="cp-info-card"><div className="cp-card-heading"><span className="cp-card-icon amber"><CheckCircle2 size={17} /></span><small>PRÓXIMAS ENTREGAS</small></div><h3>{clientTasks.filter((item) => !['Concluída', 'Concluido'].includes(item.status)).length} tarefa(s)</h3><p>{clientTasks.filter((item) => !['Concluída', 'Concluido'].includes(item.status)).slice(0, 3).map((item) => item.title).join(' · ') || 'Nenhuma pendência compartilhada'}</p></article>}
+      </div></div></section>
+      {portalUrl && <p className="cp-preview-note">O link contém um token de acesso individual e expira em 365 dias. Gere outro se precisar revogá-lo.</p>}
+    </>}
   </div>;
 }
 
 export function PublicClientPortal({ slug }) {
-  const client = clientList.find((item) => item.id === slug);
-  if (!client) return <main className="cp-empty-state"><h1>Portal indisponível</h1><p>Este link não corresponde a um portal publicado.</p></main>;
-  const activeClient = client;
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [message, setMessage] = useState('');
-  const [toast, setToast] = useState('');
-  const [status, setStatus] = useState(() => readJSON(APPROVAL_KEY, {})[activeClient.id] || 'Aguardando revisão');
-  const [reviewOpen, setReviewOpen] = useState(false);
-  const flash = (text) => { setToast(text); window.setTimeout(() => setToast(''), 2600); };
-  const allVisibility = readJSON(VISIBILITY_KEY, {});
-  const visibility = { project: true, files: true, payments: true, support: true, ...(allVisibility[activeClient.id] || {}) };
-  const addEntry = (title) => { const all = readJSON(ACTIVITY_KEY, {}); all[client.id] = [{ title, time: new Date().toLocaleString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }), fromClient: true }, ...(all[client.id] || [])].slice(0, 8); saveJSON(ACTIVITY_KEY, all); };
-  const send = (event) => { event.preventDefault(); if (!message.trim()) return; addEntry(`Mensagem do cliente: ${message.trim()}`); setMessage(''); flash('Mensagem enviada nesta demonstração.'); };
-  const decide = (nextStatus) => { const values = readJSON(APPROVAL_KEY, {}); values[client.id] = nextStatus; saveJSON(APPROVAL_KEY, values); setStatus(nextStatus); addEntry(nextStatus === 'Aprovada' ? `${client.document} aprovado` : `Ajustes solicitados em ${client.document}`); setReviewOpen(false); flash(nextStatus === 'Aprovada' ? 'Documento aprovado.' : 'Pedido de alteração enviado.'); };
-  if (!client) return <main className="cp-public-page"><header className="cp-public-header"><span className="cp-brand"><span className="brand-glyph"><i /><b /><em /></span>nexo</span></header><section className="cp-not-found"><span className="cp-card-icon blue"><ShieldCheck size={18} /></span><h1>Este link do portal não é válido</h1><p>Peça à equipe da agência um novo link de acesso.</p></section></main>;
-  return <main className="cp-public-page"><header className="cp-public-header"><span className="cp-brand"><span className="brand-glyph"><i /><b /><em /></span>nexo <i /> Portal do cliente</span><span className="cp-client-chip"><span className={`cp-avatar ${client.tone}`}>{client.initials}</span>{client.name}</span></header><section className="cp-public-welcome"><span className="cp-overline">ÁREA DO CLIENTE</span><h1>Olá, {client.contact.split(' ')[0]} 👋</h1><p>Este é o espaço para acompanhar seus serviços com a Nexo.</p></section><section className="cp-public-content"><div className="cp-public-grid">{visibility.project && <article className="cp-info-card cp-project-card"><div className="cp-card-heading"><span className="cp-card-icon green"><CheckCircle2 size={17} /></span><small>PROJETO EM ANDAMENTO</small></div><h3>{client.project}</h3><p>Entrega prevista para {client.delivery}</p><div className="cp-project-progress"><div><i style={{ width: `${client.progress}%` }} /></div><b>{client.progress}%</b></div><small className="cp-muted">Design aprovado · Desenvolvimento em andamento</small></article>}{visibility.files && <article className="cp-info-card"><div className="cp-card-heading"><span className="cp-card-icon blue"><FileText size={17} /></span><small>DOCUMENTO PARA REVISAR</small></div><h3>{client.document}</h3><p>Arquivo enviado pela equipe Nexo</p><div className="cp-approval-row"><span className={`cp-approval-state ${status === 'Aprovada' ? 'approved' : status === 'Alteração solicitada' ? 'changes' : ''}`}><i />{status}</span><button className="cp-action-button" onClick={() => setReviewOpen(true)}>Revisar <ArrowRight size={12} /></button></div></article>}{visibility.payments && <article className="cp-info-card"><div className="cp-card-heading"><span className="cp-card-icon amber"><CircleDollarSign size={17} /></span><small>PRÓXIMO PAGAMENTO</small></div><strong className="cp-payment-amount">{client.payment}</strong><p>Vencimento em {client.due}</p><button className="cp-action-button" onClick={() => flash('A consulta de cobranças será ativada quando o financeiro estiver conectado.')}>Ver cobrança <ArrowRight size={12} /></button></article>}</div><section className={visibility.support ? "cp-public-message" : "cp-public-message hidden"}><div><span className="cp-card-icon indigo"><MessageCircle size={17} /></span><h2>Fale com a equipe</h2><p>Envie dúvidas ou atualizações para o seu atendimento.</p></div><form onSubmit={send}><textarea rows={3} required maxLength={500} value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Escreva sua mensagem..." /><button className="admin-primary" type="submit"><Send size={14} />Enviar mensagem</button></form></section></section>{reviewOpen && <div className="cp-modal-backdrop" role="presentation"><section className="cp-modal"><header><div><span className="cp-overline">REVISÃO DO CLIENTE</span><h2>{client.document}</h2></div><button aria-label="Fechar" onClick={() => setReviewOpen(false)}><X size={17} /></button></header><div className="cp-file-preview"><Paperclip size={26} /><b>{client.document}.pdf</b><small>Documento compartilhado pela agência</small></div><p>Depois de revisar o documento, aprove ou solicite ajustes.</p><footer><button className="admin-secondary" onClick={() => decide('Alteração solicitada')}>Solicitar alteração</button><button className="admin-primary" onClick={() => decide('Aprovada')}><Check size={14} />Aprovar documento</button></footer></section></div>}{toast && <div className="cp-toast" role="status">{toast}</div>}</main>;
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState('');
+  React.useEffect(() => {
+    let active = true;
+    apiRequest(`/api/public/client-portal/${encodeURIComponent(slug)}`).then((result) => { if (active) { setData(result.data); setError(''); } }).catch((err) => { if (active) setError(err.message || 'Este link do portal não é válido.'); }).finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [slug]);
+  const client = data?.client;
+  const flash = (text) => { setNotice(text); window.setTimeout(() => setNotice(''), 3000); };
+  const sendMessage = async (event) => {
+    event.preventDefault(); setBusy(true);
+    try { await apiRequest(`/api/public/client-portal/${encodeURIComponent(slug)}/messages`, { method: 'POST', body: JSON.stringify({ message }) }); setMessage(''); flash('Mensagem enviada para a equipe.'); }
+    catch (err) { flash(err.message || 'Não foi possível enviar sua mensagem.'); }
+    finally { setBusy(false); }
+  };
+  const decide = async (approval, decision) => {
+    setBusy(true);
+    try { await apiRequest(`/api/public/client-portal/${encodeURIComponent(slug)}/approvals/${approval.id}`, { method: 'POST', body: JSON.stringify({ decision }) }); const fresh = await apiRequest(`/api/public/client-portal/${encodeURIComponent(slug)}`); setData(fresh.data); flash(decision === 'approved' ? 'Aprovação registrada.' : 'Pedido de alteração enviado.'); }
+    catch (err) { flash(err.message || 'Não foi possível registrar sua resposta.'); }
+    finally { setBusy(false); }
+  };
+  if (loading) return <main className="cp-empty-state"><h1>Carregando portal…</h1></main>;
+  if (error || !client) return <main className="cp-empty-state"><h1>Portal indisponível</h1><p>{error || 'Este link não corresponde a um portal publicado.'}</p></main>;
+  const pendingApprovals = (data.approvals || []).filter((item) => !['Aprovada', 'Concluída'].includes(item.status));
+  return <main className="cp-public-page"><header className="cp-public-header"><span className="cp-brand">nexo <i /> Portal do cliente</span><span className="cp-client-chip">{client.name}</span></header><section className="cp-public-welcome"><span className="cp-overline">ÁREA DO CLIENTE</span><h1>Olá, {(client.person || client.name).split(' ')[0]}</h1><p>Acompanhe os serviços contratados com a Focuss Dev.</p></section><section className="cp-public-content"><div className="cp-public-grid">
+    {(data.projects || []).map((item) => <article className="cp-info-card cp-project-card" key={item.id}><div className="cp-card-heading"><span className="cp-card-icon green"><FolderKanban size={17} /></span><small>PROJETO</small><span>{item.status}</span></div><h3>{item.name || item.title}</h3><p>Próxima entrega: {item.due || 'em definição'}</p><div className="cp-project-progress"><div><i style={{ width: `${Math.min(100, Math.max(0, Number(item.progress) || 0))}%` }} /></div><b>{Number(item.progress) || 0}%</b></div></article>)}
+    {(data.contracts || []).map((item) => <article className="cp-info-card" key={item.id}><div className="cp-card-heading"><span className="cp-card-icon blue"><FileCheck2 size={17} /></span><small>CONTRATO</small><span>{item.status}</span></div><h3>{item.title || item.name}</h3><p>{item.code} · {item.renewal || 'Vigência conforme documento'}</p></article>)}
+    {(data.payments || []).map((item) => <article className="cp-info-card" key={item.id}><div className="cp-card-heading"><span className="cp-card-icon amber"><CircleDollarSign size={17} /></span><small>PAGAMENTO</small><span>{item.status}</span></div><h3>{item.description}</h3><strong className="cp-payment-amount">{money(item.amount)}</strong>{item.paymentDetails?.pixCode && <button className="cp-action-button" onClick={() => navigator.clipboard.writeText(item.paymentDetails.pixCode)}>Copiar Pix <Copy size={12} /></button>}{item.paymentDetails?.ticketUrl && <a className="cp-action-button" href={item.paymentDetails.ticketUrl} target="_blank" rel="noreferrer">Abrir boleto <ExternalLink size={12} /></a>}</article>)}
+    </div>
+    {!!pendingApprovals.length && <section className="cp-activity"><div className="cp-section-title"><div><h3>Aprovações pendentes</h3><p>Revise os materiais enviados pela equipe.</p></div></div>{pendingApprovals.map((item) => <article className="cp-activity-row" key={item.id}><FileCheck2 size={15} /><b>{item.title || item.name}</b><button disabled={busy} className="admin-secondary" onClick={() => decide(item, 'changes_requested')}>Pedir ajuste</button><button disabled={busy} className="admin-primary" onClick={() => decide(item, 'approved')}><Check size={13} />Aprovar</button></article>)}</section>}
+    <section className="cp-public-message"><div><span className="cp-card-icon indigo"><MessageCircle size={17} /></span><h2>Fale com a equipe</h2><p>As mensagens entram no histórico de atendimento da agência.</p></div><form onSubmit={sendMessage}><textarea required maxLength={2000} rows={3} value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Escreva sua mensagem…" /><button className="admin-primary" disabled={busy}><Send size={14} />{busy ? 'Enviando…' : 'Enviar mensagem'}</button></form></section>
+  </section>{notice && <div className="cp-toast" role="status">{notice}</div>}</main>;
 }

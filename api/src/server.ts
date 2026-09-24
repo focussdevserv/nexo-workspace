@@ -44,6 +44,7 @@ app.addHook('onRequest', async (request, reply) => {
 app.decorate('authenticate', async (request: FastifyRequest, reply: FastifyReply) => {
   try {
     await request.jwtVerify({ onlyCookie: true });
+    if (request.user.purpose) return reply.code(401).send({ error: 'unauthorized', message: 'Sessao invalida ou expirada.' });
     const [owner] = await db.select({ id: users.id }).from(users).where(and(
       eq(users.id, request.user.sub), eq(users.id, ownerAccountId ?? '00000000-0000-0000-0000-000000000000'),
       eq(users.organizationId, request.user.organizationId), eq(users.active, true),
@@ -772,6 +773,111 @@ app.delete('/api/workspace/:resource/:id', { preHandler: app.authenticate }, asy
   });
   if (!archived) return reply.code(404).send({ error: 'not_found', message: 'Registro não encontrado.' });
   return reply.code(204).send();
+});
+
+app.post('/api/workspace/clients/:id/portal-link', { preHandler: app.authenticate }, async (request, reply) => {
+  const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
+  if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Cliente inválido.' });
+  const [client] = await db.select({ id: workspaceRecords.id, data: workspaceRecords.data }).from(workspaceRecords).where(and(
+    eq(workspaceRecords.id, params.data.id), eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'clients'), isNull(workspaceRecords.archivedAt),
+  )).limit(1);
+  if (!client) return reply.code(404).send({ error: 'not_found', message: 'Cliente não encontrado.' });
+  const clientData = client.data as Record<string, unknown>;
+  const version = Number(clientData.portalTokenVersion ?? 0) + 1;
+  await db.update(workspaceRecords).set({ data: { ...clientData, portalTokenVersion: version }, updatedAt: new Date() }).where(eq(workspaceRecords.id, client.id));
+  const portalPayload = { sub: client.id, role: 'member' as const, purpose: 'client_portal', clientRecordId: client.id, organizationId: request.user.organizationId, version };
+  const token = app.jwt.sign(portalPayload, { expiresIn: '90d' });
+  await db.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'client', entityId: client.id, action: 'portal_link_created', payload: {} });
+  return { data: { url: `${env.APP_ORIGIN.split(',')[0]!.trim()}/portal/${encodeURIComponent(token)}`, expiresInDays: 90 } };
+});
+
+function verifyPortalClaims(token: string) {
+  try {
+    const claims = app.jwt.verify<{ purpose?: string; clientRecordId?: string; organizationId?: string; version?: number }>(token);
+    if (claims.purpose !== 'client_portal' || !claims.clientRecordId || !claims.organizationId || !Number.isInteger(claims.version)) return null;
+    return claims as { purpose: 'client_portal'; clientRecordId: string; organizationId: string; version: number };
+  } catch { return null; }
+}
+
+app.get('/api/public/client-portal/:token', async (request, reply) => {
+  const params = z.object({ token: z.string().min(20).max(4096) }).safeParse(request.params);
+  if (!params.success) return reply.code(404).send({ error: 'portal_not_found' });
+  const claims = verifyPortalClaims(params.data.token);
+  if (!claims) return reply.code(404).send({ error: 'portal_not_found', message: 'Este link expirou ou não é válido.' });
+  const [record] = await db.select().from(workspaceRecords).where(and(
+    eq(workspaceRecords.id, claims.clientRecordId), eq(workspaceRecords.organizationId, claims.organizationId), eq(workspaceRecords.resource, 'clients'), isNull(workspaceRecords.archivedAt),
+  )).limit(1);
+  if (!record) return reply.code(404).send({ error: 'portal_not_found' });
+  const client = record.data as Record<string, unknown>;
+  if (Number(client.portalTokenVersion ?? 0) !== claims.version) return reply.code(404).send({ error: 'portal_not_found' });
+  const clientName = String(client.name ?? client.title ?? '');
+  const visibility = { project: true, tasks: true, contracts: true, payments: true, approvals: true, ...((client.portalVisibility && typeof client.portalVisibility === 'object') ? client.portalVisibility as Record<string, boolean> : {}) };
+  const resources = ['projects', 'tasks', 'contracts', 'approvals'];
+  const relatedRows = await Promise.all(resources.map((resource) => db.select().from(workspaceRecords).where(and(
+    eq(workspaceRecords.organizationId, claims.organizationId), eq(workspaceRecords.resource, resource), isNull(workspaceRecords.archivedAt),
+  )).orderBy(desc(workspaceRecords.updatedAt)).limit(300)));
+  const related = Object.fromEntries(resources.map((resource, index) => [resource, relatedRows[index]!.filter((row) => {
+    const data = row.data as Record<string, unknown>;
+    return data.clientId === record.id;
+  }).map((row) => {
+    const data = row.data as Record<string, unknown>;
+    const common = { id: row.id, status: data.status };
+    if (resource === 'projects') return { ...common, name: data.name ?? data.title ?? '', due: data.due ?? data.dueDate ?? '', progress: data.progress ?? 0 };
+    if (resource === 'tasks') return { ...common, title: data.title ?? data.name ?? '', due: data.due ?? data.dueDate ?? '' };
+    if (resource === 'contracts') return { ...common, title: data.title ?? data.name ?? '', code: data.code ?? '', renewal: data.renewal ?? '' };
+    return { ...common, title: data.title ?? data.name ?? '' };
+  })]));
+  const [payments] = await Promise.all([db.select({ id: billingOrders.id, description: billingOrders.description, amount: billingOrders.amount, status: billingOrders.status, dueAt: billingOrders.dueAt, paymentDetails: billingOrders.paymentDetails, createdAt: billingOrders.createdAt }).from(billingOrders).where(and(
+    eq(billingOrders.organizationId, claims.organizationId), eq(billingOrders.clientId, record.id),
+  )).orderBy(desc(billingOrders.createdAt)).limit(100)]);
+  const publicPayments = payments.map((item) => {
+    const details = item.paymentDetails && typeof item.paymentDetails === 'object' ? item.paymentDetails as Record<string, unknown> : {};
+    return { id: item.id, description: item.description, amount: item.amount, status: item.status, dueAt: item.dueAt, paymentDetails: { pixCode: details.pixCode ?? null, ticketUrl: details.ticketUrl ?? null } };
+  });
+  return { data: { client: { name: clientName, person: client.person ?? '' }, projects: visibility.project ? related.projects : [], tasks: visibility.tasks ? related.tasks : [], contracts: visibility.contracts ? related.contracts : [], approvals: visibility.approvals ? related.approvals : [], payments: visibility.payments ? publicPayments : [] } };
+});
+
+app.post('/api/public/client-portal/:token/messages', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
+  const params = z.object({ token: z.string().min(20).max(4096) }).safeParse(request.params);
+  const body = parseBody(z.object({ message: z.string().trim().min(1).max(2000) }), request.body, reply);
+  if (!params.success) return reply.code(404).send({ error: 'portal_not_found' });
+  if (!body) return;
+  const claims = verifyPortalClaims(params.data.token);
+  if (!claims) return reply.code(404).send({ error: 'portal_not_found' });
+  const [client] = await db.select().from(workspaceRecords).where(and(eq(workspaceRecords.id, claims.clientRecordId), eq(workspaceRecords.organizationId, claims.organizationId), eq(workspaceRecords.resource, 'clients'), isNull(workspaceRecords.archivedAt))).limit(1);
+  if (!client) return reply.code(404).send({ error: 'portal_not_found' });
+  if (Number((client.data as Record<string, unknown>).portalTokenVersion ?? 0) !== claims.version) return reply.code(404).send({ error: 'portal_not_found' });
+  const name = String((client.data as Record<string, unknown>).name ?? 'Cliente');
+  const [saved] = await db.transaction(async (tx) => {
+    const row = await tx.insert(workspaceRecords).values({ organizationId: claims.organizationId, createdBy: null, resource: 'inbox', data: {
+      clientId: client.id, client: name, channel: 'portal', direction: 'inbound', message: body.message, status: 'unread', source: 'client-portal',
+    } }).returning();
+    await tx.insert(activityEvents).values({ organizationId: claims.organizationId, entityType: 'client', entityId: client.id, action: 'portal_message_received', payload: { messageId: row[0]!.id } });
+    return row;
+  });
+  return reply.code(201).send({ data: { id: saved!.id, received: true } });
+});
+
+app.post('/api/public/client-portal/:token/approvals/:id', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
+  const params = z.object({ token: z.string().min(20).max(4096), id: z.string().uuid() }).safeParse(request.params);
+  const body = parseBody(z.object({ decision: z.enum(['approved', 'changes_requested']), comment: z.string().trim().max(2000).optional() }), request.body, reply);
+  if (!params.success) return reply.code(404).send({ error: 'portal_not_found' });
+  if (!body) return;
+  const claims = verifyPortalClaims(params.data.token);
+  if (!claims) return reply.code(404).send({ error: 'portal_not_found' });
+  const [client] = await db.select().from(workspaceRecords).where(and(eq(workspaceRecords.id, claims.clientRecordId), eq(workspaceRecords.organizationId, claims.organizationId), eq(workspaceRecords.resource, 'clients'), isNull(workspaceRecords.archivedAt))).limit(1);
+  const [approval] = await db.select().from(workspaceRecords).where(and(eq(workspaceRecords.id, params.data.id), eq(workspaceRecords.organizationId, claims.organizationId), eq(workspaceRecords.resource, 'approvals'), isNull(workspaceRecords.archivedAt))).limit(1);
+  if (!client || !approval) return reply.code(404).send({ error: 'approval_not_found' });
+  if (Number((client.data as Record<string, unknown>).portalTokenVersion ?? 0) !== claims.version) return reply.code(404).send({ error: 'approval_not_found' });
+  const approvalData = approval.data as Record<string, unknown>;
+  if (approvalData.clientId !== client.id) return reply.code(404).send({ error: 'approval_not_found' });
+  const status = body.decision === 'approved' ? 'Aprovada' : 'Alterações solicitadas';
+  const [saved] = await db.transaction(async (tx) => {
+    const row = await tx.update(workspaceRecords).set({ data: { ...approvalData, status, clientComment: body.comment ?? '', decidedAt: new Date().toISOString() }, updatedAt: new Date() }).where(eq(workspaceRecords.id, approval.id)).returning();
+    await tx.insert(activityEvents).values({ organizationId: claims.organizationId, entityType: 'client', entityId: client.id, action: `portal_approval_${body.decision}`, payload: { approvalId: approval.id } });
+    return row;
+  });
+  return { data: { id: saved!.id, status } };
 });
 
 app.setErrorHandler((error, _request, reply) => {

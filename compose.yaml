@@ -24,7 +24,7 @@ services:
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       N8N_WEBHOOK_URL: ${N8N_WEBHOOK_URL:-}
       N8N_BASE_URL: ${N8N_BASE_URL:-http://n8n:5678}
-      N8N_EDITOR_BASE_URL: ${SERVICE_URL_N8N_5678:-https://n8n.focussdev.space/}
+      N8N_EDITOR_BASE_URL: ${SERVICE_URL_N8N_5678:-https://n8n.pagfocuss.tech/}
       SENTRY_DSN: ${SENTRY_DSN:-}
       TRUST_PROXY: "true"
     expose:
@@ -85,11 +85,11 @@ services:
       DB_POSTGRESDB_SCHEMA: n8n
       N8N_ENCRYPTION_KEY: ${SERVICE_PASSWORD_64_N8N:?Coolify deve gerar e manter SERVICE_PASSWORD_64_N8N}
       SERVICE_URL_N8N_5678: /
-      N8N_HOST: ${SERVICE_FQDN_N8N_5678:-n8n.focussdev.space}
+      N8N_HOST: ${SERVICE_FQDN_N8N_5678:-n8n.pagfocuss.tech}
       N8N_PORT: "5678"
       N8N_PROTOCOL: https
-      N8N_EDITOR_BASE_URL: ${SERVICE_URL_N8N_5678:-https://n8n.focussdev.space/}
-      WEBHOOK_URL: ${SERVICE_URL_N8N_5678:-https://n8n.focussdev.space/}
+      N8N_EDITOR_BASE_URL: ${SERVICE_URL_N8N_5678:-https://n8n.pagfocuss.tech/}
+      WEBHOOK_URL: ${SERVICE_URL_N8N_5678:-https://n8n.pagfocuss.tech/}
       N8N_PROXY_HOPS: "1"
       N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
       N8N_DIAGNOSTICS_ENABLED: "false"
