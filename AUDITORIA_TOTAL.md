@@ -339,3 +339,8 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - A edição aguarda a gravação do evento e a atualização do Calendar; a exclusão aguarda a confirmação do Calendar quando há vínculo e a exclusão no Nexo. Erros da API deixam de ser tratados como sucesso nos fluxos da agenda.
 - A sincronização malsucedida fica visível na ficha do evento. O formulário impede submissões duplicadas enquanto o salvamento está em andamento.
 - Builds e testes locais passaram. Não criei reuniões nem alterei dados do workspace em produção. A publicação será verificada por health check e pelo bundle servido; nenhuma automação do navegador será usada enquanto o usuário estiver no PC.
+## Catálogo comercial com modelos iniciais — 30/09/2026
+- Os 88 serviços/produtos informados pelo usuário agora recebem texto-base editável para propostas e contratos; planos mensais têm campos próprios para ciclo, renovação e cancelamento.
+- Preços, custos e prazos continuam vazios e os itens entram como rascunho. Os campos entre colchetes precisam ser revisados/preenchidos antes de enviar documentos; nenhum preço, prazo ou promessa foi inventado.
+- A seleção do serviço na proposta/contrato continua usando os modelos do catálogo. Teste novo cobre os 88 itens e confirma modelos presentes sem dados comerciais fictícios.
+- Validação: 30 testes de API passaram; build do frontend e `git diff --check` passaram. Não inseri itens no banco em produção; o cadastro segue pela ação explícita “Cadastrar catálogo informado”.

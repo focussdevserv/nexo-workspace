@@ -13,6 +13,22 @@ test('imports each service group once while preserving same-name catalog variant
   assert.ok(additions.every((item) => !item.price && item.status === 'Rascunho'));
 });
 
+test('provides editable proposal and contract scopes without inventing commercial terms', () => {
+  assert.ok(requestedServiceCatalog.length > 70);
+  for (const service of requestedServiceCatalog) {
+    assert.ok(service.proposalTemplate.includes(service.name));
+    assert.ok(service.contractTemplate.includes(service.name));
+    assert.match(service.proposalTemplate, /\[preencher\]|\[descrever/i);
+    assert.match(service.contractTemplate, /\[preencher\]|\[transcrever/i);
+    assert.equal(service.price, '');
+    assert.equal(service.duration, '');
+    assert.equal(service.status, 'Rascunho');
+  }
+  const monthly = requestedServiceCatalog.find((service) => service.name === 'Plano Essencial');
+  assert.match(monthly.proposalTemplate, /RENOVAÇÃO E CANCELAMENTO/);
+  assert.match(monthly.contractTemplate, /VIGÊNCIA, RENOVAÇÃO E CANCELAMENTO/);
+});
+
 test('builds project and checklist tasks linked to the selected client and service', () => {
   const { project, tasks } = buildServiceProject({ name: 'Site institucional', category: 'Desenvolvimento', duration: '20 dias', responsible: 'Equipe web', templateTasks: ['Briefing', 'Publicar'] }, { id: 'client-1', name: 'Cliente A' }, 1000);
   assert.equal(project.clientId, 'client-1');

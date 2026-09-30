@@ -37,19 +37,29 @@ const starterChecklist = {
   'Planos mensais': ['Confirmar início e ciclo de cobrança', 'Conferir acessos e escopo contratado', 'Executar rotina do período', 'Registrar atividades e pendências', 'Enviar resumo ao cliente'],
 };
 
+function serviceDocumentTemplates(name, group) {
+  const recurring = group === 'Planos mensais';
+  const proposalTemplate = recurring
+    ? `SERVIÇO: ${name}\nOBJETIVO DO CLIENTE: [preencher]\nESCOPO INCLUÍDO NESTE CICLO: [descrever entregas, limites e canais]\nITENS NÃO INCLUÍDOS: [preencher]\nRESPONSABILIDADES E ACESSOS DO CLIENTE: [preencher]\nINÍCIO E DATA DE VENCIMENTO: [preencher]\nVALOR E FORMA DE COBRANÇA: [preencher]\nREGRAS DE RENOVAÇÃO E CANCELAMENTO: [revisar e preencher]`
+    : `SERVIÇO: ${name}\nOBJETIVO DO CLIENTE: [preencher]\nESCOPO E ENTREGÁVEIS INCLUÍDOS: [descrever com quantidade e limites]\nITENS NÃO INCLUÍDOS: [preencher]\nMATERIAIS E RESPONSABILIDADES DO CLIENTE: [preencher]\nPRAZO E MARCOS DE ENTREGA: [preencher]\nCRITÉRIOS DE REVISÃO E ACEITE: [preencher]\nINVESTIMENTO E CONDIÇÕES DE PAGAMENTO: [preencher]`;
+  const contractTemplate = recurring
+    ? `OBJETO: prestação do serviço ${name}, conforme o escopo aprovado nesta proposta.\nESCOPO, LIMITES E ENTREGAS DO CICLO: [transcrever o que foi aprovado]\nOBRIGAÇÕES DO CLIENTE E ACESSOS: [preencher]\nVALOR, VENCIMENTO E MEIO DE COBRANÇA: [preencher]\nVIGÊNCIA, RENOVAÇÃO E CANCELAMENTO: [definir e revisar]\nATENDIMENTO E PRAZOS DE RESPOSTA: [preencher]\nFORA DE ESCOPO E ALTERAÇÕES: [preencher]`
+    : `OBJETO: prestação do serviço ${name}, conforme o escopo aprovado nesta proposta.\nENTREGÁVEIS, QUANTIDADES E LIMITES: [transcrever o que foi aprovado]\nPRAZO E MARCOS: [preencher]\nOBRIGAÇÕES DO CLIENTE E MATERIAIS: [preencher]\nVALOR E CONDIÇÕES DE PAGAMENTO: [preencher]\nREVISÕES, ACEITE E ENTREGA: [preencher]\nFORA DE ESCOPO E ALTERAÇÕES: [preencher]`;
+  return { proposalTemplate, contractTemplate };
+}
+
 export const requestedServiceCatalog = Object.entries(catalogGroups).flatMap(([group, names]) => names.map((name) => ({
+  ...serviceDocumentTemplates(name, group),
   name,
   category: group === 'Sites — do barato ao caro' ? 'Desenvolvimento' : group === 'Pacotes' ? 'Pacote' : group === 'Planos mensais' ? 'Recorrente' : 'Serviço',
   catalogGroup: group,
-  description: '',
+  description: 'Modelo inicial editável. Revise escopo, limites, prazo e condições antes de enviar.',
   price: '',
   cadence: group === 'Planos mensais' ? 'Mensal' : 'Projeto fechado',
   duration: '',
   cost: '',
   responsible: '',
   templateTasks: starterChecklist[group],
-  proposalTemplate: '',
-  contractTemplate: '',
   color: group === 'Planos mensais' ? 'green' : group === 'Pacotes' ? 'purple' : group === 'Sites — do barato ao caro' ? 'blue' : 'amber',
   status: 'Rascunho',
 })));
