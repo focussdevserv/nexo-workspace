@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity, ArrowDownRight, ArrowRight, ArrowUpRight, Bell, BriefcaseBusiness,
   CalendarDays, Check, CheckSquare, ChevronDown, ChevronRight, CircleDollarSign,
@@ -6,10 +6,10 @@ import {
   Mail, MessageCircle, Menu, MoreVertical, Paperclip, Phone, Plus, Search, Send,
   Settings, Sparkles, Users, Video, X,
 } from 'lucide-react';
-import CommercialScreen from './screens/CommercialScreens.jsx';
-import WorkScreen from './screens/WorkScreens.jsx';
-import ServiceScreen from './screens/ServiceScreens.jsx';
-import AdminScreen from './screens/AdminScreens.jsx';
+const CommercialScreen = lazy(() => import('./screens/CommercialScreens.jsx'));
+const WorkScreen = lazy(() => import('./screens/WorkScreens.jsx'));
+const ServiceScreen = lazy(() => import('./screens/ServiceScreens.jsx'));
+const AdminScreen = lazy(() => import('./screens/AdminScreens.jsx'));
 import { PublicClientPortal } from './screens/ClientPortalScreens.jsx';
 import WorkspaceAccess from './screens/WorkspaceAccess.jsx';
 import PublicLegalPage from './screens/PublicLegalPages.jsx';
@@ -26,10 +26,10 @@ const servicePages = new Set(['Financeiro', 'Receitas', 'Despesas', 'Contas', 'C
 const adminPages = new Set(['Equipe', 'Relatórios', 'Metas', 'Configurações', 'Portal do cliente', 'Repositórios']);
 
 function ModuleScreen({ page }) {
-  if (commercialPages.has(page)) return <CommercialScreen key={page} page={page} />;
-  if (workPages.has(page)) return <WorkScreen key={page} page={page} />;
-  if (servicePages.has(page)) return <ServiceScreen key={page} page={page} />;
-  if (adminPages.has(page)) return <AdminScreen key={page} page={page} />;
+  if (commercialPages.has(page)) return <Suspense fallback={<ModuleLoading />}><CommercialScreen key={page} page={page} /></Suspense>;
+  if (workPages.has(page)) return <Suspense fallback={<ModuleLoading />}><WorkScreen key={page} page={page} /></Suspense>;
+  if (servicePages.has(page)) return <Suspense fallback={<ModuleLoading />}><ServiceScreen key={page} page={page} /></Suspense>;
+  if (adminPages.has(page)) return <Suspense fallback={<ModuleLoading />}><AdminScreen key={page} page={page} /></Suspense>;
   return <div className="module-screen-shell"><header className="module-page-header"><div><span className="eyebrow">NEXO · WORKSPACE</span><h1>{page}</h1><p>Organize esta área da sua agência em um só lugar.</p></div></header></div>;
 }
 
@@ -79,6 +79,10 @@ const navGroups = [
 
 function Avatar({ initials, color = 'blue', small = false, online = false }) {
   return <span className={`avatar avatar-${color} ${small ? 'avatar-small' : ''} ${online ? 'avatar-online' : ''}`}>{initials}</span>;
+}
+
+function ModuleLoading() {
+  return <div className="module-loading" role="status" aria-live="polite">Carregando módulo...</div>;
 }
 
 function readLocalValue(key, fallback) { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? fallback; } catch { return fallback; } }
