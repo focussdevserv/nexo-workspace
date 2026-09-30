@@ -63,15 +63,41 @@ jobs:
             exit 0
           fi
           git fetch --no-tags --depth=1 origin "$EVENT_BEFORE"
-          runtime_paths=(src api/src api/drizzle api/tsconfig.json api/drizzle.config.ts public index.html Dockerfile api/Dockerfile compose.yaml nginx.conf .dockerignore package.json package-lock.json api/package.json api/package-lock.json)
-          if git diff --quiet "$EVENT_BEFORE" "$GITHUB_SHA" -- "${runtime_paths[@]}"; then
+          runtime_paths=(src api/src api/drizzle api/tsconfig.json api/drizzle.config.ts public index.html Dockerfile api/Dockerfile compose.yaml nginx.conf .dockerignore)
+          runtime_changed='false'
+          if ! git diff --quiet "$EVENT_BEFORE" "$GITHUB_SHA" -- "${runtime_paths[@]}"; then
+            runtime_changed='true'
+          fi
+          # Lockfiles also change for development-only tools. Rebuild production only
+          # when runtime dependencies or the relevant build command changed.
+          for package_file in package.json api/package.json; do
+            if ! git cat-file -e "$EVENT_BEFORE:$package_file" 2>/dev/null || ! test -f "$package_file"; then
+              runtime_changed='true'
+              continue
+            fi
+            before_runtime="$(git show "$EVENT_BEFORE:$package_file" | jq -cS '{dependencies: (.dependencies // {}), optionalDependencies: (.optionalDependencies // {}), peerDependencies: (.peerDependencies // {}), overrides: (.overrides // {}), build: (.scripts.build // null)}')"
+            current_runtime="$(jq -cS '{dependencies: (.dependencies // {}), optionalDependencies: (.optionalDependencies // {}), peerDependencies: (.peerDependencies // {}), overrides: (.overrides // {}), build: (.scripts.build // null)}' "$package_file")"
+            if [[ "$before_runtime" != "$current_runtime" ]]; then
+              runtime_changed='true'
+            fi
+          done
+          if [[ "$runtime_changed" == 'false' ]]; then
             echo 'deploy_required=false' >> "$GITHUB_OUTPUT"
             echo 'api_deploy_required=false' >> "$GITHUB_OUTPUT"
             echo 'No runtime files changed; production deploy verification is not required.' >> "$GITHUB_STEP_SUMMARY"
           else
             echo 'deploy_required=true' >> "$GITHUB_OUTPUT"
-            api_paths=(api/src api/drizzle api/tsconfig.json api/drizzle.config.ts api/Dockerfile api/package.json api/package-lock.json compose.yaml)
-            if git diff --quiet "$EVENT_BEFORE" "$GITHUB_SHA" -- "${api_paths[@]}"; then
+            api_paths=(api/src api/drizzle api/tsconfig.json api/drizzle.config.ts api/Dockerfile compose.yaml)
+            api_runtime_changed='false'
+            if ! git diff --quiet "$EVENT_BEFORE" "$GITHUB_SHA" -- "${api_paths[@]}"; then
+              api_runtime_changed='true'
+            fi
+            before_api_runtime="$(git show "$EVENT_BEFORE:api/package.json" | jq -cS '{dependencies: (.dependencies // {}), optionalDependencies: (.optionalDependencies // {}), peerDependencies: (.peerDependencies // {}), overrides: (.overrides // {}), build: (.scripts.build // null)}')"
+            current_api_runtime="$(jq -cS '{dependencies: (.dependencies // {}), optionalDependencies: (.optionalDependencies // {}), peerDependencies: (.peerDependencies // {}), overrides: (.overrides // {}), build: (.scripts.build // null)}' api/package.json)"
+            if [[ "$before_api_runtime" != "$current_api_runtime" ]]; then
+              api_runtime_changed='true'
+            fi
+            if [[ "$api_runtime_changed" == 'false' ]]; then
               echo 'api_deploy_required=false' >> "$GITHUB_OUTPUT"
               echo 'Only web/runtime files changed; the deployed API revision may remain unchanged.' >> "$GITHUB_STEP_SUMMARY"
             else
