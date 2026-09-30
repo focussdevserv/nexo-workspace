@@ -6,6 +6,9 @@ declare module 'fastify' {
   interface FastifyInstance {
     authenticate: (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
   }
+  interface FastifyRequest {
+    rawBody?: Buffer;
+  }
 }
 
 declare module '@fastify/jwt' {

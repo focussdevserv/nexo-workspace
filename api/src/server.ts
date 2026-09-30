@@ -5,6 +5,7 @@ import helmet from '@fastify/helmet';
 import jwt from '@fastify/jwt';
 import rateLimit from '@fastify/rate-limit';
 import cookie from '@fastify/cookie';
+import rawBody from 'fastify-raw-body';
 import argon2 from 'argon2';
 import * as Sentry from '@sentry/node';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
@@ -32,6 +33,7 @@ import { checkPublicSite } from './monitoring/site-check.js';
 import { scrubSentryEvent } from './integrations/sentry-scrub.js';
 import { resolveActivityNotificationTitle } from './notifications.js';
 import { mapGoogleCalendarEvents } from './integrations/google-calendar.js';
+import { canApplyClicksignWebhookStatus, clicksignContractStatus, clicksignWebhookEnvelopeStatus, clicksignWebhookIsReady, parseClicksignWebhookEvent, verifyClicksignWebhook } from './integrations/clicksign-webhook.js';
 
 const env = z.object({
   PORT: z.coerce.number().int().positive().default(3001),
@@ -46,6 +48,7 @@ const env = z.object({
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   GOOGLE_REDIRECT_URI: z.preprocess((value) => value === '' ? undefined : value, z.string().url().optional()),
+  CLICKSIGN_WEBHOOK_SECRET: z.preprocess((value) => value === '' ? undefined : value, z.string().min(32).optional()),
 }).parse(process.env);
 
 Sentry.init({
@@ -62,12 +65,13 @@ await app.register(helmet);
 await app.register(cookie);
 await app.register(cors, { origin: env.APP_ORIGIN.split(',').map((origin) => z.string().url().parse(origin.trim())), credentials: true });
 await app.register(rateLimit, { max: 120, timeWindow: '1 minute' });
+await app.register(rawBody, { global: false, encoding: false });
 await app.register(jwt, { secret: env.JWT_SECRET, cookie: { cookieName: 'nexo_session', signed: false }, sign: { expiresIn: '8h' } });
 
 const allowedOrigins = env.APP_ORIGIN.split(',').map((origin) => z.string().url().parse(origin.trim()));
 let ownerAccountId: string | null = null;
 app.addHook('onRequest', async (request, reply) => {
-  if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method) || request.url.startsWith('/api/integrations/mercadopago/webhook') || request.url === '/api/integrations/waha/webhook' || request.url === '/api/integrations/n8n/actions') return;
+  if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method) || request.url.startsWith('/api/integrations/mercadopago/webhook') || request.url === '/api/integrations/waha/webhook' || request.url === '/api/integrations/n8n/actions' || request.url === '/api/integrations/clicksign/webhook') return;
   const origin = request.headers.origin;
   if (!origin || !allowedOrigins.includes(origin)) return reply.code(403).send({ error: 'origin_forbidden', message: 'Origem da solicitacao nao autorizada.' });
 });
@@ -884,7 +888,14 @@ app.post('/api/integrations/:provider/test', { preHandler: app.authenticate, con
       if (response.status === 401 || response.status === 403) return failed(`Clicksign respondeu com HTTP ${response.status}. Confira o token e o ambiente (sandbox ou produção).`);
       if (!response.ok) return failed(`Clicksign respondeu com HTTP ${response.status}. Confira o token e a URL do ambiente.`);
       const result = await response.json() as { data?: unknown[] };
-      return tested('connected', `Clicksign conectado. ${result.data?.length ?? 0} envelope(s) em rascunho consultado(s); nenhum contrato foi criado ou enviado.`);
+      const webhookEndpoint = new URL('/api/integrations/clicksign/webhook', allowedOrigins[0]).toString();
+      const webhookResponse = await fetch(`${baseUrl}/api/v3/webhooks`, { headers: { Authorization: token, Accept: 'application/vnd.api+json', 'Content-Type': 'application/vnd.api+json' }, signal: AbortSignal.timeout(12_000) });
+      if (!webhookResponse.ok) return tested('setup_required', `API da Clicksign conectada, mas não foi possível confirmar webhooks (HTTP ${webhookResponse.status}). Verifique a permissão de webhooks no token.`);
+      const webhookData = await webhookResponse.json() as { data?: unknown[] };
+      const requiredEvents = ['document_closed', 'auto_close', 'close', 'cancel', 'deadline', 'refusal', 'sign'];
+      if (!clicksignWebhookIsReady(webhookData.data, webhookEndpoint, requiredEvents)) return tested('setup_required', `Crie e ative um webhook Clicksign no endpoint ${webhookEndpoint}, com os eventos ${requiredEvents.join(', ')}.`);
+      if (!env.CLICKSIGN_WEBHOOK_SECRET) return tested('setup_required', 'Webhook Clicksign ativo, mas CLICKSIGN_WEBHOOK_SECRET ainda não está configurado no Coolify.');
+      return tested('connected', `Clicksign conectado; API confirmou ${result.data?.length ?? 0} envelope(s) em rascunho e o webhook ativo no endpoint correto. Nenhum contrato foi criado ou enviado.`);
     }
     if (provider === 'n8n') {
       const baseUrl = process.env.N8N_BASE_URL?.replace(/\/$/, '');
@@ -1796,6 +1807,50 @@ app.post('/api/monitoring/site-assets/:id/check', { preHandler: app.authenticate
   });
   if (!saved) return reply.code(404).send({ error: 'not_found', message: 'Ativo não encontrado.' });
   return { data: { ...saved.data, id: saved.id, createdAt: saved.createdAt, updatedAt: saved.updatedAt } };
+});
+
+app.post('/api/integrations/clicksign/webhook', { config: { rawBody: true, rateLimit: { max: 300, timeWindow: '1 minute' } } }, async (request, reply) => {
+  if (!env.CLICKSIGN_WEBHOOK_SECRET) return reply.code(503).send({ error: 'clicksign_webhook_not_configured' });
+  const rawBody = request.rawBody;
+  const signature = request.headers['content-hmac'];
+  if (!Buffer.isBuffer(rawBody) || !verifyClicksignWebhook(rawBody, env.CLICKSIGN_WEBHOOK_SECRET, Array.isArray(signature) ? signature[0] : signature)) return reply.code(401).send({ error: 'clicksign_webhook_unauthorized' });
+  const event = parseClicksignWebhookEvent(request.body);
+  if (!event) return reply.code(202).send({ received: true, matched: false });
+  const supportedEvents = new Set(['document_closed', 'auto_close', 'close', 'cancel', 'deadline', 'refusal', 'sign']);
+  if (!supportedEvents.has(event.name) || (!event.documentId && !event.envelopeId)) return reply.code(202).send({ received: true, matched: false });
+  const matches = await db.select().from(workspaceRecords).where(and(
+    eq(workspaceRecords.resource, 'contracts'), isNull(workspaceRecords.archivedAt),
+    or(
+      ...(event.envelopeId ? [sql`${workspaceRecords.data}->'clicksign'->>'envelopeId' = ${event.envelopeId}`] : []),
+      ...(event.documentId ? [sql`${workspaceRecords.data}->'clicksign'->>'documentId' = ${event.documentId}`] : []),
+    ),
+  )).limit(2);
+  if (matches.length !== 1) return reply.code(202).send({ received: true, matched: false });
+  const contract = matches[0]!;
+  const clicksign = contract.data.clicksign as Record<string, unknown> | undefined;
+  if (!clicksign || typeof clicksign.envelopeId !== 'string') return reply.code(202).send({ received: true, matched: false });
+  if (!await isIntegrationEnabled(contract.organizationId, 'clicksign')) return reply.code(503).send({ error: 'clicksign_integration_disabled' });
+  try {
+    const providerStatus = clicksignWebhookEnvelopeStatus(event);
+    const mapped = clicksignContractStatus(providerStatus);
+    if (!canApplyClicksignWebhookStatus(contract.data.status, mapped.status)) return reply.code(200).send({ received: true, matched: true, stale: true });
+    await db.transaction(async (tx) => {
+      const [changed] = await tx.update(workspaceRecords).set({
+        data: { ...contract.data, status: mapped.status, tone: mapped.tone, clicksign: { ...clicksign, status: providerStatus, webhookEvent: event.name, syncedAt: new Date().toISOString() } },
+        updatedAt: new Date(),
+      }).where(and(
+        eq(workspaceRecords.id, contract.id), eq(workspaceRecords.organizationId, contract.organizationId),
+        eq(workspaceRecords.resource, 'contracts'), isNull(workspaceRecords.archivedAt),
+        sql`${workspaceRecords.data}->>'status' IS DISTINCT FROM ${mapped.status}`,
+        sql`NOT (${workspaceRecords.data}->>'status' IN ('Assinado', 'Cancelado') AND ${workspaceRecords.data}->>'status' IS DISTINCT FROM ${mapped.status})`,
+      )).returning({ id: workspaceRecords.id });
+      if (changed) await tx.insert(activityEvents).values({ organizationId: contract.organizationId, actorUserId: null, entityType: 'contracts', entityId: contract.id, action: 'signature_status_synced', payload: { provider: 'clicksign', status: providerStatus, source: 'webhook' } });
+    });
+    return reply.code(200).send({ received: true, matched: true });
+  } catch (error) {
+    request.log.warn({ error: error instanceof Error ? error.message : 'unknown', envelopeId: clicksign.envelopeId }, 'Clicksign webhook status update failed');
+    return reply.code(503).send({ error: 'clicksign_webhook_processing_failed' });
+  }
 });
 
 const clicksignContractSendSchema = z.object({

@@ -449,3 +449,9 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 ## Status WAHA distingue API de telefone pareado - 30/09/2026
 - O teste de integração ainda confirma disponibilidade da API, mas só retorna `connected` quando pelo menos uma sessão vinculada ao workspace está em `WORKING`. QR pendente, sessões pausadas e workspace sem sessão ficam `setup_required` com mensagem específica; sessão WAHA não cadastrada no workspace não conta como pareada.
 - O cartão de Integrações passa a exibir `WhatsApp sem pareamento` quando o telefone não está conectado. Builds e 49 testes API passaram; teste de produção e novo deploy serão confirmados após publicação.
+
+## Clicksign: retorno automatico de assinatura - 30/09/2026
+- Adicionado endpoint publico `POST /api/integrations/clicksign/webhook`, que valida `Content-Hmac` nos bytes originais e atualiza o contrato apenas para eventos assinados. A atualizacao transacional evita atividades duplicadas e impede que eventos atrasados reabram contratos assinados/cancelados.
+- A tela Integra??es agora documenta `CLICKSIGN_WEBHOOK_SECRET`, a URL de callback e os eventos; o teste verifica no provedor se existe webhook ativo nessa URL com os sete eventos necessarios, sem criar contratos.
+- Configurados Fastify raw body e a variavel no Compose/.env. Testes cobrem HMAC, corpo alterado, mapeamento e configuracao ativa; build API e frontend passaram, 61 testes API passaram e `npm audit --omit=dev` encontrou zero vulnerabilidades.
+- Nao foi possivel testar recebimento real: o app/API publico ainda responde HTTP 503, nao ha deploy configurado no GitHub Actions e o Clicksign nao possui token/segredo disponivel neste ambiente. Nenhum contrato, evento Clicksign ou dado de negocio foi criado.
