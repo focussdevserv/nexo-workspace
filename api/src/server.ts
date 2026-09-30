@@ -1059,12 +1059,17 @@ app.post('/api/workspace/proposals/:id/send-email', { preHandler: app.authentica
 });
 
 app.post('/api/integrations/google/drive/upload', { bodyLimit: 12 * 1024 * 1024, preHandler: app.authenticate, config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {
-  const body = parseBody(z.object({ name: z.string().trim().min(1).max(180).refine((value) => !value.includes('/') && !value.includes('\\') && !/[\r\n\0]/.test(value)), mimeType: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9.+-]*\/[A-Za-z0-9][A-Za-z0-9.+-]*$/).max(120), data: z.string().max(11_185_000) }), request.body, reply);
+  const body = parseBody(z.object({ name: z.string().trim().min(1).max(180).refine((value) => !value.includes('/') && !value.includes('\\') && !/[\r\n\0]/.test(value)), mimeType: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9.+-]*\/[A-Za-z0-9][A-Za-z0-9.+-]*$/).max(120), data: z.string().max(11_185_000), taskId: z.string().uuid().optional() }), request.body, reply);
   if (!body) return;
   if (!await isIntegrationEnabled(request.user.organizationId, 'google')) return reply.code(409).send({ error: 'integration_disconnected', message: 'Google Workspace is disconnected. Reconnect it before uploading.' });
   let bytes: Buffer;
   try { bytes = decodeGoogleDriveUpload(body.data); }
   catch { return reply.code(413).send({ error: 'drive_upload_too_large_or_invalid', message: 'The file is empty, invalid, or larger than the 8 MiB limit.' }); }
+  const [task] = body.taskId ? await db.select().from(workspaceRecords).where(and(
+    eq(workspaceRecords.id, body.taskId), eq(workspaceRecords.organizationId, request.user.organizationId),
+    eq(workspaceRecords.resource, 'tasks'), isNull(workspaceRecords.archivedAt),
+  )).limit(1) : [];
+  if (body.taskId && !task) return reply.code(404).send({ error: 'task_not_found', message: 'A tarefa vinculada não existe neste workspace.' });
   try {
     const accessToken = await googleAccessToken(request.user.organizationId, request.user.sub);
     const boundary = `nexo_${randomUUID().replaceAll('-', '')}`;
@@ -1077,8 +1082,14 @@ app.post('/api/integrations/google/drive/upload', { bodyLimit: 12 * 1024 * 1024,
     const response = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,mimeType,size,webViewLink,createdTime', { method: 'POST', headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': `multipart/related; boundary=${boundary}` }, body: multipart, signal: AbortSignal.timeout(30_000) });
     const result = await response.json().catch(() => ({})) as { id?: string; name?: string; mimeType?: string; size?: string; webViewLink?: string; createdTime?: string };
     if (!response.ok || !result.id) return reply.code(response.status === 401 || response.status === 403 ? 409 : 502).send({ error: 'google_drive_upload_failed', message: 'Google Drive did not confirm the upload. Check the authorized account and Drive access.' });
-    await db.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'file', action: 'google_drive_uploaded', payload: { fileId: result.id, name: result.name || body.name, mimeType: result.mimeType || body.mimeType, size: Number(result.size || bytes.length) } });
-    return reply.code(201).send({ data: { id: result.id, name: result.name || body.name, mimeType: result.mimeType || body.mimeType, size: Number(result.size || bytes.length), url: result.webViewLink || `https://drive.google.com/open?id=${encodeURIComponent(result.id)}`, createdAt: result.createdTime || new Date().toISOString() } });
+    const uploadedFile = { id: result.id, name: result.name || body.name, mimeType: result.mimeType || body.mimeType, size: Number(result.size || bytes.length), url: result.webViewLink || `https://drive.google.com/open?id=${encodeURIComponent(result.id)}`, createdAt: result.createdTime || new Date().toISOString() };
+    if (task) {
+      const taskData = task.data as Record<string, unknown>;
+      const attachment = { driveFileId: uploadedFile.id, name: uploadedFile.name, mimeType: uploadedFile.mimeType, size: uploadedFile.size, url: uploadedFile.url, createdAt: uploadedFile.createdAt };
+      await db.update(workspaceRecords).set({ data: { ...taskData, attachment }, updatedAt: new Date() }).where(and(eq(workspaceRecords.id, task.id), eq(workspaceRecords.organizationId, request.user.organizationId)));
+    }
+    await db.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'file', entityId: task?.id, action: 'google_drive_uploaded', payload: { fileId: result.id, name: uploadedFile.name, mimeType: uploadedFile.mimeType, size: uploadedFile.size, taskId: task?.id } });
+    return reply.code(201).send({ data: uploadedFile });
   } catch (error) {
     const statusCode = (error as { statusCode?: number }).statusCode;
     if (statusCode === 409 || statusCode === 503) return reply.code(statusCode).send({ error: 'google_authorization_required', message: 'Authorize Google Workspace in Integrations to upload files to Drive.' });
