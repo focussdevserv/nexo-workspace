@@ -326,7 +326,7 @@ function providerStatus(status: string) {
 }
 
 app.get('/api/health', async (_request, reply) => {
-  try { await pool.query('select 1'); return { status: 'ok', database: 'connected', revision: process.env.NEXO_SOURCE_COMMIT || 'unknown', timestamp: new Date().toISOString() }; }
+  try { await pool.query('select 1'); return { status: 'ok', database: 'connected', revision: process.env.SOURCE_COMMIT || process.env.NEXO_SOURCE_COMMIT || 'unknown', timestamp: new Date().toISOString() }; }
   catch { return reply.code(503).send({ status: 'degraded', database: 'unavailable' }); }
 });
 

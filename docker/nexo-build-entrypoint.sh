@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-revision="${NEXO_SOURCE_COMMIT:-unknown}"
+revision="${SOURCE_COMMIT:-${NEXO_SOURCE_COMMIT:-unknown}}"
 case "$revision" in
   ''|*[!a-fA-F0-9-]*) revision="unknown" ;;
 esac
