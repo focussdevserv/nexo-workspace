@@ -55,3 +55,4 @@
 @media(max-width:760px){.ns-integration-card{min-height:160px}.ns-integration-actions{justify-content:flex-start;flex-wrap:wrap}}
 @media(max-width:900px){.ns-screen .ns-integration-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.integration-overview-stats{padding-left:0}}
 @media(max-width:600px){.ns-screen .ns-integration-grid{grid-template-columns:1fr}.integration-overview{padding:15px}.integration-overview-copy{align-items:flex-start;flex-wrap:wrap}.integration-overview-copy>div{flex-basis:calc(100% - 62px)}.integration-overview-copy>.ns-integration-refresh{margin-left:58px}.integration-overview-stats{grid-template-columns:1fr}.integration-overview-stats article{min-height:47px}}
+.integration-overview-stats article.has-attention>b{color:#a76714}
