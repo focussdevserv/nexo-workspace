@@ -455,3 +455,9 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - A tela Integra??es agora documenta `CLICKSIGN_WEBHOOK_SECRET`, a URL de callback e os eventos; o teste verifica no provedor se existe webhook ativo nessa URL com os sete eventos necessarios, sem criar contratos.
 - Configurados Fastify raw body e a variavel no Compose/.env. Testes cobrem HMAC, corpo alterado, mapeamento e configuracao ativa; build API e frontend passaram, 61 testes API passaram e `npm audit --omit=dev` encontrou zero vulnerabilidades.
 - Nao foi possivel testar recebimento real: o app/API publico ainda responde HTTP 503, nao ha deploy configurado no GitHub Actions e o Clicksign nao possui token/segredo disponivel neste ambiente. Nenhum contrato, evento Clicksign ou dado de negocio foi criado.
+
+## Propostas com mais de um serviço - 30/09/2026
+- O formulário de proposta agora permite selecionar vários serviços do catálogo, mostra seus preços cadastrados sem somar valores desconhecidos e deixa o investimento total editável. Escopos padrão selecionados são reunidos na proposta.
+- Ao aceitar, os itens selecionados são preservados no contrato e no projeto; o projeto combina checklists sem tarefas duplicadas e junta responsáveis cadastrados. Propostas antigas continuam compatíveis pelo campo `serviceId`.
+- Testes unitários cobrem seleção ordenada/deduplicada, composição de escopo/checklist/responsáveis e ausência de preços inventados. Build Vite, build da API, 63 testes API e `git diff --check` passaram.
+- Publicação ainda depende de configurar os secrets do Coolify no GitHub; a última checagem pública do app/API respondeu HTTP 503.
