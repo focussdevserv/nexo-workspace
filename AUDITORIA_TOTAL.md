@@ -403,3 +403,8 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - Detalhes de projeto e aprovacao agora descrevem persistencia no workspace/API, nao no navegador. O detalhe de arquivo distingue anexos armazenados no Drive de registros que contêm apenas metadados; nao sugere que o original foi enviado quando nao foi.
 - Build Vite e diff-check passaram. Nenhum dado foi escrito; commit e health de producao serao conferidos apos deploy.
 - Ajustados também os rótulos do cronômetro e dos comentários de projeto: esses registros usam a API do workspace e não armazenamento local do navegador.
+
+## Relatorios com agrupamento temporal correto e graficos de dados reais - 30/09/2026
+- Corrigido o periodo "Este ano" para iniciar em 1 de janeiro, e "Ultimos 90 dias" para usar a janela exata de 90 dias. Datas sem horario sao interpretadas no calendario local; leads, despesas, pagamentos, horas e conclusoes de projeto usam suas datas de referencia apropriadas.
+- O grafico agora agrega receita paga por mes, leads criados por semana/mes ou entregas concluidas por semana/mes. A aba Financeiro lista pagamentos e despesas do periodo; adicionados atualizar, carregamento, erro e vazio explicitos. Nada e preenchido com exemplos.
+- Cinco testes unitarios cobrem inicio/fim dos periodos, fusos de data-only, agrupamento anual e janela semanal de 90 dias. Build Vite passou. Deploy e bundle servido ainda precisam ser confirmados.
