@@ -32,6 +32,9 @@ jobs:
       - name: Install web dependencies
         run: npm ci
 
+      - name: Check frontend undefined references
+        run: npm run lint
+
       - name: Stamp web build revision
         if: ${{ github.ref == 'refs/heads/main' }}
         run: printf '{"revision":"%s"}\n' "$GITHUB_SHA" > public/nexo-build.json
