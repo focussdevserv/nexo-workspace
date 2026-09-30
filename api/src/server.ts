@@ -1674,6 +1674,46 @@ app.post('/api/integrations/clicksign/contracts/:id/sync', { preHandler: app.aut
   }
 });
 
+app.post('/api/workspace/finance-accounts/:id/transactions', { preHandler: app.authenticate }, async (request, reply) => {
+  const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
+  const body = z.object({
+    description: z.string().trim().min(1).max(240),
+    direction: z.enum(['Entrada', 'Saída']),
+    amount: z.number().finite().positive().max(1_000_000_000_000),
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
+      const [year, month, day] = value.split('-').map(Number);
+      const date = new Date(Date.UTC(year!, month! - 1, day!));
+      return date.getUTCFullYear() === year && date.getUTCMonth() === month! - 1 && date.getUTCDate() === day;
+    }),
+  }).safeParse(request.body);
+  if (!params.success || !body.success) return reply.code(400).send({ error: 'validation_error', message: 'Invalid account movement.' });
+  const result = await db.transaction(async (tx) => {
+    const [account] = await tx.select().from(workspaceRecords).where(and(
+      eq(workspaceRecords.id, params.data.id), eq(workspaceRecords.organizationId, request.user.organizationId),
+      eq(workspaceRecords.resource, 'finance-accounts'), isNull(workspaceRecords.archivedAt),
+    )).limit(1);
+    if (!account) return undefined;
+    const accountData = account.data as Record<string, unknown>;
+    const currentBalance = Number(accountData.balance) || 0;
+    const signedAmount = body.data.direction === 'Saída' ? -body.data.amount : body.data.amount;
+    const [updatedAccount] = await tx.update(workspaceRecords).set({
+      data: { ...accountData, balance: currentBalance + signedAmount }, updatedAt: new Date(),
+    }).where(and(eq(workspaceRecords.id, account.id), eq(workspaceRecords.organizationId, request.user.organizationId), isNull(workspaceRecords.archivedAt))).returning();
+    if (!updatedAccount) return undefined;
+    const [created] = await tx.insert(workspaceRecords).values({
+      organizationId: request.user.organizationId, createdBy: request.user.sub, resource: 'finance-transactions',
+      data: { ...body.data, accountId: account.id, accountName: String(accountData.name ?? ''), status: 'Registrada' },
+    }).returning();
+    await tx.insert(activityEvents).values([
+      { organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'finance-accounts', entityId: account.id, action: 'balance_adjusted', payload: { direction: body.data.direction, amount: body.data.amount } },
+      { organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'finance-transactions', entityId: created!.id, action: 'created', payload: { accountId: account.id, direction: body.data.direction, amount: body.data.amount } },
+    ]);
+    return { account: updatedAccount, transaction: created };
+  });
+  if (!result) return reply.code(404).send({ error: 'not_found', message: 'Finance account not found.' });
+  return reply.code(201).send({ data: { ...result.transaction!.data, id: result.transaction!.id, createdAt: result.transaction!.createdAt, updatedAt: result.transaction!.updatedAt }, account: { ...result.account!.data, id: result.account!.id, updatedAt: result.account!.updatedAt } });
+});
+
 app.post('/api/workspace/:resource', { preHandler: app.authenticate }, async (request, reply) => {
   const params = z.object({ resource: workspaceResource }).safeParse(request.params);
   const body = parseBody(z.object({ data: workspaceDataSchema }), request.body, reply);
@@ -1757,6 +1797,29 @@ app.patch('/api/workspace/:resource/:id', { preHandler: app.authenticate }, asyn
   if (params.data.resource === 'projects' && publishedStatuses.has(nextStatus) && !publishedStatuses.has(priorStatus)) await enqueueN8nEvent(request.user.organizationId, 'project.published', { ...updated.data, id: updated.id });
   if (params.data.resource === 'proposals' && nextStatus === 'aprovada' && priorStatus !== 'aprovada') await enqueueN8nEvent(request.user.organizationId, 'proposal.accepted', { ...updated.data, id: updated.id });
   return { data: { ...updated.data, id: updated.id, createdAt: updated.createdAt, updatedAt: updated.updatedAt } };
+});
+
+app.delete('/api/workspace/finance-accounts/:id', { preHandler: app.authenticate }, async (request, reply) => {
+  const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
+  if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Invalid finance account id.' });
+  const archived = await db.transaction(async (tx) => {
+    const [account] = await tx.update(workspaceRecords).set({ archivedAt: new Date(), updatedAt: new Date() }).where(and(
+      eq(workspaceRecords.id, params.data.id), eq(workspaceRecords.organizationId, request.user.organizationId),
+      eq(workspaceRecords.resource, 'finance-accounts'), isNull(workspaceRecords.archivedAt),
+    )).returning({ id: workspaceRecords.id });
+    if (!account) return undefined;
+    const transactions = await tx.update(workspaceRecords).set({ archivedAt: new Date(), updatedAt: new Date() }).where(and(
+      eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'finance-transactions'),
+      isNull(workspaceRecords.archivedAt), sql`${workspaceRecords.data}->>'accountId' = ${params.data.id}`,
+    )).returning({ id: workspaceRecords.id });
+    await tx.insert(activityEvents).values([
+      { organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'finance-accounts', entityId: account.id, action: 'archived', payload: { archivedTransactions: transactions.length } },
+      ...transactions.map((transaction) => ({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'finance-transactions', entityId: transaction.id, action: 'archived', payload: { accountId: account.id } })),
+    ]);
+    return account;
+  });
+  if (!archived) return reply.code(404).send({ error: 'not_found', message: 'Finance account not found.' });
+  return reply.code(204).send();
 });
 
 app.delete('/api/workspace/:resource/:id', { preHandler: app.authenticate }, async (request, reply) => {

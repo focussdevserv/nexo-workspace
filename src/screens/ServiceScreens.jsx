@@ -78,16 +78,17 @@ const pageInfo = {
 };
 
 function normalizePage(page) {
-  const raw = String(page ?? 'financeiro').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[\s/-]+/g, '_');
+  const raw = String(page ?? 'financeiro').trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[\s/-]+/g, '_');
   const aliases = { inbox: 'caixa_entrada', entrada: 'caixa_entrada', atendimento: 'caixa_entrada', 'caixa_de_entrada': 'caixa_entrada', 'sites_dominios_hospedagens': 'sites', operacoes: 'monitoramento', integracoes_e_automacoes: 'integracoes' };
   return aliases[raw] || (pageInfo[raw] ? raw : 'financeiro');
 }
 
 function money(value) { return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }); }
+function localDateInput(date = new Date()) { return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`; }
 function navigateTo(label) { window.dispatchEvent(new CustomEvent('nexo:navigate', { detail: label })); }
 
-function IconButton({ label, onClick, children }) {
-  return <button className="ns-icon-button" type="button" aria-label={label} title={label} onClick={onClick}>{children}</button>;
+function IconButton({ label, onClick, children, disabled = false }) {
+  return <button className="ns-icon-button" type="button" aria-label={label} title={label} onClick={onClick} disabled={disabled}>{children}</button>;
 }
 
 function PageHeading({ page, action, onAction }) {
@@ -110,14 +111,14 @@ function Status({ children }) {
   return <span className={`ns-status ${variant}`}><i />{children}</span>;
 }
 
-function DataTable({ columns, rows, search, onAction, empty = 'Nenhum registro encontrado.', statusIndex }) {
+function DataTable({ columns, rows, search, onAction, empty = 'Nenhum registro encontrado.', statusIndex, hideActions = false }) {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('Todos');
   const statusColumn = statusIndex ?? (rows[0]?.length ?? 1) - 1;
   const shown = rows.filter((row) => row.join(' ').toLowerCase().includes(query.toLowerCase()) && (filter === 'Todos' || row[statusColumn] === filter));
   return <section className="ns-panel ns-table-panel">
     <div className="ns-panel-toolbar"><div className="ns-filter-tabs">{['Todos', ...new Set(rows.map((row) => row[statusColumn]))].slice(0, 4).map((item) => <button className={filter === item ? 'selected' : ''} key={item} onClick={() => setFilter(item)} type="button">{item}</button>)}</div><div className="ns-tools">{search && <label className="ns-search"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar" /></label>}<IconButton label="Filtros" onClick={() => setFilter('Todos')}><Filter size={15} /></IconButton></div></div>
-      <div className="ns-table-scroll"><table className="ns-table"><thead><tr>{columns.map((column) => <th key={column}>{column}</th>)}<th aria-label="Ações" /></tr></thead><tbody>{shown.map((row, index) => <tr key={`${row[0]}-${index}`}>{row.slice(0, columns.length).map((cell, cellIndex) => <td key={cellIndex}>{cellIndex === statusColumn ? <Status>{cell}</Status> : cellIndex === 0 ? <b className="ns-row-id">{cell}</b> : cell}</td>)}<td><IconButton label="Mais opções" onClick={() => onAction(`Opções de ${row[0]}`)}><MoreHorizontal size={17} /></IconButton></td></tr>)}{shown.length === 0 && <tr><td className="ns-empty" colSpan={columns.length + 1}>{empty}</td></tr>}</tbody></table></div>
+      <div className="ns-table-scroll"><table className="ns-table"><thead><tr>{columns.map((column) => <th key={column}>{column}</th>)}{!hideActions && <th aria-label="Ações" />}</tr></thead><tbody>{shown.map((row, index) => <tr key={`${row[0]}-${index}`}>{row.slice(0, columns.length).map((cell, cellIndex) => <td key={cellIndex}>{cellIndex === statusColumn ? <Status>{cell}</Status> : cellIndex === 0 ? <b className="ns-row-id">{cell}</b> : cell}</td>)}{!hideActions && <td><IconButton label="Mais opções" onClick={() => onAction(`Opções de ${row[0]}`)}><MoreHorizontal size={17} /></IconButton></td>}</tr>)}{shown.length === 0 && <tr><td className="ns-empty" colSpan={columns.length + (hideActions ? 0 : 1)}>{empty}</td></tr>}</tbody></table></div>
     <div className="ns-table-footer"><span>Mostrando {shown.length} de {rows.length} registros</span><div><button type="button" aria-label="Página anterior"><ChevronLeft size={15} /></button><b>1</b><button type="button" aria-label="Próxima página"><ChevronRight size={15} /></button></div></div>
   </section>;
 }
@@ -142,29 +143,88 @@ function FinanceOverview({ notify, onCreate }) {
 }
 
 function Accounts({ notify }) {
-  const key = 'nexo.finance.accounts.v1';
-  const defaults = [];
-  const [accounts, setAccounts] = useStoredArray(key, defaults);
-  const [transactions, setTransactions] = useStoredArray('nexo.finance.transactions.v1', []);
+  const accountKey = 'nexo.finance.accounts.v1';
+  const [accounts, , refreshAccounts] = useStoredArray(accountKey, []);
+  const [transactions, , refreshTransactions] = useStoredArray('nexo.finance.transactions.v1', []);
   const [modal, setModal] = useState(false);
-  const [editing, setEditing] = useState(null);
+  const [entryModal, setEntryModal] = useState(false);
+  const [editing, setEditing] = useState('');
   const [selected, setSelected] = useState('Todas');
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
   const [draft, setDraft] = useState({ name: '', bank: '', balance: '0' });
-  const saveList = (next) => { setAccounts(next);  };
-  const saveTransactionList = (next) => { setTransactions(next);  };
-  const openNew = () => { setEditing(null); setDraft({ name: '', bank: '', balance: '0' }); setModal(true); };
-  const openEdit = (account) => { setEditing(account.name); setDraft({ name: account.name, bank: account.bank, balance: String(account.balance) }); setModal(true); };
-  const save = (event) => { event.preventDefault(); if (!draft.name.trim() || !draft.bank.trim()) return; const previous = accounts.find((account) => account.name === editing); const entry = { id: previous?.id || globalThis.crypto?.randomUUID?.() || `account-${Date.now()}`, name: draft.name.trim(), bank: draft.bank.trim(), balance: Number(draft.balance) || 0, color: previous?.color || 'green' }; saveList(editing ? accounts.map((account) => account.id === previous?.id ? entry : account) : [...accounts, entry]); setModal(false); notify(editing ? 'Conta atualizada no workspace.' : 'Conta cadastrada no workspace.'); };
-  const remove = (account) => { if (!window.confirm(`Remover ${account.name}? As movimentações registradas nela também serão removidas.`)) return; saveList(accounts.filter((a) => a.id !== account.id)); saveTransactionList(transactions.filter((row) => row.accountId !== account.id)); notify('Conta removida do workspace.'); };
-  const exportCsv = () => { const csv = [['Conta', 'Instituição', 'Saldo'], ...accounts.map((a) => [a.name, a.bank, a.balance])].map((row) => row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(';')).join('\n'); const url = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' })); const link = document.createElement('a'); link.href = url; link.download = 'nexo-contas.csv'; link.click(); URL.revokeObjectURL(url); notify('CSV das contas exportado.'); };
-  const visibleTransactions = transactions.filter((row) => selected === 'Todas' || row.accountName === selected);
+  const [transactionDraft, setTransactionDraft] = useState(() => ({ description: '', accountId: '', direction: 'Entrada', amount: '', date: localDateInput() }));
+  const todayInput = localDateInput;
+  const editingAccount = accounts.find((account) => String(account.id) === String(editing));
+  const openNew = () => { setEditing(''); setDraft({ name: '', bank: '', balance: '0' }); setSaveError(''); setModal(true); };
+  const openEdit = (account) => { setEditing(String(account.id)); setDraft({ name: account.name, bank: account.bank, balance: String(account.balance) }); setSaveError(''); setModal(true); };
+  const save = async (event) => {
+    event.preventDefault();
+    if (saving) return;
+    if (!draft.name.trim() || !draft.bank.trim() || !Number.isFinite(Number(draft.balance))) { setSaveError('Informe nome, instituição e um saldo válido.'); return; }
+    setSaving(true); setSaveError('');
+    const data = { name: draft.name.trim(), bank: draft.bank.trim(), balance: Number(draft.balance), color: editingAccount?.color || 'green' };
+    try {
+      if (editingAccount) await apiRequest(`/api/workspace/finance-accounts/${editingAccount.id}`, { method: 'PATCH', body: JSON.stringify({ data }) });
+      else await apiRequest('/api/workspace/finance-accounts', { method: 'POST', body: JSON.stringify({ data }) });
+      setModal(false);
+      try { await refreshAccounts(); notify(editingAccount ? 'Conta atualizada no workspace.' : 'Conta cadastrada no workspace.'); }
+      catch (error) { setSaveError(`A API confirmou o salvamento, mas a lista não atualizou. Recarregue os registros. ${error.message || ''}`); }
+    } catch (error) { setSaveError(error.message || 'Não foi possível salvar a conta.'); }
+    finally { setSaving(false); }
+  };
+  const remove = async (account) => {
+    if (saving || !window.confirm(`Remover ${account.name} e as movimentações vinculadas?`)) return;
+    setSaving(true); setSaveError('');
+    try {
+      await apiRequest(`/api/workspace/finance-accounts/${account.id}`, { method: 'DELETE' });
+      try { await Promise.all([refreshAccounts(), refreshTransactions()]); notify('Conta e movimentações vinculadas removidas do workspace.'); }
+      catch (error) { setSaveError(`A API confirmou a remoção, mas as listas não atualizaram. Recarregue os registros. ${error.message || ''}`); }
+    } catch (error) { setSaveError(error.message || 'Não foi possível remover a conta.'); }
+    finally { setSaving(false); }
+  };
+  const addTransaction = async (event) => {
+    event.preventDefault();
+    if (saving) return;
+    const account = accounts.find((item) => String(item.id) === String(transactionDraft.accountId));
+    const amount = Number(transactionDraft.amount);
+    if (!account || !transactionDraft.description.trim() || !transactionDraft.date || !Number.isFinite(amount) || amount <= 0) { setSaveError('Preencha descrição, conta, data e valor válidos.'); return; }
+    setSaving(true); setSaveError('');
+    const data = { description: transactionDraft.description.trim(), direction: transactionDraft.direction, amount, date: transactionDraft.date };
+    try {
+      await apiRequest(`/api/workspace/finance-accounts/${account.id}/transactions`, { method: 'POST', body: JSON.stringify(data) });
+      setEntryModal(false); setTransactionDraft({ description: '', accountId: account.id, direction: 'Entrada', amount: '', date: todayInput() });
+      try { await Promise.all([refreshAccounts(), refreshTransactions()]); notify('Movimentação registrada no workspace.'); }
+      catch (error) { setSaveError(`A API confirmou o registro, mas a lista não atualizou. Recarregue os registros. ${error.message || ''}`); }
+    } catch (error) { setSaveError(error.message || 'Não foi possível registrar a movimentação.'); }
+    finally { setSaving(false); }
+  };
+  const exportCsv = () => {
+    const rows = [['Conta', 'Instituição', 'Descrição', 'Tipo', 'Data', 'Valor', 'Status'], ...visibleTransactions.map((row) => {
+      const account = accounts.find((item) => String(item.id) === String(row.accountId));
+      const date = row.date ? new Date(`${String(row.date).slice(0, 10)}T12:00:00`).toLocaleDateString('pt-BR') : '';
+      const value = (row.direction === 'Saída' ? -1 : 1) * Math.abs(Number(row.amount) || 0);
+      return [account?.name || row.accountName || '', account?.bank || '', row.description || '', row.direction || '', date, value.toFixed(2), row.status || 'Registrada'];
+    })];
+    const csv = rows.map((row) => row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(';')).join('\n');
+    const url = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }));
+    const link = document.createElement('a'); link.href = url; link.download = 'nexo-movimentacoes.csv'; link.click(); URL.revokeObjectURL(url); notify('CSV das movimentações exportado.');
+  };
+  const visibleTransactions = transactions.filter((row) => selected === 'Todas' || String(row.accountId) === String(selected));
   const total = accounts.reduce((sum, account) => sum + Number(account.balance), 0);
-  const actionRows = visibleTransactions.map((row) => [row.description, row.accountName, row.date ? new Date(row.date).toLocaleDateString('pt-BR') : '', money(Number(row.amount)), row.status || 'Registrada']);
-  return <><div className="ns-metrics ns-metrics-three"><Metric label="Saldo total registrado" value={money(total)} note={`${accounts.length} contas`} icon={Wallet} /><Metric label="Contas conectadas" value="0" note="Nenhum provedor conectado" icon={Link2} /><Metric label="Movimentações" value={String(transactions.length).padStart(2, '0')} note="Registros do workspace" icon={Activity} /></div><div className="ns-section-heading"><div><h2>Suas contas</h2><p>Cadastre contas e acompanhe saldos e movimentações.</p></div><button className="ns-primary" type="button" onClick={openNew}><Plus size={15} />Adicionar conta</button></div><div className="ns-account-grid">{accounts.map((account) => <article className="ns-account-card" key={account.name}><div className="ns-account-head"><span className={`ns-bank-icon ${account.color}`}><Wallet size={19} /></span><div className="ns-account-actions"><IconButton label={`Editar ${account.name}`} onClick={() => openEdit(account)}><Pencil size={15} /></IconButton><IconButton label={`Remover ${account.name}`} onClick={() => remove(account)}><Trash2 size={15} /></IconButton></div></div><small>{account.name}</small><b>{money(Number(account.balance))}</b><span>{account.bank}</span><button type="button" onClick={() => setSelected(account.name)}>Ver movimentações <ChevronRight size={15} /></button></article>)}<button type="button" className="ns-add-account" onClick={openNew}><span><Plus size={18} /></span><b>Adicionar conta</b><small>Registre uma conta e saldo inicial</small></button></div><div className="ns-section-heading"><div><h2>Movimentações recentes</h2><p>{selected === 'Todas' ? 'Entradas e saídas das contas' : `Movimentações de ${selected}`} <button className="ns-link-button" onClick={() => setSelected('Todas')}>Ver todas</button></p></div><button className="ns-text-button" type="button" onClick={exportCsv}>Exportar <ExternalLink size={14} /></button></div><DataTable columns={['Lançamento', 'Conta', 'Data', 'Valor', 'Status']} rows={actionRows} search onAction={notify} />
-    <div className="ns-info-note"><ShieldCheck size={17} /><span>O saldo é informado manualmente; esta tela não se conecta a bancos nem sincroniza transações.</span></div>
-    {modal && <div className="ns-integration-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setModal(false); }}><form className="ns-integration-modal" onSubmit={save}><header><span className="ns-integration-logo mercado"><Wallet size={18} /></span><div><h2>{editing ? 'Editar conta' : 'Adicionar conta'}</h2><p>Informe os dados para o controle local.</p></div><button type="button" aria-label="Fechar" onClick={() => setModal(false)}><X size={17} /></button></header><div className="ns-integration-fields"><label>Nome da conta<input autoFocus required value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="Ex.: Conta principal" /></label><label>Banco ou instituição<input required value={draft.bank} onChange={(e) => setDraft({ ...draft, bank: e.target.value })} placeholder="Ex.: Nubank" /></label><label>Saldo inicial<input type="number" step="0.01" value={draft.balance} onChange={(e) => setDraft({ ...draft, balance: e.target.value })} /></label></div><div className="ns-integration-modal-note"><ShieldCheck size={15} />Nenhuma conexão bancária é iniciada por este formulário.</div><footer><button className="ns-secondary" type="button" onClick={() => setModal(false)}>Cancelar</button><button className="ns-primary" type="submit"><Check size={14} />Salvar conta</button></footer></form></div>}</>;
+  const actionRows = visibleTransactions.map((row) => [row.description || 'Movimentação', row.accountName || 'Conta não informada', row.date ? new Date(`${String(row.date).slice(0, 10)}T12:00:00`).toLocaleDateString('pt-BR') : '', money((row.direction === 'Saída' ? -1 : 1) * Math.abs(Number(row.amount) || 0)), row.status || 'Registrada']);
+  return <>
+    <div className="ns-metrics ns-metrics-three"><Metric label="Saldo total registrado" value={money(total)} note={`${accounts.length} contas`} icon={Wallet} /><Metric label="Contas conectadas" value="0" note="Nenhum provedor conectado" icon={Link2} /><Metric label="Movimentações" value={String(transactions.length).padStart(2, '0')} note="Registros do workspace" icon={Activity} /></div>
+    {saveError && <div className="dashboard-data-error" role="alert">{saveError}<button type="button" onClick={() => setSaveError('')}>Fechar</button></div>}
+    <div className="ns-section-heading"><div><h2>Suas contas</h2><p>Cadastre contas e acompanhe saldos e movimentações.</p></div><button className="ns-primary" type="button" disabled={saving} onClick={openNew}><Plus size={15} />Adicionar conta</button></div>
+    <div className="ns-account-grid">{accounts.map((account) => <article className="ns-account-card" key={account.id}><div className="ns-account-head"><span className={`ns-bank-icon ${account.color}`}><Wallet size={19} /></span><div className="ns-account-actions"><IconButton label={`Editar ${account.name}`} disabled={saving} onClick={() => openEdit(account)}><Pencil size={15} /></IconButton><IconButton label={`Remover ${account.name}`} disabled={saving} onClick={() => remove(account)}><Trash2 size={15} /></IconButton></div></div><small>{account.name}</small><b>{money(Number(account.balance))}</b><span>{account.bank}</span><button type="button" disabled={saving} onClick={() => setSelected(String(account.id))}>Ver movimentações <ChevronRight size={15} /></button></article>)}<button type="button" className="ns-add-account" disabled={saving} onClick={openNew}><span><Plus size={18} /></span><b>Adicionar conta</b><small>Registre uma conta e saldo inicial</small></button></div>
+    <div className="ns-section-heading"><div><h2>Movimentações recentes</h2><p>{selected === 'Todas' ? 'Entradas e saídas das contas' : `Movimentações de ${accounts.find((account) => String(account.id) === String(selected))?.name || 'conta selecionada'}`} <button className="ns-link-button" type="button" onClick={() => setSelected('Todas')}>Ver todas</button></p></div><div className="ns-account-actions"><button className="ns-secondary" type="button" disabled={saving || accounts.length === 0} onClick={() => { setSaveError(''); setTransactionDraft({ description: '', accountId: selected !== 'Todas' ? selected : String(accounts[0]?.id || ''), direction: 'Entrada', amount: '', date: todayInput() }); setEntryModal(true); }}><Plus size={14} />Registrar movimentação</button><button className="ns-text-button" type="button" onClick={exportCsv}>Exportar <ExternalLink size={14} /></button></div></div>
+    <DataTable columns={['Lançamento', 'Conta', 'Data', 'Valor', 'Status']} rows={actionRows} search hideActions />
+    <div className="ns-info-note"><ShieldCheck size={17} /><span>Os saldos são informados manualmente; esta tela não se conecta a bancos nem sincroniza transações.</span></div>
+    {modal && <div className="ns-integration-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setModal(false); }}><form className="ns-integration-modal" aria-busy={saving} onSubmit={save}><header><span className="ns-integration-logo mercado"><Wallet size={18} /></span><div><h2>{editingAccount ? 'Editar conta' : 'Adicionar conta'}</h2><p>Controle interno manual, sem conexão bancária.</p></div><button type="button" aria-label="Fechar" disabled={saving} onClick={() => setModal(false)}><X size={17} /></button></header><div className="ns-integration-fields"><label>Nome da conta<input autoFocus required disabled={saving} value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="Ex.: Conta principal" /></label><label>Banco ou instituição<input required disabled={saving} value={draft.bank} onChange={(event) => setDraft({ ...draft, bank: event.target.value })} placeholder="Ex.: Nubank" /></label><label>Saldo inicial<input type="number" step="0.01" disabled={saving} value={draft.balance} onChange={(event) => setDraft({ ...draft, balance: event.target.value })} /></label></div>{saveError && <div className="dashboard-data-error" role="alert">{saveError}</div>}<footer><button className="ns-secondary" type="button" disabled={saving} onClick={() => setModal(false)}>Cancelar</button><button className="ns-primary" type="submit" disabled={saving}><Check size={14} />{saving ? 'Salvando...' : 'Salvar conta'}</button></footer></form></div>}
+    {entryModal && <div className="ns-integration-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setEntryModal(false); }}><form className="ns-integration-modal" aria-busy={saving} onSubmit={addTransaction}><header><span className="ns-integration-logo mercado"><Activity size={18} /></span><div><h2>Registrar movimentação</h2><p>Lançamento manual no controle da conta.</p></div><button type="button" aria-label="Fechar" disabled={saving} onClick={() => setEntryModal(false)}><X size={17} /></button></header><div className="ns-integration-fields"><label>Descrição<input autoFocus required disabled={saving} value={transactionDraft.description} onChange={(event) => setTransactionDraft({ ...transactionDraft, description: event.target.value })} placeholder="Ex.: Pagamento de hospedagem" /></label><label>Conta<select required disabled={saving} value={transactionDraft.accountId} onChange={(event) => setTransactionDraft({ ...transactionDraft, accountId: event.target.value })}><option value="">Selecione uma conta</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name} - {account.bank}</option>)}</select></label><label>Tipo<select disabled={saving} value={transactionDraft.direction} onChange={(event) => setTransactionDraft({ ...transactionDraft, direction: event.target.value })}><option value="Entrada">Entrada</option><option value={'Saída'}>Sa&iacute;da</option></select></label><label>Data<input required disabled={saving} type="date" value={transactionDraft.date} onChange={(event) => setTransactionDraft({ ...transactionDraft, date: event.target.value })} /></label><label>Valor<input required disabled={saving} type="number" min="0.01" step="0.01" value={transactionDraft.amount} onChange={(event) => setTransactionDraft({ ...transactionDraft, amount: event.target.value })} placeholder="0,00" /></label></div>{saveError && <div className="dashboard-data-error" role="alert">{saveError}</div>}<div className="ns-integration-modal-note"><ShieldCheck size={15} />A movimentação fica salva no workspace, não importa extrato bancário.</div><footer><button className="ns-secondary" type="button" disabled={saving} onClick={() => setEntryModal(false)}>Cancelar</button><button className="ns-primary" type="submit" disabled={saving || !accounts.length}><Check size={14} />{saving ? 'Salvando...' : 'Registrar'}</button></footer></form></div>}
+  </>;
 }
-
 function FinanceList({ page, notify }) {
   const titles = { receitas: ['Lançamento', 'Cliente / descrição', 'Data', 'Valor', 'Status'], despesas: ['Lançamento', 'Fornecedor / categoria', 'Data', 'Valor', 'Status'] };
   const resourceKey = page === 'despesas' ? 'nexo.finance.despesas.v1' : 'nexo.finance.receitas.v1';
