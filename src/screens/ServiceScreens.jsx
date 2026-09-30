@@ -470,7 +470,7 @@ function Integrations({ notify }) {
     Clicksign: { provider: 'clicksign', vars: ['CLICKSIGN_API_TOKEN', 'CLICKSIGN_API_BASE_URL'], note: 'Use o token da API Clicksign. Comece pelo sandbox; o teste apenas lista envelopes e não cria nem envia contratos.' },
     GitHub: { provider: 'github', vars: ['GITHUB_TOKEN'], note: 'O teste consulta a identidade do token. Use um token com o menor conjunto de permissões necessário.' },
     n8n: { provider: 'n8n', vars: ['N8N_BASE_URL', 'N8N_API_KEY'], note: 'Gere uma API key em Configurações > n8n API no n8n e salve em N8N_API_KEY no Coolify. O teste consulta a API autenticada de workflows, sem criar, ativar ou executar nenhum fluxo.' },
-    Sentry: { provider: 'sentry', vars: ['SENTRY_DSN'], note: 'O teste não envia um evento artificial ao Sentry, para não criar um incidente falso no projeto.' },
+    Sentry: { provider: 'sentry', vars: ['SENTRY_DSN', 'VITE_SENTRY_DSN'], note: 'Configure o DSN no servidor (API) e no build web. Captura erros sem dados pessoais; o teste não cria um incidente artificial.' },
   };
   const testConnection = async () => {
     if (!configuring) return;

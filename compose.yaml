@@ -51,6 +51,7 @@ services:
       dockerfile: Dockerfile
       args:
         VITE_MERCADOPAGO_PUBLIC_KEY: ${VITE_MERCADOPAGO_PUBLIC_KEY:-}
+        VITE_SENTRY_DSN: ${VITE_SENTRY_DSN:-}
     restart: unless-stopped
     expose:
       - "80"

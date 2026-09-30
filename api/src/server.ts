@@ -6,6 +6,7 @@ import jwt from '@fastify/jwt';
 import rateLimit from '@fastify/rate-limit';
 import cookie from '@fastify/cookie';
 import argon2 from 'argon2';
+import * as Sentry from '@sentry/node';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { resolve } from 'node:path';
 import { and, asc, desc, eq, ilike, isNull, lte, or, sql } from 'drizzle-orm';
@@ -23,6 +24,7 @@ import { clicksignBaseUrl, createClicksignEnvelope, getClicksignEnvelope, notify
 import { mapN8nCollections, n8nAutomationTemplates, buildN8nAutomationWorkflow, n8nApiKeyFailureMessage, n8nApiValidationMessage, type N8nAutomationTemplateId } from './integrations/n8n.js';
 import { isUnverifiedContractTransition, requiresExternalSignature } from './contracts/status.js';
 import { checkPublicSite } from './monitoring/site-check.js';
+import { scrubSentryEvent } from './integrations/sentry-scrub.js';
 
 const env = z.object({
   PORT: z.coerce.number().int().positive().default(3001),
@@ -38,6 +40,15 @@ const env = z.object({
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   GOOGLE_REDIRECT_URI: z.preprocess((value) => value === '' ? undefined : value, z.string().url().optional()),
 }).parse(process.env);
+
+Sentry.init({
+  dsn: process.env.SENTRY_DSN,
+  enabled: Boolean(process.env.SENTRY_DSN),
+  environment: process.env.NODE_ENV || 'development',
+  includeLocalVariables: false,
+  tracesSampleRate: 0,
+  beforeSend: (event) => scrubSentryEvent(event),
+});
 
 const app = Fastify({ logger: true, bodyLimit: 1024 * 1024, trustProxy: process.env.TRUST_PROXY === 'true' });
 await app.register(helmet);
@@ -1822,9 +1833,12 @@ async function processOverdueBillingEvents() {
   }
 }
 
-app.setErrorHandler((error, _request, reply) => {
+app.setErrorHandler((error, request, reply) => {
   app.log.error(error);
   if (reply.sent) return;
+  if (reply.statusCode >= 500 && process.env.SENTRY_DSN) {
+    Sentry.captureException(error, { extra: { method: request.method, route: request.routeOptions.url || 'unmatched', statusCode: reply.statusCode } });
+  }
   if (error instanceof Error && 'code' in error && error.code === '23505') return reply.code(409).send({ error: 'conflict', message: 'Já existe um registro com esses dados.' });
   return reply.code(500).send({ error: 'internal_error', message: 'Não foi possível concluir a solicitação.' });
 });

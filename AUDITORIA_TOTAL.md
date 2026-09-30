@@ -364,3 +364,9 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - Pendente: configurar CLICKSIGN_API_TOKEN no Coolify e validar com envelope de sandbox; sem credencial nao foi criada assinatura real. O status atualiza sob demanda, sem webhook Clicksign nesta versao. O bundle principal segue acima de 500 kB.
 
 - Ajuste de deploy: a API recebe CLICKSIGN_API_TOKEN e CLICKSIGN_API_BASE_URL explicitamente pelo compose.yaml; sem isso, variaveis salvas no Coolify nao chegariam ao container. O token permanece vazio por padrao e o ambiente padrao continua sandbox.
+
+## Captura de erros Sentry no frontend e API - 30/09/2026
+- O SDK oficial captura erros de renderizacao React e erros nao tratados HTTP 500 da API. Os eventos removem identificacao de usuario, corpo/cookies/cabecalhos/consulta da requisicao e valores de breadcrumbs; nao habilitamos traces nem dados pessoais.
+- O card de Integracoes informa que SENTRY_DSN (API) e VITE_SENTRY_DSN (build web) sao ambos necessarios. O teste nao fabrica incidente; sem DSNs configurados, a ingestao ainda nao pode ser comprovada em producao.
+- A agenda redesenhada ja esta em producao desde os commits 40e95d8 e 7c6ffb1: dia/semana/mes, busca, resumo, mini calendario, lista futura, persistencia e sincronizacao explicita com Calendar/Meet. Este deploy nao altera a agenda.
+- Validacao local: build Vite, build TypeScript da API, 36 testes API, auditoria npm de dependencias de producao (0 vulnerabilidades) e git diff --check passaram. O bundle web ainda excede 500 kB.
