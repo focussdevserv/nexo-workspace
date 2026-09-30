@@ -60,7 +60,7 @@ jobs:
             exit 0
           fi
           git fetch --no-tags --depth=1 origin "$EVENT_BEFORE"
-          runtime_paths=(src api/src api/drizzle api/tsconfig.json api/drizzle.config.ts public index.html Dockerfile api/Dockerfile compose.yaml nginx.conf .dockerignore package.json package-lock.json api/package.json api/package-lock.json .github/workflows/validate-and-deploy.yml)
+          runtime_paths=(src api/src api/drizzle api/tsconfig.json api/drizzle.config.ts public index.html Dockerfile api/Dockerfile compose.yaml nginx.conf .dockerignore package.json package-lock.json api/package.json api/package-lock.json)
           if git diff --quiet "$EVENT_BEFORE" "$GITHUB_SHA" -- "${runtime_paths[@]}"; then
             echo 'deploy_required=false' >> "$GITHUB_OUTPUT"
             echo 'api_deploy_required=false' >> "$GITHUB_OUTPUT"
