@@ -4,7 +4,25 @@
 **Escopo:** navegação, telas, persistência, API, integrações, fluxos entre módulos, dados relacionais, responsividade e pontos de experiência do usuário.  
 **Método:** leitura do frontend e da API, buscas por ações simuladas/estado local, build de produção do frontend e compilação TypeScript da API. Health check do ambiente publicado. Não criei registros artificiais nem disparei mensagens, pagamentos ou convites reais.
 
-## Resultado executivo
+## Estado atual validado - 30/09/2026
+
+Leitura autenticada do runtime e verificações de produção; este painel prevalece sobre observações históricas mais abaixo no documento.
+
+- **Mercado Pago:** credencial e teste conectados. A conta lista meios de pagamento; não foi criada cobrança real para teste.
+- **WAHA:** API conectada e sessão existente em `SCAN_QR_CODE`; o endpoint autenticado entregou uma imagem QR PNG sem cache. Falta o usuário escanear com o telefone. Nenhuma mensagem foi enviada/recebida nesta validação. **Evolution API:** sem credenciais.
+- **Resend:** API conectada, remetente compatível e domínio `focussdev.space` verificado (1/1). Nenhum e-mail enviado no teste.
+- **Google Workspace:** OAuth identifica `emprisefocussdev@gmail.com`, mas a leitura de `primary/events` retorna 403. A tela oferece reautorizar `calendar.events`; falta consentimento do usuário. Gmail e Drive têm fluxos implementados, mas não foram exercitados por envio/upload real.
+- **n8n:** API conectada; 6 de 6 workflows ativos (`lead`, proposta aprovada, pagamento confirmado, pagamento vencido, projeto entregue e ticket). Última leitura: 0 execuções e fila persistente vazia. Não foram fabricados eventos para teste.
+- **GitHub:** painel consulta commits/PRs/deploys sob demanda, mas `GITHUB_TOKEN` não está configurado; sincronização remota ainda não foi validada.
+- **Clicksign:** fluxo de envelope implementado, mas `CLICKSIGN_API_TOKEN` ausente; sem contrato enviado.
+- **Sentry:** SDKs e remoção de dados sensíveis implementados, mas faltam `SENTRY_DSN` e `VITE_SENTRY_DSN`; ingestão ainda não validada.
+- **Catálogo e documentos:** 88 produtos/serviços com modelos de proposta/contrato; preços continuam vazios conforme pedido, sem valores inventados. A aceitação da proposta cria contrato, projeto e tarefas atomicamente.
+- **Publicação:** após as últimas mudanças, app, API/PostgreSQL, Coolify health routes do n8n responderam HTTP 200. As compilações e 47 testes API passaram na última fatia Google.
+
+**Pendências operacionais:** escanear QR no WhatsApp; consentir novamente os escopos Google; inserir os tokens GitHub e Clicksign e os DSNs Sentry no Coolify. Não iniciar ações que enviem mensagens/e-mails, cobrem clientes ou criem eventos sem autorização explícita e dados comerciais reais.
+
+## Snapshot histórico inicial (24/09/2026)
+
 
 O Nexo já tem uma base real: login restrito ao proprietário, API com banco PostgreSQL, CRUD genérico para registros do workspace, notificações persistidas, cobrança e assinatura pelo Mercado Pago, sessão/QR de WhatsApp pelo WAHA, OAuth seguro do Google, portal do cliente com link assinado e deploy pelo Coolify.
 
