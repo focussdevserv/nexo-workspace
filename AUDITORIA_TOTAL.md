@@ -398,3 +398,7 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - Removidos os componentes legados de assinaturas/cobrancas baseados em `localStorage`, links `.local` e atualizacao manual de pagamento. O roteamento ativo ja usa `PaymentConsole` para pedidos e assinaturas do Mercado Pago; receitas, despesas e contas usam os registros autenticados do workspace.
 - A tela Resumo Financeiro deixou de referenciar o fallback removido e continua carregando receitas/despesas pela API e cobrancas por `/api/billing/orders`. Rotulos que diziam "local" foram ajustados para refletir os registros do workspace.
 - Nenhum registro foi apagado ou criado em producao. Build Vite, build TypeScript da API, 37 testes da API e `git diff --check` passaram. Apos publicar, site/API serao verificados; isso nao substitui um pagamento de ponta a ponta autorizado.
+
+## Remocao de mensagens inconsistentes sobre persistencia - 30/09/2026
+- Detalhes de projeto e aprovacao agora descrevem persistencia no workspace/API, nao no navegador. O detalhe de arquivo distingue anexos armazenados no Drive de registros que contêm apenas metadados; nao sugere que o original foi enviado quando nao foi.
+- Build Vite e diff-check passaram. Nenhum dado foi escrito; commit e health de producao serao conferidos apos deploy.
