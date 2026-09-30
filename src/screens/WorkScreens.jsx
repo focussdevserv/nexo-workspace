@@ -73,7 +73,10 @@ function AgendaCalendar({ events, selectedDate, setSelectedDate, agendaView, set
   const query = agendaQuery.trim().toLocaleLowerCase('pt-BR');
   const filteredEvents = events.filter((event) => `${event.title || ''} ${event.detail || ''} ${event.client || ''} ${event.people || ''}`.toLocaleLowerCase('pt-BR').includes(query));
   const sameDay = (a, b) => toLocalDateInput(a) === toLocalDateInput(b);
-  const sortEvents = (items) => [...items].sort((a, b) => (a.time || '99:99').localeCompare(b.time || '99:99'));
+  const sortEvents = (items) => [...items].sort((a, b) => {
+    const dateOrder = String(a.date || '').localeCompare(String(b.date || ''));
+    return dateOrder || (a.time || '99:99').localeCompare(b.time || '99:99');
+  });
   const dayEvents = sortEvents(filteredEvents.filter((event) => event.date === selectedKey));
   const movePeriod = (direction) => {
     const next = new Date(selectedDate);
@@ -168,14 +171,30 @@ function WorkScreen({ page }) {
   const [hoursPeriod, setHoursPeriod] = useState('Esta semana');
   const [fileQuery, setFileQuery] = useState('');
   const [fileType, setFileType] = useState('Todos');
-  const [selectedDate, setSelectedDate] = useState(() => new Date());
-  const [agendaView, setAgendaView] = useState('Dia');
+  const [selectedDate, setSelectedDate] = useState(() => {
+    const value = new URLSearchParams(window.location.search).get('agendaDate') || '';
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+    if (!match) return new Date();
+    const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+    return toLocalDateInput(date) === value ? date : new Date();
+  });
+  const [agendaView, setAgendaView] = useState(() => {
+    const value = new URLSearchParams(window.location.search).get('agendaView');
+    return ['Dia', 'Semana', 'Mês'].includes(value) ? value : 'Dia';
+  });
   const [agendaQuery, setAgendaQuery] = useState('');
   const [googleCalendarEvents, setGoogleCalendarEvents] = useState([]);
   const [calendarSyncBusy, setCalendarSyncBusy] = useState(false);
   const [calendarSyncError, setCalendarSyncError] = useState('');
   const [calendarSyncedAt, setCalendarSyncedAt] = useState('');
   const [calendarSyncRevision, setCalendarSyncRevision] = useState(0);
+  useEffect(() => {
+    if (key !== 'agenda') return;
+    const params = new URLSearchParams(window.location.search);
+    params.set('agendaDate', toLocalDateInput(selectedDate));
+    params.set('agendaView', agendaView);
+    window.history.replaceState(window.history.state, '', `${window.location.pathname}?${params.toString()}${window.location.hash}`);
+  }, [key, selectedDate, agendaView]);
   const [composer, setComposer] = useState('');
   const [savingAgenda, setSavingAgenda] = useState(false);
   const uploadRef = useRef(null);
