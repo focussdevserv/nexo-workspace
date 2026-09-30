@@ -30,11 +30,11 @@ Sentry.init({
   },
 });
 
-function AppErrorFallback({ resetError }) {
+function AppErrorFallback() {
   return <main role="alert" style={{ maxWidth: 520, margin: '12vh auto', padding: 24, fontFamily: 'system-ui, sans-serif', color: '#18212f' }}>
     <h1>Não foi possível abrir esta tela</h1>
-    <p>O erro foi registrado sem dados pessoais. Tente carregar a tela novamente.</p>
-    <button type="button" onClick={resetError}>Tentar novamente</button>
+    <p>Recarregue o app. Se o problema continuar, tente novamente em alguns instantes.</p>
+    <button type="button" onClick={() => window.location.reload()}>Recarregar o app</button>
   </main>;
 }
 
