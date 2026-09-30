@@ -377,3 +377,9 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - O botao do catalogo agora completa somente campos vazios usando os modelos fornecidos, preserva nomes, precos, custos, prazos e textos personalizados, e nao cria itens duplicados. Continua sem inventar valores comerciais.
 - Testes cobrem 88 templates, preservacao de precos/textos e ausencia de duplicatas. Validacao local: build Vite, build TypeScript, 34 testes API e diff-check passaram.
 - Apos o deploy, a API autenticada reparou os 88 registros existentes com templates de proposta e contrato e checklists. Verificacao posterior confirmou 88/88 em cada campo, os 10 planos mensais marcados com ciclo mensal e os 88 precos ainda vazios; nenhum preco foi inventado, nenhum registro foi criado ou duplicado.
+
+## Revalidacao autenticada das integracoes - 30/09/2026
+- Testes de leitura pela API autenticada: Mercado Pago (meios de pagamento), WAHA (API/sessoes), Resend (dominios), Google (perfil OAuth) e n8n (API) responderam conectados. Nenhuma cobranca, mensagem, proposta, contrato, email ou evento foi criado.
+- Evolution, Clicksign e GitHub retornaram sem credenciais configuradas. Sentry permanece `setup_required`; nao enviamos incidente artificial.
+- A consulta autenticada do n8n confirmou 6 workflows ativos e 0 execucoes. Nao simulei lead, pagamento ou ticket para gerar execucao. O teste da WAHA confirma API acessivel, mas nao confirma telefone pareado nem mensagem entregue. Google conectado confirma OAuth/perfil, nao envio Gmail ou upload Drive.
+- Durante o deploy, app/API e n8n apresentaram indisponibilidade transitória 503; os tres endpoints voltaram a HTTP 200 com PostgreSQL conectado.
