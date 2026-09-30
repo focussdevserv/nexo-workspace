@@ -18,6 +18,7 @@ import { isSafeWorkspaceData } from './security/workspace-data.js';
 import { renderProposalEmail } from './email/proposal.js';
 import { buildGoogleRawMessage, decodeGoogleDriveUpload } from './integrations/google-mail.js';
 import { buildOverduePaymentEvent, overduePaymentRetryDelayMs } from './integrations/overdue-payment.js';
+import { proposalAcceptanceDisposition } from './integrations/proposal-acceptance.js';
 import { sameMercadoPagoPaymentSnapshot } from './integrations/mercadopago.js';
 import { classifyWahaQrResponse } from './integrations/waha.js';
 import { clicksignBaseUrl, createClicksignEnvelope, getClicksignEnvelope, notifyClicksignEnvelope } from './integrations/clicksign.js';
@@ -999,6 +1000,13 @@ app.post('/api/integrations/n8n/actions', { config: { rateLimit: { max: 120, tim
     )).limit(1);
     if (nativeTask) return { data: { status: 'already_applied', taskId: nativeTask.id } };
   }
+  if (template.taskKind === 'proposal' && sourceId) {
+    const [nativeTask] = await db.select({ id: workspaceRecords.id }).from(workspaceRecords).where(and(
+      eq(workspaceRecords.organizationId, automation.organizationId), eq(workspaceRecords.resource, 'tasks'), isNull(workspaceRecords.archivedAt),
+      sql`${workspaceRecords.data}->>'sourceProposalId' = ${sourceId}`,
+    )).limit(1);
+    if (nativeTask) return { data: { status: 'already_applied', taskId: nativeTask.id } };
+  }
   if (template.taskKind === 'project' && sourceId) {
     const [nativeTask] = await db.select({ id: workspaceRecords.id }).from(workspaceRecords).where(and(
       eq(workspaceRecords.organizationId, automation.organizationId), eq(workspaceRecords.resource, 'tasks'), isNull(workspaceRecords.archivedAt),
@@ -1562,6 +1570,96 @@ app.get('/api/workspace/:resource', { preHandler: app.authenticate }, async (req
   return { data: rows.map((row) => ({ ...row.data, id: row.id, createdAt: row.createdAt, updatedAt: row.updatedAt })), pagination: { ...query.data, total: count[0]?.count ?? 0 } };
 });
 
+app.post('/api/workspace/proposals/:id/accept', { preHandler: app.authenticate, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
+  const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
+  const body = parseBody(z.object({
+    contract: workspaceDataSchema,
+    project: workspaceDataSchema,
+    tasks: z.array(workspaceDataSchema).min(1).max(100),
+  }), request.body, reply);
+  if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Identificador da proposta inválido.' });
+  if (!body) return;
+  if (typeof body.contract.documentText !== 'string' || !body.contract.documentText.trim() || typeof body.project.name !== 'string' || body.tasks.some((task) => typeof task.title !== 'string' || !String(task.title).trim())) {
+    return reply.code(400).send({ error: 'validation_error', message: 'Contrato, projeto e tarefas precisam ter conteúdo válido.' });
+  }
+
+  const acceptedAt = new Date().toISOString();
+  const result = await db.transaction(async (tx) => {
+    const [proposal] = await tx.select().from(workspaceRecords).where(and(
+      eq(workspaceRecords.id, params.data.id), eq(workspaceRecords.organizationId, request.user.organizationId),
+      eq(workspaceRecords.resource, 'proposals'), isNull(workspaceRecords.archivedAt),
+    )).for('update').limit(1);
+    if (!proposal) return { kind: 'missing' as const };
+
+    const disposition = proposalAcceptanceDisposition(proposal.data.status);
+    if (disposition === 'return_existing') {
+      const [existingContract] = await tx.select().from(workspaceRecords).where(and(
+        eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'contracts'),
+        isNull(workspaceRecords.archivedAt), sql`${workspaceRecords.data}->>'sourceProposalId' = ${proposal.id}`,
+      )).limit(1);
+      const [existingProject] = await tx.select().from(workspaceRecords).where(and(
+        eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'projects'),
+        isNull(workspaceRecords.archivedAt), sql`${workspaceRecords.data}->>'sourceProposalId' = ${proposal.id}`,
+      )).limit(1);
+      const existingTasks = await tx.select().from(workspaceRecords).where(and(
+        eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'tasks'),
+        isNull(workspaceRecords.archivedAt), sql`${workspaceRecords.data}->>'sourceProposalId' = ${proposal.id}`,
+      ));
+      if (!existingContract || !existingProject) return { kind: 'already_accepted_without_bundle' as const };
+      return { kind: 'already_accepted' as const, proposal, contract: existingContract, project: existingProject, tasks: existingTasks };
+    }
+    if (disposition === 'reject_closed') return { kind: 'closed' as const };
+
+    const clientId = String(proposal.data.clientId ?? '');
+    if (!z.string().uuid().safeParse(clientId).success) return { kind: 'client_required' as const };
+    const [client] = await tx.select().from(workspaceRecords).where(and(
+      eq(workspaceRecords.id, clientId), eq(workspaceRecords.organizationId, request.user.organizationId),
+      eq(workspaceRecords.resource, 'clients'), isNull(workspaceRecords.archivedAt),
+    )).limit(1);
+    if (!client) return { kind: 'client_missing' as const };
+
+    const removeRecordMetadata = (data: Record<string, unknown>) => Object.fromEntries(Object.entries(data).filter(([field]) => !['id', 'createdAt', 'updatedAt'].includes(field)));
+    const contractData = {
+      ...removeRecordMetadata(body.contract), title: String(proposal.data.title ?? proposal.data.name ?? body.contract.title ?? 'Contrato'),
+      client: String(client.data.name ?? proposal.data.client ?? ''), clientId, sourceProposalId: proposal.id,
+      status: 'Rascunho', tone: 'gray', signatureEvents: [],
+    };
+    const projectName = String(body.project.name);
+    const projectData = {
+      ...removeRecordMetadata(body.project), client: String(client.data.name ?? proposal.data.client ?? ''), clientId,
+      sourceProposalId: proposal.id, status: 'Em andamento', progress: 0,
+    };
+    const [contract] = await tx.insert(workspaceRecords).values({ organizationId: request.user.organizationId, createdBy: request.user.sub, resource: 'contracts', data: contractData }).returning();
+    const [project] = await tx.insert(workspaceRecords).values({ organizationId: request.user.organizationId, createdBy: request.user.sub, resource: 'projects', data: projectData }).returning();
+    const tasks = await tx.insert(workspaceRecords).values(body.tasks.map((task) => ({
+      organizationId: request.user.organizationId, createdBy: request.user.sub, resource: 'tasks',
+      data: { ...removeRecordMetadata(task), project: projectName, projectId: project!.id, client: String(client.data.name ?? proposal.data.client ?? ''), clientId, sourceProposalId: proposal.id },
+    }))).returning();
+    const nextProposalData = { ...proposal.data, status: 'Aprovada', tone: 'green', acceptedAt };
+    const [savedProposal] = await tx.update(workspaceRecords).set({ data: nextProposalData, updatedAt: new Date(acceptedAt) }).where(and(
+      eq(workspaceRecords.id, proposal.id), eq(workspaceRecords.organizationId, request.user.organizationId),
+    )).returning();
+    await tx.insert(activityEvents).values([
+      { organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'contracts', entityId: contract!.id, action: 'created_from_accepted_proposal', payload: { proposalId: proposal.id } },
+      { organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'projects', entityId: project!.id, action: 'created_from_accepted_proposal', payload: { proposalId: proposal.id, taskCount: tasks.length } },
+      { organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'proposals', entityId: proposal.id, action: 'accepted', payload: { contractId: contract!.id, projectId: project!.id } },
+    ]);
+    return { kind: 'accepted' as const, proposal: savedProposal!, contract: contract!, project: project!, tasks };
+  });
+
+  if (result.kind === 'missing') return reply.code(404).send({ error: 'not_found', message: 'Proposta não encontrada.' });
+  if (result.kind === 'closed') return reply.code(409).send({ error: 'proposal_closed', message: 'Uma proposta recusada ou expirada não pode ser aceita.' });
+  if (result.kind === 'client_required') return reply.code(409).send({ error: 'proposal_client_required', message: 'Vincule a proposta a um cliente cadastrado antes de aceitá-la.' });
+  if (result.kind === 'client_missing') return reply.code(409).send({ error: 'proposal_client_missing', message: 'O cliente vinculado não está disponível nesta organização.' });
+  if (result.kind === 'already_accepted_without_bundle') return reply.code(409).send({ error: 'proposal_acceptance_incomplete', message: 'A proposta consta como aprovada, mas o contrato e o projeto não estão vinculados. Revise os registros antes de continuar.' });
+  if (result.kind === 'accepted') await enqueueN8nEvent(request.user.organizationId, 'proposal.accepted', { ...result.proposal.data, id: result.proposal.id, clientId: result.proposal.data.clientId });
+  const serialize = (row: typeof result.contract) => ({ ...row.data, id: row.id, createdAt: row.createdAt, updatedAt: row.updatedAt });
+  return reply.code(result.kind === 'accepted' ? 201 : 200).send({ data: {
+    proposal: serialize(result.proposal), contract: serialize(result.contract), project: serialize(result.project), tasks: result.tasks.map(serialize),
+    idempotent: result.kind === 'already_accepted',
+  } });
+});
+
 app.post('/api/monitoring/site-assets/:id/check', { preHandler: app.authenticate }, async (request, reply) => {
   const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
   if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Identificador de ativo inválido.' });
@@ -1731,6 +1829,7 @@ app.post('/api/workspace/:resource', { preHandler: app.authenticate }, async (re
   const body = parseBody(z.object({ data: workspaceDataSchema }), request.body, reply);
   if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Recurso inválido.' });
   if (!body) return;
+  if (params.data.resource === 'proposals' && proposalAcceptanceDisposition(body.data.status) === 'return_existing') return reply.code(409).send({ error: 'proposal_acceptance_required', message: 'Use a aprovacao para criar contrato, projeto e tarefas de forma atomica.' });
   if (params.data.resource === 'contracts' && requiresExternalSignature(body.data.status)) return reply.code(409).send({ error: 'contract_signature_required', message: 'Contrato so muda para Aguardando assinatura, Assinado ou Ativo apos confirmacao do provedor.' });
   const [saved] = await db.transaction(async (tx) => {
     const created = await tx.insert(workspaceRecords).values({ organizationId: request.user.organizationId, createdBy: request.user.sub, resource: params.data.resource, data: body.data }).returning();
@@ -1765,9 +1864,11 @@ app.patch('/api/workspace/:resource/:id', { preHandler: app.authenticate }, asyn
   let previousData: Record<string, unknown> | undefined;
   let rejectedContractTransition = false;
   let rejectedManagedSignatureMutation = false;
+  let rejectedProposalTransition = false;
   const updated = await db.transaction(async (tx) => {
     const [current] = await tx.select().from(workspaceRecords).where(and(eq(workspaceRecords.id, params.data.id), eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, params.data.resource), isNull(workspaceRecords.archivedAt))).limit(1);
     if (!current) return undefined;
+    if (params.data.resource === 'proposals' && Object.hasOwn(body.data, 'status') && proposalAcceptanceDisposition(body.data.status) !== proposalAcceptanceDisposition(current.data.status) && (proposalAcceptanceDisposition(body.data.status) === 'return_existing' || proposalAcceptanceDisposition(current.data.status) === 'return_existing')) { rejectedProposalTransition = true; return undefined; }
     if (params.data.resource === 'contracts' && current.data.clicksign && (
       (Object.hasOwn(body.data, 'status') && body.data.status !== current.data.status)
       || (Object.hasOwn(body.data, 'clicksign') && JSON.stringify(body.data.clicksign) !== JSON.stringify(current.data.clicksign))
@@ -1801,6 +1902,7 @@ app.patch('/api/workspace/:resource/:id', { preHandler: app.authenticate }, asyn
   });
   if (rejectedContractTransition) return reply.code(409).send({ error: 'contract_signature_required', message: 'Contrato so muda para Aguardando assinatura, Assinado ou Ativo apos confirmacao do provedor.' });
   if (rejectedManagedSignatureMutation) return reply.code(409).send({ error: 'clicksign_contract_managed', message: 'Este contrato possui envelope Clicksign. Sincronize o status no provedor; documento, metadados e estado de assinatura ficam bloqueados para edicao manual.' });
+  if (rejectedProposalTransition) return reply.code(409).send({ error: 'proposal_acceptance_required', message: 'Use a aprovacao para criar contrato, projeto e tarefas de forma atomica.' });
   if (!updated) return reply.code(404).send({ error: 'not_found', message: 'Registro não encontrado.' });
   const normalizeStatus = (value: unknown) => String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
   const priorStatus = normalizeStatus(previousData?.status);

@@ -408,3 +408,8 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - Corrigido o periodo "Este ano" para iniciar em 1 de janeiro, e "Ultimos 90 dias" para usar a janela exata de 90 dias. Datas sem horario sao interpretadas no calendario local; leads, despesas, pagamentos, horas e conclusoes de projeto usam suas datas de referencia apropriadas.
 - O grafico agora agrega receita paga por mes, leads criados por semana/mes ou entregas concluidas por semana/mes. A aba Financeiro lista pagamentos e despesas do periodo; adicionados atualizar, carregamento, erro e vazio explicitos. Nada e preenchido com exemplos.
 - Cinco testes unitarios cobrem inicio/fim dos periodos, fusos de data-only, agrupamento anual e janela semanal de 90 dias. Build Vite passou. Deploy e bundle servido ainda precisam ser confirmados.
+
+## Conversao atomica de propostas - 30/09/2026
+- Aprovar uma proposta agora usa `POST /api/workspace/proposals/:id/accept` e grava, em uma transacao, proposta aprovada, contrato em rascunho, projeto e tarefas; o vínculo por `sourceProposalId` permite repeticao idempotente.
+- A API rejeita aprovacoes feitas por criacao/edicao generica e impede que uma proposta ja convertida perca seu estado aprovado. A tela oferece `Aceitar e iniciar` em propostas abertas, sem exigir uma mudanca manual de status. O callback n8n verifica tarefas ja criadas para nao duplicar o inicio do projeto.
+- Validacao local desta fatia: 40 testes API, build TypeScript, build Vite e `git diff --check` passaram. Ainda nao foi criada proposta de teste nem escrito dado de negocio em producao; apos o deploy, verificarei disponibilidade e bundle publicado.
