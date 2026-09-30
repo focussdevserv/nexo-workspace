@@ -402,3 +402,4 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 ## Remocao de mensagens inconsistentes sobre persistencia - 30/09/2026
 - Detalhes de projeto e aprovacao agora descrevem persistencia no workspace/API, nao no navegador. O detalhe de arquivo distingue anexos armazenados no Drive de registros que contêm apenas metadados; nao sugere que o original foi enviado quando nao foi.
 - Build Vite e diff-check passaram. Nenhum dado foi escrito; commit e health de producao serao conferidos apos deploy.
+- Ajustados também os rótulos do cronômetro e dos comentários de projeto: esses registros usam a API do workspace e não armazenamento local do navegador.
