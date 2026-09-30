@@ -21,6 +21,7 @@ import { buildOverduePaymentEvent, overduePaymentRetryDelayMs } from './integrat
 import { proposalAcceptanceDisposition } from './integrations/proposal-acceptance.js';
 import { resendOperationalReadiness } from './integrations/resend-readiness.js';
 import { mapGitHubRepositoryActivity } from './integrations/github.js';
+import { googleCalendarTestDisposition } from './integrations/google-health.js';
 import { sameMercadoPagoPaymentSnapshot } from './integrations/mercadopago.js';
 import { classifyWahaQrResponse } from './integrations/waha.js';
 import { clicksignBaseUrl, createClicksignEnvelope, getClicksignEnvelope, notifyClicksignEnvelope } from './integrations/clicksign.js';
@@ -806,7 +807,12 @@ app.post('/api/integrations/:provider/test', { preHandler: app.authenticate, con
       const response = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', { headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(12_000) });
       if (!response.ok) return failed(`Google Workspace respondeu com HTTP ${response.status}. Reconecte a conta se a autorização expirou.`);
       const profile = await response.json() as { email?: string };
-      return tested('connected', `Google Workspace conectado como ${profile.email || tokens.email}.`);
+      const calendarResponse = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events?maxResults=1&fields=items%28id%29', { headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' }, signal: AbortSignal.timeout(12_000) });
+      const calendarDisposition = googleCalendarTestDisposition(calendarResponse.status);
+      if (calendarDisposition === 'setup_required') return tested('setup_required', `A conta Google ${profile.email || tokens.email} está autenticada, mas o Calendar recusou a leitura. Revise o escopo calendar.events e reautorize a conta.`);
+      if (calendarDisposition === 'error') return failed(`Google Calendar respondeu com HTTP ${calendarResponse.status}. Reconecte a conta se a autorização expirou.`);
+      const calendarData = await calendarResponse.json().catch(() => ({})) as { items?: unknown[] };
+      return tested('connected', `Google conectado como ${profile.email || tokens.email}; Calendar API confirmou acesso de leitura (${calendarData.items?.length ?? 0} evento(s) consultado(s)). Envio Gmail e upload Drive não são executados pelo teste.`);
     }
     if (provider === 'clicksign') {
       const token = process.env.CLICKSIGN_API_TOKEN;
