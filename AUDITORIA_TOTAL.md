@@ -328,3 +328,8 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - Arquivos antigos cujo campo `attachment` contém apenas texto continuam identificados como referências locais antigas, sem alegar que foram enviados.
 - Validação local: testes API 26/26, build TypeScript e build Vite passaram; bundle principal 510,98 kB (aviso Vite >500 kB); `git diff --check` passou. Nenhum upload ou escrita no banco de produção foi usado como teste.
 - Pendente: validar upload real com autorização Google ainda ativa e uma tarefa real, confirmar acesso ao Drive e persistência após recarregar. Requer operação explícita do usuário na interface, portanto não foi simulada.
+
+### Pós-deploy do vínculo de anexos - 30/09/2026
+- `07a4d33` publicado em `main`. Após a janela transitória de 503, a página serviu `index-CPEkp3oZ.js` com os textos do fluxo de upload/vínculo de anexo. `https://focussdev.space/api/health` confirmou banco conectado; n8n `/healthz` respondeu `ok`.
+- A confirmação é de deploy/health, não de upload efetivo: não criei arquivo no Drive nem alterei tarefa real nesta validação.
+- O IP `2.25.239.145` responde ao Coolify na porta 8000 com redirecionamento HTTP para `/login`; `panel.focussdev.space` não resolve. O acesso direto ao login em HTTP não oferece TLS e é uma pendência de segurança operacional. Configurar hostname com certificado e restringir a porta direta é necessário antes de usar o painel para credenciais.
