@@ -114,15 +114,23 @@ function Status({ children }) {
 function DataTable({ columns, rows, search, onAction, empty = 'Nenhum registro encontrado.', statusIndex, hideActions = false }) {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('Todos');
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
   const statusColumn = statusIndex ?? (rows[0]?.length ?? 1) - 1;
   const shown = rows.filter((row) => row.join(' ').toLowerCase().includes(query.toLowerCase()) && (filter === 'Todos' || row[statusColumn] === filter));
+  const pageCount = Math.max(1, Math.ceil(shown.length / pageSize));
+  const currentPage = Math.min(page, pageCount);
+  const pageRows = shown.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const firstRow = shown.length ? (currentPage - 1) * pageSize + 1 : 0;
+  const lastRow = Math.min(currentPage * pageSize, shown.length);
+  const updateFilter = (value) => { setFilter(value); setPage(1); };
+  const updateQuery = (value) => { setQuery(value); setPage(1); };
   return <section className="ns-panel ns-table-panel">
-    <div className="ns-panel-toolbar"><div className="ns-filter-tabs">{['Todos', ...new Set(rows.map((row) => row[statusColumn]))].slice(0, 4).map((item) => <button className={filter === item ? 'selected' : ''} key={item} onClick={() => setFilter(item)} type="button">{item}</button>)}</div><div className="ns-tools">{search && <label className="ns-search"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar" /></label>}<IconButton label="Filtros" onClick={() => setFilter('Todos')}><Filter size={15} /></IconButton></div></div>
-      <div className="ns-table-scroll"><table className="ns-table"><thead><tr>{columns.map((column) => <th key={column}>{column}</th>)}{!hideActions && <th aria-label="Ações" />}</tr></thead><tbody>{shown.map((row, index) => <tr key={`${row[0]}-${index}`}>{row.slice(0, columns.length).map((cell, cellIndex) => <td key={cellIndex}>{cellIndex === statusColumn ? <Status>{cell}</Status> : cellIndex === 0 ? <b className="ns-row-id">{cell}</b> : cell}</td>)}{!hideActions && <td><IconButton label="Mais opções" onClick={() => onAction(`Opções de ${row[0]}`)}><MoreHorizontal size={17} /></IconButton></td>}</tr>)}{shown.length === 0 && <tr><td className="ns-empty" colSpan={columns.length + (hideActions ? 0 : 1)}>{empty}</td></tr>}</tbody></table></div>
-    <div className="ns-table-footer"><span>Mostrando {shown.length} de {rows.length} registros</span><div><button type="button" aria-label="Página anterior"><ChevronLeft size={15} /></button><b>1</b><button type="button" aria-label="Próxima página"><ChevronRight size={15} /></button></div></div>
+    <div className="ns-panel-toolbar"><div className="ns-filter-tabs">{['Todos', ...new Set(rows.map((row) => row[statusColumn]))].slice(0, 4).map((item) => <button className={filter === item ? 'selected' : ''} key={item} onClick={() => updateFilter(item)} type="button">{item}</button>)}</div><div className="ns-tools">{search && <label className="ns-search"><Search size={15} /><input value={query} onChange={(event) => updateQuery(event.target.value)} placeholder="Buscar" /></label>}<IconButton label={'Filtros'} onClick={() => updateFilter('Todos')}><Filter size={15} /></IconButton></div></div>
+    <div className="ns-table-scroll"><table className="ns-table"><thead><tr>{columns.map((column) => <th key={column}>{column}</th>)}{!hideActions && <th aria-label={'Ações'} />}</tr></thead><tbody>{pageRows.map((row, index) => <tr key={`${row[0]}-${index}`}>{row.slice(0, columns.length).map((cell, cellIndex) => <td key={cellIndex}>{cellIndex === statusColumn ? <Status>{cell}</Status> : cellIndex === 0 ? <b className="ns-row-id">{cell}</b> : cell}</td>)}{!hideActions && <td><IconButton label={'Mais opções'} onClick={() => onAction?.(`Opções de ${row[0]}`)}><MoreHorizontal size={17} /></IconButton></td>}</tr>)}{shown.length === 0 && <tr><td className="ns-empty" colSpan={columns.length + (hideActions ? 0 : 1)}>{empty}</td></tr>}</tbody></table></div>
+    <div className="ns-table-footer"><span>Mostrando {firstRow}-{lastRow} de {shown.length} registros</span><div><button type="button" aria-label={'Página anterior'} disabled={currentPage <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}><ChevronLeft size={15} /></button><b aria-live="polite">{currentPage} / {pageCount}</b><button type="button" aria-label={'Próxima página'} disabled={currentPage >= pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))}><ChevronRight size={15} /></button></div></div>
   </section>;
 }
-
 function FinanceOverview({ notify, onCreate }) {
   const [revenues] = useStoredArray('nexo.finance.receitas.v1', []);
   const [expenses] = useStoredArray('nexo.finance.despesas.v1', []);

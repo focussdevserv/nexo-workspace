@@ -88,6 +88,7 @@
 .ns-status.warning { color: #ad7432; background: #fff4e5; }.ns-status.warning i { background: #dc9b4d; }
 .ns-table-footer { min-height: 43px; display: flex; align-items: center; justify-content: space-between; padding: 0 14px; border-top: 1px solid #eef0f3; color: #9099a6; font-size: 9px; }
 .ns-table-footer > div { display: flex; align-items: center; gap: 5px; }.ns-table-footer button, .ns-table-footer b { width: 25px; height: 25px; display: grid; place-items: center; border: 1px solid var(--ns-line); border-radius: 6px; background: #fff; color: #778292; font-size: 9px; }.ns-table-footer b { color: #fff; border-color: #1e2938; background: #1e2938; }
+.ns-table-footer b { width: auto; min-width: 48px; padding: 0 6px; }.ns-table-footer button:disabled { opacity: .45; cursor: not-allowed; }
 .ns-empty { height: 100px !important; text-align: center; color: #929baa !important; }
 .ns-account-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 13px; }
 .ns-account-card, .ns-add-account { min-height: 196px; display: flex; flex-direction: column; align-items: flex-start; padding: 16px; border: 1px solid var(--ns-line); border-radius: 13px; background: #fff; text-align: left; }
