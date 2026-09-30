@@ -20,6 +20,7 @@ import { buildGoogleRawMessage, decodeGoogleDriveUpload } from './integrations/g
 import { buildOverduePaymentEvent, overduePaymentRetryDelayMs } from './integrations/overdue-payment.js';
 import { proposalAcceptanceDisposition } from './integrations/proposal-acceptance.js';
 import { resendOperationalReadiness } from './integrations/resend-readiness.js';
+import { mapGitHubRepositoryActivity } from './integrations/github.js';
 import { sameMercadoPagoPaymentSnapshot } from './integrations/mercadopago.js';
 import { classifyWahaQrResponse } from './integrations/waha.js';
 import { clicksignBaseUrl, createClicksignEnvelope, getClicksignEnvelope, notifyClicksignEnvelope } from './integrations/clicksign.js';
@@ -702,6 +703,38 @@ app.post('/api/integrations/:provider/connection', { preHandler: app.authenticat
   const control = await saveIntegrationControl(request.user.organizationId, request.user.sub, provider, { enabled: body.enabled, ...(body.enabled ? { lastTestStatus: null, lastTestMessage: null, testedAt: null } : {}) });
   await db.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'integration', action: body.enabled ? 'enabled' : 'disabled', payload: { provider } });
   return { data: { provider, enabled: control?.enabled !== false } };
+});
+
+app.get('/api/integrations/github/repos/:owner/:repo/activity', { preHandler: app.authenticate, config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {
+  const ownerPattern = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
+  const repoPattern = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,98}[A-Za-z0-9])?$/;
+  const params = z.object({ owner: z.string().max(39).regex(ownerPattern), repo: z.string().max(100).regex(repoPattern) }).safeParse(request.params);
+  if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Proprietário ou repositório GitHub inválido.' });
+  const token = process.env.GITHUB_TOKEN;
+  if (!token) return reply.code(503).send({ error: 'github_not_configured', message: 'Configure GITHUB_TOKEN no serviço API do Coolify.' });
+  if (!await isIntegrationEnabled(request.user.organizationId, 'github')) return reply.code(409).send({ error: 'integration_disconnected', message: 'GitHub está desconectado no Nexo. Reative em Integrações para sincronizar.' });
+  const { owner, repo } = params.data;
+  const prefix = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+  const githubRequest = async (path: string) => {
+    const response = await fetch(`https://api.github.com${path}`, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' }, signal: AbortSignal.timeout(15_000) });
+    if (!response.ok) throw Object.assign(new Error('github_api_request_failed'), { statusCode: response.status });
+    return response.json() as Promise<any>;
+  };
+  try {
+    const [repository, commits, pullRequests, deployments] = await Promise.all([
+      githubRequest(prefix), githubRequest(`${prefix}/commits?per_page=5`),
+      githubRequest(`${prefix}/pulls?state=open&per_page=5`), githubRequest(`${prefix}/deployments?per_page=1`),
+    ]);
+    const deployment = Array.isArray(deployments) ? deployments[0] : undefined;
+    const deploymentStatuses = deployment?.id ? await githubRequest(`${prefix}/deployments/${Number(deployment.id)}/statuses?per_page=1`) : [];
+    return { data: mapGitHubRepositoryActivity({ repository, commits: Array.isArray(commits) ? commits : [], pullRequests: Array.isArray(pullRequests) ? pullRequests : [], deployments: Array.isArray(deployments) ? deployments : [], deploymentStatuses: Array.isArray(deploymentStatuses) ? deploymentStatuses : [] }) };
+  } catch (error) {
+    const statusCode = Number((error as { statusCode?: number }).statusCode) || 502;
+    if (statusCode === 404) return reply.code(404).send({ error: 'github_repository_not_found', message: 'Repositório não encontrado ou token sem acesso a ele.' });
+    if (statusCode === 401 || statusCode === 403) return reply.code(409).send({ error: 'github_permission_required', message: 'O GitHub recusou o acesso. Confira o token e as permissões de leitura de conteúdo, pull requests e deployments.' });
+    app.log.warn({ statusCode, error: error instanceof Error ? error.name : 'unknown' }, 'GitHub repository activity request failed');
+    return reply.code(502).send({ error: 'github_repository_sync_failed', message: 'Não foi possível sincronizar atividade deste repositório agora.' });
+  }
 });
 
 app.post('/api/integrations/:provider/test', { preHandler: app.authenticate, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {

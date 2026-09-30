@@ -494,7 +494,7 @@ function Integrations({ notify }) {
     Resend: { provider: 'resend', vars: ['RESEND_API_KEY'], note: 'O teste consulta os domínios da conta. Ele não envia e-mails.' },
     'Google Workspace': { provider: 'google', vars: ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_REDIRECT_URI'], note: 'Conecte sua conta Google para habilitar Gmail, Calendar, Drive e reuniões Meet. Cadastre no Google Cloud a URI de retorno exibida no servidor.' },
     Clicksign: { provider: 'clicksign', vars: ['CLICKSIGN_API_TOKEN', 'CLICKSIGN_API_BASE_URL'], note: 'Use o token da API Clicksign. Comece pelo sandbox; o teste apenas lista envelopes e não cria nem envia contratos.' },
-    GitHub: { provider: 'github', vars: ['GITHUB_TOKEN'], note: 'O teste consulta a identidade do token. Use um token com o menor conjunto de permissões necessário.' },
+    GitHub: { provider: 'github', vars: ['GITHUB_TOKEN'], note: 'O teste valida a identidade. Para sincronizar a atividade dos repositórios, o token precisa de leitura de metadados, conteúdo, pull requests e deployments. O Nexo não publica código nem altera workflows.' },
     n8n: { provider: 'n8n', vars: ['N8N_BASE_URL', 'N8N_API_KEY'], note: 'Gere uma API key em Configurações > n8n API no n8n e salve em N8N_API_KEY no Coolify. O teste consulta a API autenticada de workflows, sem criar, ativar ou executar nenhum fluxo.' },
     Sentry: { provider: 'sentry', vars: ['SENTRY_DSN', 'VITE_SENTRY_DSN'], note: 'Configure o DSN no servidor (API) e no build web. Captura erros sem dados pessoais; o teste não cria um incidente artificial.' },
   };

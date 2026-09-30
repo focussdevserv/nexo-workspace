@@ -13,3 +13,5 @@
 .repo-modal input{height:37px;padding:8px 10px;border:1px solid #e0e5eb;border-radius:8px;font-size:10px}
 .repo-modal>p{color:#939dab;font-size:8px}
 .repo-modal footer{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+
+.repo-card h3 a{display:flex;align-items:center;gap:5px;color:inherit;text-decoration:none}.repo-card h3 a:hover{color:#2861d4}.repo-activity-detail .amber{color:#9d6d22}.repo-sync-error{width:100%;padding:9px;border:1px solid #f1c8c4;border-radius:8px;background:#fff6f5;color:#a8342d!important}.repo-card-actions .repo-open{cursor:pointer}.repo-card-actions .repo-open:disabled{opacity:.55;cursor:wait}.repo-spin{animation:repo-spin .9s linear infinite}@keyframes repo-spin{to{transform:rotate(360deg)}}
