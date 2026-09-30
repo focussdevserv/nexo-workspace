@@ -11,7 +11,7 @@ import argon2 from 'argon2';
 import * as Sentry from '@sentry/node';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { resolve } from 'node:path';
-import { and, asc, desc, eq, ilike, isNull, lte, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, ilike, isNull, lte, notExists, or, sql } from 'drizzle-orm';
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { db, pool } from './db/index.js';
@@ -2245,6 +2245,8 @@ async function processOverdueBillingEvents() {
       status: billingOrders.status, dueAt: billingOrders.dueAt,
     }).from(billingOrders).where(and(
       eq(billingOrders.status, 'pending'), lte(billingOrders.dueAt, now),
+      notExists(db.select({ id: billingOverdueEvents.id }).from(billingOverdueEvents)
+        .where(eq(billingOverdueEvents.billingOrderId, billingOrders.id))),
     )).orderBy(asc(billingOrders.dueAt)).limit(100);
     for (const order of expiredOrders) {
       await db.insert(billingOverdueEvents).values({ organizationId: order.organizationId, billingOrderId: order.id })

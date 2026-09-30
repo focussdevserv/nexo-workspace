@@ -17,7 +17,7 @@ Leitura autenticada do runtime e verificações de produção; este painel preva
 - **Clicksign:** fluxo de envelope implementado, mas `CLICKSIGN_API_TOKEN` ausente; sem contrato enviado.
 - **Sentry:** SDKs e remoção de dados sensíveis implementados, mas faltam `SENTRY_DSN` e `VITE_SENTRY_DSN`; ingestão ainda não validada.
 - **Catálogo e documentos:** 88 produtos/serviços com modelos de proposta/contrato; preços continuam vazios conforme pedido, sem valores inventados. A aceitação da proposta cria contrato, projeto e tarefas atomicamente.
-- **Publicação:** o commit `e64c85f` está no `main` e o HTML de produção aponta para o bundle novo. App/API e os health checks `flow.pagfocuss.tech/healthz` e `n8n.pagfocuss.tech/healthz` responderam HTTP 200. O bundle inicial caiu de 635,33 kB (177,91 kB gzip) para 304,92 kB (97,21 kB gzip); Comercial, Projetos/Agenda, Atendimento/Financeiro e Gestão são carregados sob demanda.
+- **Publicacao (checagem mais recente):** `main` esta em `9f3a10a`, mas `/api/health` e `/nexo-build.json` ainda informam `005a7fd`. App/API, PostgreSQL e os health checks de n8n/flow responderam HTTP 200. O workflow `36700532231` passou build frontend/API e 63 testes, mas falhou ao aguardar a publicacao de `805987d`; `COOLIFY_WEBHOOK` e `COOLIFY_TOKEN` nao estao cadastrados no GitHub Actions.
 - **Validação de código:** build do frontend, build TypeScript da API e 49 testes da API passaram após a divisão dos módulos. Nenhum dado de cliente, pagamento, mensagem ou evento foi criado para teste.
 
 **Pendências operacionais:** escanear QR no WhatsApp; consentir novamente os escopos Google; inserir os tokens GitHub e Clicksign e os DSNs Sentry no Coolify. Não iniciar ações que enviem mensagens/e-mails, cobrem clientes ou criem eventos sem autorização explícita e dados comerciais reais.
@@ -462,3 +462,9 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - Testes unitários cobrem seleção ordenada/deduplicada, composição de escopo/checklist/responsáveis e ausência de preços inventados. Build Vite, build da API, 63 testes API e `git diff --check` passaram.
 - Publicação ainda depende de configurar os secrets do Coolify no GitHub; a última checagem pública do app/API respondeu HTTP 503.
 - Rechecagem após a troca do container: `https://focussdev.space/api/health` respondeu HTTP 200 com banco conectado. O HTML serve o bundle `index-DTpaBt-s.js`, que aponta para `CommercialScreens-BjOOLDhF.js`; o bundle de produção contém o seletor múltiplo e o campo `serviceIds`. A versão do commit `a28ed3a` está no ar, apesar de o job de deploy do GitHub Actions continuar pulado por falta dos secrets.
+## Continuidade operacional - 30/09/2026
+
+- A agenda v2 ja esta publicada. A correcao mais recente ordena eventos por data e horario e preserva a data/visualizacao na URL, mas aguarda deploy: o runtime ainda serve a revisao `005a7fd`.
+- O scanner de cobrancas vencidas ja existe no backend, com outbox persistente, chave unica por cobranca, revalidacao do status, `FOR UPDATE SKIP LOCKED` e retentativas. Uma falha de escala foi corrigida: a consulta agora exclui cobranças ja enfileiradas, evitando que os mesmos 100 pedidos antigos impeçam outros de entrar na fila.
+- Validacao local dessa correcao: 63 testes API, build TypeScript, build Vite e `git diff --check` passaram. Nenhuma cobrança ou execucao foi criada para teste. A correcao esta no `main`, mas ainda nao foi confirmada em producao porque o deploy do Coolify nao foi acionado.
+- A chave SSH de deploy disponivel neste computador nao foi aceita por `2.25.239.145` como `root` nem `ubuntu`; a consulta autenticada do app retornou HTTP 403. Nenhuma sessao de desktop foi aberta/controlada.
