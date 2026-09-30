@@ -13,7 +13,7 @@ import './integration-dialog.css';
 import './automations.css';
 import './billing.css';
 import { PaymentConsole } from './PaymentScreens.jsx';
-import { apiRequest, useWorkspaceRecords } from '../lib/workspace-api.js';
+import { apiRequest, fetchAllRecords, useWorkspaceRecords } from '../lib/workspace-api.js';
 
 function useStoredArray(key, fallback) {
   const resources = { 'nexo.finance.receitas.v1': 'revenues', 'nexo.finance.despesas.v1': 'expenses', 'nexo.finance.accounts.v1': 'finance-accounts', 'nexo.finance.transactions.v1': 'finance-transactions', 'nexo.support.conversations.v1': 'inbox', 'nexo.sites.assets.v1': 'site-assets', 'nexo.sites.monitors.v1': 'monitors' };
@@ -21,7 +21,7 @@ function useStoredArray(key, fallback) {
   const path = key === 'nexo.billing.v1' ? '/api/billing/orders' : `/api/workspace/${resource}`;
   const [value, setValue] = useState([]);
   const ref = useRef(value);
-  const refresh = useCallback(async () => { const result = await apiRequest(path); ref.current = result.data || []; setValue(ref.current); return ref.current; }, [path]);
+  const refresh = useCallback(async () => { ref.current = await fetchAllRecords(path); setValue(ref.current); return ref.current; }, [path]);
   useEffect(() => { let active = true; refresh().catch((error) => { if (active) window.dispatchEvent(new CustomEvent('nexo:workspace-error', { detail: error.message })); }); return () => { active = false; }; }, [refresh]);
   const persist = (nextOrUpdater) => {
     const previous = ref.current; const next = typeof nextOrUpdater === 'function' ? nextOrUpdater(previous) : nextOrUpdater; ref.current = next; setValue(next);

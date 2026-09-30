@@ -7,7 +7,7 @@ import {
   SlidersHorizontal, Sparkles, Timer, Upload, Users, X, ShieldCheck,
 } from 'lucide-react';
 import './work.css';
-import { apiRequest } from '../lib/workspace-api.js';
+import { apiRequest, fetchAllRecords } from '../lib/workspace-api.js';
 
 function useLocalState(key, fallback) {
   const resource = ({ 'nexo.work.projects.v1': 'projects', 'nexo.work.tasks.v1': 'tasks', 'nexo.work.events.v1': 'events', 'nexo.work.approvals.v1': 'approvals', 'nexo.work.files.v1': 'files', 'nexo.work.hours.v1': 'hours' })[key];
@@ -16,7 +16,7 @@ function useLocalState(key, fallback) {
   const [syncError, setSyncError] = useState('');
   useEffect(() => {
     let active = true;
-    apiRequest(`/api/workspace/${resource}`).then((result) => { if (active) { valueRef.current = result.data || []; setValue(valueRef.current); setSyncError(''); } })
+    fetchAllRecords(`/api/workspace/${resource}`).then((records) => { if (active) { valueRef.current = records; setValue(valueRef.current); setSyncError(''); } })
       .catch((error) => { if (active) { setSyncError(error.message || 'Falha ao carregar registros.'); window.dispatchEvent(new CustomEvent('nexo:workspace-error', { detail: error.message })); } });
     return () => { active = false; };
   }, [resource]);

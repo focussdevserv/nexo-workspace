@@ -13,7 +13,7 @@ import AdminScreen from './screens/AdminScreens.jsx';
 import { PublicClientPortal } from './screens/ClientPortalScreens.jsx';
 import WorkspaceAccess from './screens/WorkspaceAccess.jsx';
 import PublicLegalPage from './screens/PublicLegalPages.jsx';
-import { apiRequest } from './lib/workspace-api.js';
+import { apiRequest, fetchAllRecords } from './lib/workspace-api.js';
 import { purgeFictitiousLocalData } from './lib/demo-data.js';
 import './screens/forms-polish.css';
 import './screens/buttons-polish.css';
@@ -146,12 +146,12 @@ function WorkspaceShell() {
 
   const refreshDashboard = useCallback(async () => {
     try {
-      const [leadResult, projectResult, taskResult, eventResult, proposalResult, billResult] = await Promise.all([
-        apiRequest('/api/workspace/leads'), apiRequest('/api/workspace/projects'), apiRequest('/api/workspace/tasks'),
-        apiRequest('/api/workspace/events'), apiRequest('/api/workspace/proposals'), apiRequest('/api/billing/orders'),
+      const [leads, projects, loadedTasks, events, proposals, bills] = await Promise.all([
+        fetchAllRecords('/api/workspace/leads'), fetchAllRecords('/api/workspace/projects'), fetchAllRecords('/api/workspace/tasks'),
+        fetchAllRecords('/api/workspace/events'), fetchAllRecords('/api/workspace/proposals'), fetchAllRecords('/api/billing/orders'),
       ]);
-      setDashboardRecords({ leads: leadResult.data || [], projects: projectResult.data || [], events: eventResult.data || [], proposals: proposalResult.data || [], bills: billResult.data || [] });
-      setTasks((taskResult.data || []).map((task) => ({ ...task, state: task.state || task.status || 'Pendente', company: task.company || task.client || '', time: task.time || '', detail: task.description || task.detail || '' })));
+      setDashboardRecords({ leads, projects, events, proposals, bills });
+      setTasks(loadedTasks.map((task) => ({ ...task, state: task.state || task.status || 'Pendente', company: task.company || task.client || '', time: task.time || '', detail: task.description || task.detail || '' })));
       setDashboardError('');
     } catch (error) { setDashboardError(error.message || 'Não foi possível atualizar o resumo.'); }
   }, []);

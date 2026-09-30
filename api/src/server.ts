@@ -1332,9 +1332,15 @@ app.post('/api/notifications/read', { preHandler: app.authenticate }, async (req
   return { data: { readAt } };
 });
 
-app.get('/api/billing/orders', { preHandler: app.authenticate }, async (request) => {
-  const rows = await db.select().from(billingOrders).where(eq(billingOrders.organizationId, request.user.organizationId)).orderBy(desc(billingOrders.createdAt)).limit(100);
-  return { data: rows };
+app.get('/api/billing/orders', { preHandler: app.authenticate }, async (request, reply) => {
+  const query = z.object({ limit: z.coerce.number().int().min(1).max(200).default(100), offset: z.coerce.number().int().min(0).default(0) }).safeParse(request.query);
+  if (!query.success) return reply.code(400).send({ error: 'validation_error', message: 'Invalid billing pagination.' });
+  const where = eq(billingOrders.organizationId, request.user.organizationId);
+  const [rows, count] = await Promise.all([
+    db.select().from(billingOrders).where(where).orderBy(desc(billingOrders.createdAt)).limit(query.data.limit).offset(query.data.offset),
+    db.select({ count: sql<number>`count(*)::int` }).from(billingOrders).where(where),
+  ]);
+  return { data: rows, pagination: { ...query.data, total: count[0]?.count ?? 0 } };
 });
 
 app.post('/api/billing/orders', { preHandler: app.authenticate, config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {
@@ -1382,9 +1388,15 @@ app.post('/api/billing/orders', { preHandler: app.authenticate, config: { rateLi
   }
 });
 
-app.get('/api/billing/subscriptions', { preHandler: app.authenticate }, async (request) => {
-  const rows = await db.select().from(billingSubscriptions).where(eq(billingSubscriptions.organizationId, request.user.organizationId)).orderBy(desc(billingSubscriptions.createdAt)).limit(100);
-  return { data: rows };
+app.get('/api/billing/subscriptions', { preHandler: app.authenticate }, async (request, reply) => {
+  const query = z.object({ limit: z.coerce.number().int().min(1).max(200).default(100), offset: z.coerce.number().int().min(0).default(0) }).safeParse(request.query);
+  if (!query.success) return reply.code(400).send({ error: 'validation_error', message: 'Invalid subscription pagination.' });
+  const where = eq(billingSubscriptions.organizationId, request.user.organizationId);
+  const [rows, count] = await Promise.all([
+    db.select().from(billingSubscriptions).where(where).orderBy(desc(billingSubscriptions.createdAt)).limit(query.data.limit).offset(query.data.offset),
+    db.select({ count: sql<number>`count(*)::int` }).from(billingSubscriptions).where(where),
+  ]);
+  return { data: rows, pagination: { ...query.data, total: count[0]?.count ?? 0 } };
 });
 
 app.post('/api/billing/subscriptions', { preHandler: app.authenticate, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {

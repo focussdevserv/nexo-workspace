@@ -7,7 +7,7 @@ import {
   ShieldCheck, SlidersHorizontal, Sparkles, Users, Wallet,
 } from 'lucide-react';
 import './commercial.css';
-import { apiRequest, useWorkspaceRecords } from '../lib/workspace-api.js';
+import { apiRequest, fetchAllRecords, useWorkspaceRecords } from '../lib/workspace-api.js';
 import { completeRequestedServiceCatalog, mergeRequestedServiceCatalog, requestedServiceCatalog } from '../data/service-catalog.js';
 import { buildServiceProject } from '../data/service-project-template.js';
 import { contractText, downloadContract, editableContractStatuses, isLockedContractStatus } from '../data/contract-document.js';
@@ -196,9 +196,9 @@ function ClientProfileModal({ client: initialClient, onClose, onUpdate, onAction
     const resources = ['projects', 'tasks', 'contracts', 'inbox', 'files', 'tickets', 'approvals', 'events'];
     (async () => {
       const entries = await Promise.all([
-        ...resources.map(async (name) => [name, (await apiRequest(`/api/workspace/${name}`)).data || []]),
-        (async () => ['billing', (await apiRequest('/api/billing/orders')).data || []])(),
-        (async () => ['subscriptions', (await apiRequest('/api/billing/subscriptions')).data || []])(),
+        ...resources.map(async (name) => [name, await fetchAllRecords(`/api/workspace/${name}`)]),
+        (async () => ['billing', await fetchAllRecords('/api/billing/orders')])(),
+        (async () => ['subscriptions', await fetchAllRecords('/api/billing/subscriptions')])(),
       ]);
       if (active) setRelated(Object.fromEntries(entries));
     })().catch(() => { if (active) setRelated({}); });

@@ -14,13 +14,30 @@ export async function apiRequest(path, options = {}) {
   return payload;
 }
 
+export async function fetchAllRecords(path, request = apiRequest, pageSize = 200) {
+  const safePageSize = Math.max(1, Math.min(200, Math.floor(Number(pageSize) || 200)));
+  const queryPage = (offset) => `${path}${path.includes('?') ? '&' : '?'}limit=${safePageSize}&offset=${offset}`;
+  const firstPage = await request(queryPage(0));
+  const firstRecords = firstPage.data || [];
+  const total = Number(firstPage.pagination?.total);
+  if (!Number.isFinite(total) || total <= firstRecords.length) return firstRecords;
+  const records = [...firstRecords];
+  const actualPageSize = Math.max(1, Number(firstPage.pagination?.limit) || safePageSize);
+  const firstOffset = Math.max(0, Number(firstPage.pagination?.offset) || 0);
+  for (let offset = firstOffset + firstRecords.length; offset < total; offset += actualPageSize) {
+    const page = await request(queryPage(offset));
+    records.push(...(page.data || []));
+  }
+  return records.slice(0, total);
+}
+
 export function useWorkspaceRecords(resource) {
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const refresh = useCallback(async () => {
     setLoading(true);
-    try { const result = await apiRequest(`/api/workspace/${resource}`); setRecords(result.data || []); setError(''); }
+    try { const result = await fetchAllRecords(`/api/workspace/${resource}`); setRecords(result); setError(''); }
     catch (err) { setError(err.message || 'Falha ao carregar os dados.'); }
     finally { setLoading(false); }
   }, [resource]);

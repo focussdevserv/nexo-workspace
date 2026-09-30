@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Activity, AlertCircle, ArrowUpRight, Check, CheckCircle2, Copy, CreditCard, ExternalLink, KeyRound, LoaderCircle, LockKeyhole, Plus, RefreshCw, ShieldCheck, X } from 'lucide-react';
 import './payments.css';
+import { fetchAllRecords } from '../lib/workspace-api.js';
 
 const money = (value) => Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const labels = { pending: 'Aguardando pagamento', creating: 'Criando', processing: 'Em processamento', paid: 'Paga', authorized: 'Autorizada', paused: 'Pausada', canceled: 'Cancelada', failed: 'Falhou', refunded: 'Estornada', rejected: 'Recusada', expired: 'Expirada' };
@@ -87,12 +88,12 @@ export function PaymentConsole({ kind = 'orders', notify = () => {} }) {
     if (!token) return;
     setError('');
     try {
-      const [records, availableMethods, clientRecords] = await Promise.all([
-        request(endpoint),
+      const [records, availableMethods, clients] = await Promise.all([
+        fetchAllRecords(endpoint, request),
         subscriptionMode ? Promise.resolve({ data: [] }) : request('/api/billing/payment-methods'),
-        request('/api/workspace/clients'),
+        fetchAllRecords('/api/workspace/clients', request),
       ]);
-      setItems(records.data || []); setMethods(availableMethods.data || []); setClients(clientRecords.data || []);
+      setItems(records); setMethods(availableMethods.data || []); setClients(clients);
     } catch (err) { setError(err.message); }
   }, [endpoint, request, subscriptionMode, token]);
   useEffect(() => { refresh(); }, [refresh]);

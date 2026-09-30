@@ -1,7 +1,7 @@
 ﻿import React, { useCallback, useEffect, useState } from 'react';
 import { BriefcaseBusiness, CheckCircle2, CircleDollarSign, Clock3, Download, RefreshCw, Target, TrendingUp, Users } from 'lucide-react';
 import './reports.css';
-import { apiRequest } from '../lib/workspace-api.js';
+import { fetchAllRecords } from '../lib/workspace-api.js';
 
 const periods = [{ id: 'month', label: 'Este mês', months: 1 }, { id: 'quarter', label: 'Últimos 90 dias', months: 3 }, { id: 'year', label: 'Este ano', months: 12 }];
 const tabs = ['Visão geral', 'Comercial', 'Projetos', 'Financeiro'];
@@ -17,8 +17,8 @@ export default function ReportsScreen({ notify }) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const values = await Promise.all(['leads','projects','tasks','services','expenses','hours'].map((name) => apiRequest(`/api/workspace/${name}`)).concat([apiRequest('/api/billing/orders')]));
-      setData({ leads: values[0].data || [], projects: values[1].data || [], tasks: values[2].data || [], services: values[3].data || [], expenses: values[4].data || [], hours: values[5].data || [], orders: values[6].data || [] });
+      const values = await Promise.all(['leads','projects','tasks','services','expenses','hours'].map((name) => fetchAllRecords(`/api/workspace/${name}`)).concat([fetchAllRecords('/api/billing/orders')]));
+      setData({ leads: values[0], projects: values[1], tasks: values[2], services: values[3], expenses: values[4], hours: values[5], orders: values[6] });
       setError('');
     } catch (err) { setError(err.message || 'Não foi possível carregar os relatórios.'); }
     finally { setLoading(false); }
