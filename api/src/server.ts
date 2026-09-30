@@ -1385,10 +1385,20 @@ app.get('/api/notifications', { preHandler: app.authenticate }, async (request) 
   return { data, unreadCount: data.filter((item) => item.unread).length, readAt };
 });
 
-app.post('/api/notifications/read', { preHandler: app.authenticate }, async (request) => {
-  const readAt = new Date();
-  await db.update(users).set({ notificationsReadAt: readAt }).where(eq(users.id, request.user.sub));
-  return { data: { readAt } };
+app.post('/api/notifications/read', { preHandler: app.authenticate }, async (request, reply) => {
+  const body = parseBody(z.object({ notificationId: z.string().uuid().optional() }).strict(), request.body ?? {}, reply);
+  if (!body) return;
+  let readThrough = new Date();
+  if (body.notificationId) {
+    const [event] = await db.select({ createdAt: activityEvents.createdAt }).from(activityEvents).where(and(
+      eq(activityEvents.id, body.notificationId), eq(activityEvents.organizationId, request.user.organizationId),
+    )).limit(1);
+    if (!event) return reply.code(404).send({ error: 'notification_not_found', message: 'A notificação não existe neste workspace.' });
+    readThrough = event.createdAt;
+  }
+  const [owner] = await db.update(users).set({ notificationsReadAt: sql`GREATEST(${users.notificationsReadAt}, ${readThrough})` })
+    .where(eq(users.id, request.user.sub)).returning({ readAt: users.notificationsReadAt });
+  return { data: { readAt: owner?.readAt ?? readThrough } };
 });
 
 app.get('/api/billing/orders', { preHandler: app.authenticate }, async (request, reply) => {
