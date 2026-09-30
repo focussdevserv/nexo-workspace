@@ -2,6 +2,7 @@
 import { BriefcaseBusiness, CheckCircle2, CircleDollarSign, Clock3, Download, RefreshCw, Target, TrendingUp, Users } from 'lucide-react';
 import './reports.css';
 import { fetchAllRecords } from '../lib/workspace-api.js';
+import { buildChartBuckets, inPeriod } from '../lib/reports.js';
 
 const periods = [{ id: 'month', label: 'Este mês', months: 1 }, { id: 'quarter', label: 'Últimos 90 dias', months: 3 }, { id: 'year', label: 'Este ano', months: 12 }];
 const tabs = ['Visão geral', 'Comercial', 'Projetos', 'Financeiro'];
