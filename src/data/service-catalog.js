@@ -80,3 +80,26 @@ export function mergeRequestedServiceCatalog(existingServices = [], requestedSer
     return true;
   });
 }
+
+export function completeRequestedServiceCatalog(existingServices = [], requestedServices = requestedServiceCatalog) {
+  const normalize = (value) => String(value || '').trim().toLocaleLowerCase('pt-BR');
+  const keyFor = (item) => `${normalize(item.catalogGroup)}\u001f${normalize(item.name)}`;
+  const byKey = new Map(requestedServices.map((item) => [keyFor(item), item]));
+  const byName = new Map();
+  for (const item of requestedServices) {
+    const key = normalize(item.name);
+    byName.set(key, [...(byName.get(key) || []), item]);
+  }
+  return existingServices.map((existing) => {
+    const seed = (existing.catalogGroup && byKey.get(keyFor(existing))) || (!existing.catalogGroup && byName.get(normalize(existing.name))?.length === 1 ? byName.get(normalize(existing.name))[0] : null);
+    if (!seed) return existing;
+    const completed = { ...existing };
+    for (const [field, value] of Object.entries(seed)) {
+      const current = existing[field];
+      const empty = current === undefined || current === null || current === '' || (Array.isArray(current) && current.length === 0);
+      const usableSeed = value !== undefined && value !== null && value !== '' && (!Array.isArray(value) || value.length > 0);
+      if (empty && usableSeed) completed[field] = value;
+    }
+    return completed;
+  });
+}

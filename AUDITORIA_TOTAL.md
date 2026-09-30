@@ -371,3 +371,8 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - A agenda redesenhada ja esta em producao desde os commits 40e95d8 e 7c6ffb1: dia/semana/mes, busca, resumo, mini calendario, lista futura, persistencia e sincronizacao explicita com Calendar/Meet. Este deploy nao altera a agenda.
 - Validacao local: build Vite, build TypeScript da API, 36 testes API, auditoria npm de dependencias de producao (0 vulnerabilidades) e git diff --check passaram. O bundle web ainda excede 500 kB.
 - Correcao complementar: o indicador do Sentry exige agora os DSNs da API e do build web, e explica quais variaveis faltam sem apresentar uma integracao parcial como pronta. Nenhum evento artificial e criado pelo teste.
+
+## Reparacao dos modelos do catalogo - 30/09/2026
+- Consulta autenticada somente leitura em producao confirmou 88 registros, nas quatro categorias solicitadas. Todos estavam sem `proposalTemplate` e `contractTemplate`, apesar de o catalogo fonte conter esses modelos; assim, escolher o servico nao preenchia o escopo da proposta/contrato.
+- O botao do catalogo agora completa somente campos vazios usando os modelos fornecidos, preserva nomes, precos, custos, prazos e textos personalizados, e nao cria itens duplicados. Continua sem inventar valores comerciais.
+- Testes cobrem 88 templates, preservacao de precos/textos e ausencia de duplicatas. Validacao local: build Vite, build TypeScript, 34 testes API e diff-check passaram. A reparacao dos 88 registros reais ainda sera aplicada apos o deploy.
