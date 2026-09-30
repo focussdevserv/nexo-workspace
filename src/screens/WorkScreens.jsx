@@ -86,6 +86,12 @@ function AgendaCalendar({ events, selectedDate, setSelectedDate, agendaView, set
     }
     setSelectedDate(next);
   };
+  const moveMiniMonth = (direction) => {
+    const day = selectedDate.getDate();
+    const next = new Date(selectedDate.getFullYear(), selectedDate.getMonth() + direction, 1);
+    next.setDate(Math.min(day, new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate()));
+    setSelectedDate(next);
+  };
   const monthItems = (day) => filteredEvents.filter((event) => event.date === toLocalDateInput(new Date(selectedDate.getFullYear(), selectedDate.getMonth(), day)));
   const weekDate = (index) => { const date = new Date(weekStart); date.setDate(date.getDate() + index); return date; };
   const duration = (event) => {
@@ -104,6 +110,9 @@ function AgendaCalendar({ events, selectedDate, setSelectedDate, agendaView, set
   const now = new Date();
   const isToday = sameDay(now, selectedDate);
   const eventTone = (event) => ['blue', 'lime', 'violet'].includes(event.color) ? event.color : 'blue';
+  const upcomingEvents = sortEvents(filteredEvents.filter((event) => event.date >= toLocalDateInput(now))).sort((a, b) => `${a.date} ${a.time || '99:99'}`.localeCompare(`${b.date} ${b.time || '99:99'}`)).slice(0, 5);
+  const miniDays = Array.from({ length: monthDays }, (_, index) => index + 1);
+  const weekdays = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'];
   const title = agendaView === 'Mês'
     ? monthDate.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })
     : agendaView === 'Semana'
@@ -117,9 +126,22 @@ function AgendaCalendar({ events, selectedDate, setSelectedDate, agendaView, set
       <div className="agenda-period"><button type="button" aria-label="Período anterior" onClick={() => movePeriod(-1)}><ChevronLeft size={17} /></button><div><strong>{title}</strong><small>{periodSummary}</small></div><button type="button" aria-label="Próximo período" onClick={() => movePeriod(1)}><ChevronRight size={17} /></button><button type="button" className="agenda-today" onClick={() => setSelectedDate(new Date())}>Ir para hoje</button></div>
       <div className="agenda-toolbar-tools"><div className="agenda-mode" aria-label="Visualização da agenda">{['Dia', 'Semana', 'Mês'].map((mode) => <button type="button" key={mode} aria-pressed={agendaView === mode} className={agendaView === mode ? 'active' : ''} onClick={() => setAgendaView(mode)}>{mode}</button>)}</div><label className="agenda-search"><Search size={15} /><input aria-label="Buscar evento ou cliente" placeholder="Buscar na agenda" value={agendaQuery} onChange={(event) => setAgendaQuery(event.target.value)} />{agendaQuery && <button type="button" aria-label="Limpar busca" onClick={() => setAgendaQuery('')}><X size={14} /></button>}</label></div>
     </div>
-    <section className="agenda-main agenda-main-new agenda-main-single">
+    <section className="agenda-main agenda-main-new agenda-main-rebuilt">
+      <aside className="agenda-side agenda-side-new">
+        <div className="agenda-mini-nav"><button type="button" aria-label="Mês anterior" onClick={() => moveMiniMonth(-1)}><ChevronLeft size={15} /></button><strong>{monthDate.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}</strong><button type="button" aria-label="Próximo mês" onClick={() => moveMiniMonth(1)}><ChevronRight size={15} /></button></div>
+        <div className="agenda-mini-calendar agenda-mini-calendar-new" role="group" aria-label="Selecionar dia">
+          {weekdays.map((day) => <span key={day}>{day}</span>)}
+          {Array.from({ length: monthStart }, (_, index) => <i key={`pad-${index}`} aria-hidden="true" />)}
+          {miniDays.map((day) => { const date = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), day); const dateKey = toLocalDateInput(date); const hasEvents = filteredEvents.some((event) => event.date === dateKey); return <button type="button" key={day} aria-label={`${day} de ${monthDate.toLocaleDateString('pt-BR', { month: 'long' })}${hasEvents ? ', com compromisso' : ''}`} aria-pressed={sameDay(date, selectedDate)} className={`${sameDay(date, selectedDate) ? 'selected' : ''} ${sameDay(date, now) ? 'is-today' : ''}`} onClick={() => setSelectedDate(date)}>{day}{hasEvents && <i />}</button>; })}
+        </div>
+        <div className="agenda-upcoming agenda-upcoming-new">
+          <div><b>Próximos compromissos</b><span>{upcomingEvents.length}</span></div>
+          {upcomingEvents.length ? upcomingEvents.map((event) => <button type="button" key={event.id} onClick={() => openEvent(event)}><i className={`agenda-dot ${eventTone(event)}`} /><span><b>{event.title}</b><small>{event.date === toLocalDateInput(now) ? 'Hoje' : eventDate(event.date).toLocaleDateString('pt-BR', { weekday: 'short', day: 'numeric', month: 'short' })} · {event.time || 'Sem horário'}</small></span></button>) : <p className="agenda-sidebar-empty">Nenhum compromisso futuro encontrado.</p>}
+        </div>
+        <div className={`agenda-google-state ${googleEmail ? 'is-connected' : ''}`}><CalendarDays size={17} /><span><b>{googleEmail ? 'Google Calendar conectado' : 'Agenda do Nexo'}</b><small>{googleEmail || 'Seus compromissos salvos'}</small></span></div>
+      </aside>
       <div className="agenda-view-area agenda-view-area-new">
-        <div className="agenda-view-heading"><div><span>{agendaView === 'Dia' ? (isToday ? 'HOJE' : 'DIA SELECIONADO') : agendaView === 'Semana' ? 'SEMANA' : 'MÊS'}</span><h3>{agendaView === 'Dia' ? (isToday ? 'Compromissos de hoje' : selectedDate.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })) : agendaView === 'Semana' ? 'Sua semana' : title}</h3></div><span className={`agenda-sync-state ${googleEmail ? 'is-connected' : ''}`}><CalendarDays size={14} />{googleEmail ? 'Google Calendar · conectado' : 'Agenda interna'}</span></div>
+        <div className="agenda-view-heading"><div><span>{agendaView === 'Dia' ? (isToday ? 'HOJE' : 'DIA SELECIONADO') : agendaView === 'Semana' ? 'SEMANA' : 'MÊS'}</span><h3>{agendaView === 'Dia' ? (isToday ? 'Compromissos de hoje' : selectedDate.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })) : agendaView === 'Semana' ? 'Sua semana' : title}</h3><small>{periodSummary}</small></div><button type="button" className="agenda-add-button" onClick={() => onCreateEvent(selectedDate)}><Plus size={16} /> Novo compromisso</button></div>
         {agendaView === 'Dia' && <div className="agenda-day-list">{dayEvents.map((event) => <button type="button" key={event.id} className={`agenda-event-row tone-${eventTone(event)}`} onClick={() => onSelectEvent(event)}><span className="agenda-event-time">{event.time || '—'}<small>{event.end ? `até ${event.end}` : 'horário'}</small></span><i /><span className="agenda-event-copy"><b>{event.title}</b><small>{event.detail || event.client || 'Compromisso'}{event.people ? ` · ${event.people}` : ''}</small></span><ChevronRight size={17} /></button>)}{!dayEvents.length && <div className="agenda-empty agenda-empty-new"><span><CalendarDays size={21} /></span><b>{agendaQuery ? 'Nenhum resultado para esta busca' : 'Seu dia está livre'}</b><small>{agendaQuery ? 'Tente buscar por outro nome ou cliente.' : 'Aproveite o espaço para avançar nas entregas ou marque um compromisso.'}</small>{!agendaQuery && <button type="button" onClick={onCreateEvent}><Plus size={15} /> Adicionar compromisso</button>}</div>}</div>}
         {agendaView === 'Semana' && <div className="agenda-week-view agenda-week-view-new">{Array.from({ length: 7 }, (_, i) => { const date = weekDate(i); const items = sortEvents(filteredEvents.filter((event) => event.date === toLocalDateInput(date))); return <section key={toLocalDateInput(date)} className={`${sameDay(date, selectedDate) ? 'selected' : ''} ${sameDay(date, now) ? 'is-today' : ''}`}><button type="button" className="agenda-week-day" onClick={() => { setSelectedDate(date); setAgendaView('Dia'); }}><span>{date.toLocaleDateString('pt-BR', { weekday: 'short' })}</span><b>{date.getDate()}</b></button><div className="agenda-week-events">{items.slice(0, 5).map((event) => <button type="button" key={event.id} className={`agenda-week-event tone-${eventTone(event)}`} onClick={() => openEvent(event)}><small>{event.time || '—'}</small><b>{event.title}</b></button>)}{items.length > 5 && <small className="agenda-week-more">+{items.length - 5} eventos</small>}{!items.length && <button type="button" className="agenda-free" onClick={() => { setSelectedDate(date); onCreateEvent(date); }}>Livre <Plus size={12} /></button>}</div></section>; })}</div>}
         {agendaView === 'Mês' && <div className="agenda-month-view agenda-month-view-new">{['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'].map((day, index) => <b key={day + index}>{day}</b>)}{Array.from({ length: monthStart }, (_, i) => <span key={`empty-${i}`} />)}{Array.from({ length: monthDays }, (_, i) => { const day = i + 1; const date = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), day); const items = monthItems(day); return <button type="button" key={day} className={`${sameDay(date, selectedDate) ? 'selected' : ''} ${sameDay(date, now) ? 'is-today' : ''}`} onClick={() => { setSelectedDate(date); setAgendaView('Dia'); }}><strong>{day}</strong>{items.slice(0, 3).map((event) => <span key={event.id} className={`agenda-month-event tone-${eventTone(event)}`}>{event.time || ''} {event.title}</span>)}{items.length > 3 && <small>+{items.length - 3} outros</small>}</button>; })}</div>}
