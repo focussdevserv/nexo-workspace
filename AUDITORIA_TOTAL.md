@@ -317,3 +317,8 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - A sessão WAHA em produção ainda requer leitura do QR no telefone. Não enviei mensagens nem inseri registros artificiais. Assim, webhook/recebimento, notificações WhatsApp em produção, entrega/leitura, e ciclo pareado permanecem sem validação ponta a ponta.
 - Validação local desta fatia: testes API 26/26, build TypeScript da API, build Vite e `git diff --check` passaram. Vite ainda alerta bundle JS principal acima de 500 kB.
 - Próximo passo: publicar e confirmar health check; após o usuário parear a sessão, validar uma mensagem recebida autorizada e seu aviso no sino. Em seguida continuar a auditoria módulo por módulo.
+
+### Pós-deploy da fatia de notificações WhatsApp - 30/09/2026
+- `4a36543` foi publicado na branch `main`. Durante a substituição houve 503 transitório no web container; a leitura posterior confirmou `https://focussdev.space/` HTTP 200, `https://focussdev.space/api/health` com banco conectado e `https://flow.pagfocuss.tech/healthz` ok.
+- O HTML de produção referencia o bundle `index-CQK7ZXM5.js`; o próprio bundle servido contém a consulta das notificações com repetição de 10 segundos. O hash do bundle difere do build local por variações do build do container; confirmei o comportamento no conteúdo servido, sem depender do nome do arquivo.
+- Esta checagem comprova disponibilidade e publicação do frontend, mas não inspeciona diretamente o código executado no container API nem simula o webhook com escrita. Recebimento real e exibição do alerta seguem pendentes do pareamento WAHA e de uma mensagem controlada.
