@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { readFileSync } from 'node:fs';
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
@@ -326,7 +327,12 @@ function providerStatus(status: string) {
 }
 
 app.get('/api/health', async (_request, reply) => {
-  try { await pool.query('select 1'); return { status: 'ok', database: 'connected', revision: process.env.SOURCE_COMMIT || process.env.NEXO_SOURCE_COMMIT || 'unknown', timestamp: new Date().toISOString() }; }
+  try {
+    await pool.query('select 1');
+    let revision = 'unknown';
+    try { revision = String(JSON.parse(readFileSync(new URL('../build-info.json', import.meta.url), 'utf8')).revision || revision); } catch {}
+    return { status: 'ok', database: 'connected', revision, timestamp: new Date().toISOString() };
+  }
   catch { return reply.code(503).send({ status: 'degraded', database: 'unavailable' }); }
 });
 

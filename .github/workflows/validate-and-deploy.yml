@@ -6,7 +6,11 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: nexo-main-deploy
+  cancel-in-progress: false
 
 jobs:
   validate:
@@ -37,6 +41,22 @@ jobs:
       - name: Run API tests
         run: npm --prefix api test
 
+      - name: Record revision for Coolify auto deploy
+        if: ${{ github.ref == 'refs/heads/main' }}
+        run: |
+          set -euo pipefail
+          printf '{"revision":"%s"}\n' "$GITHUB_SHA" > public/nexo-build.json
+          if git diff --quiet -- public/nexo-build.json; then
+            echo 'Deployment revision already recorded.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add public/nexo-build.json
+            git commit -m "chore: record deploy revision $GITHUB_SHA [skip ci]"
+            git push origin HEAD:main
+            echo "Coolify auto deploy requested with revision $GITHUB_SHA." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   deploy:
     name: Deploy and verify production
     needs: validate
@@ -50,7 +70,7 @@ jobs:
         run: |
           {
             echo '## Verifying Coolify Git deployment'
-            echo 'Coolify trigger secrets are absent. Waiting for the configured Git repository integration to publish this commit and verifying its revision manifests on the production domain.'
+            echo 'Coolify trigger secrets are absent. Waiting for the Git repository deployment and checking revision manifests on the production domain.'
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Queue Coolify deployment
