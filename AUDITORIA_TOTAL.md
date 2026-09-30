@@ -354,3 +354,11 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - Clicksign agora aparece no status e na tela de integracoes. O teste autenticado consulta envelopes draft pela API v3, sem criar, notificar ou alterar contratos. O host e limitado aos ambientes oficiais sandbox e producao; padrao e sandbox.
 - Para conexao real, cadastrar CLICKSIGN_API_TOKEN e (opcional) CLICKSIGN_API_BASE_URL no servico API no Coolify e redeployar. Nao havia token disponivel para validar com a Clicksign. Envio de contrato, webhook e atualizacao automatica do status de assinatura ainda nao estao implementados nesta fatia.
 - Build Vite, build TypeScript da API, 32 testes API e git diff --check passaram. Nenhum dado real foi criado ou alterado.
+
+
+## Assinatura de contratos via Clicksign - fluxo implementado - 30/09/2026
+- A ficha do contrato agora permite revisar o documento completo, informar nome/e-mail do signatario, confirmar envio, criar envelope, anexar arquivo TXT UTF-8, configurar requisito de assinatura e autenticacao por e-mail, ativar o envelope e solicitar notificacao. A extensao TXT esta entre os formatos de upload suportados pela API Clicksign.
+- O processo Clicksign e persistido no workspace; envio concorrente e duplicidade sao bloqueados. A notificacao pode ser reenviada e a ficha tem sincronizacao manual que reflete estados running/closed/canceled. Contratos com envelope nao permitem edicao local do documento, status ou metadados de assinatura.
+- O modelo exige completar todos os campos entre colchetes antes do envio. O botao de baixar agora usa o texto revisado. O app nao envia nada ao abrir o contrato; o disparo ocorre so por acao confirmada do usuario.
+- Validei a sequencia API com fetch mock: envelope, documento TXT, signatario, requisitos de assinatura e evidencia por e-mail, ativacao; tambem testei bloqueio de hosts fora do sandbox/producao oficiais. API build, Vite build, 34 testes e diff-check passaram.
+- Pendente: configurar CLICKSIGN_API_TOKEN no Coolify e validar com envelope de sandbox; sem credencial nao foi criada assinatura real. O status atualiza sob demanda, sem webhook Clicksign nesta versao. O bundle principal segue acima de 500 kB.

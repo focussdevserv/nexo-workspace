@@ -19,6 +19,7 @@ import { buildGoogleRawMessage, decodeGoogleDriveUpload } from './integrations/g
 import { buildOverduePaymentEvent, overduePaymentRetryDelayMs } from './integrations/overdue-payment.js';
 import { sameMercadoPagoPaymentSnapshot } from './integrations/mercadopago.js';
 import { classifyWahaQrResponse } from './integrations/waha.js';
+import { clicksignBaseUrl, createClicksignEnvelope, getClicksignEnvelope, notifyClicksignEnvelope } from './integrations/clicksign.js';
 import { mapN8nCollections, n8nAutomationTemplates, buildN8nAutomationWorkflow, n8nApiKeyFailureMessage, n8nApiValidationMessage, type N8nAutomationTemplateId } from './integrations/n8n.js';
 import { isUnverifiedContractTransition, requiresExternalSignature } from './contracts/status.js';
 import { checkPublicSite } from './monitoring/site-check.js';
@@ -758,10 +759,8 @@ app.post('/api/integrations/:provider/test', { preHandler: app.authenticate, con
     if (provider === 'clicksign') {
       const token = process.env.CLICKSIGN_API_TOKEN;
       if (!token) return unavailable('Configure CLICKSIGN_API_TOKEN no serviço API do Coolify.');
-      const baseUrl = (process.env.CLICKSIGN_API_BASE_URL || 'https://sandbox.clicksign.com').replace(/\/$/, '');
-      let origin: string;
-      try { origin = new URL(baseUrl).origin; } catch { return unavailable('CLICKSIGN_API_BASE_URL deve ser https://sandbox.clicksign.com ou https://app.clicksign.com.'); }
-      if (!['https://sandbox.clicksign.com', 'https://app.clicksign.com'].includes(origin) || origin !== baseUrl) return unavailable('CLICKSIGN_API_BASE_URL deve ser https://sandbox.clicksign.com ou https://app.clicksign.com.');
+      let baseUrl: string;
+      try { baseUrl = clicksignBaseUrl(process.env.CLICKSIGN_API_BASE_URL || 'https://sandbox.clicksign.com'); } catch { return unavailable('CLICKSIGN_API_BASE_URL deve ser https://sandbox.clicksign.com ou https://app.clicksign.com.'); }
       const response = await fetch(`${baseUrl}/api/v3/envelopes?filter%5Bstatus%5D=draft`, { headers: { Authorization: token, Accept: 'application/vnd.api+json', 'Content-Type': 'application/vnd.api+json' }, signal: AbortSignal.timeout(12_000) });
       if (response.status === 401 || response.status === 403) return failed(`Clicksign respondeu com HTTP ${response.status}. Confira o token e o ambiente (sandbox ou produção).`);
       if (!response.ok) return failed(`Clicksign respondeu com HTTP ${response.status}. Confira o token e a URL do ambiente.`);
@@ -1452,6 +1451,100 @@ app.post('/api/monitoring/site-assets/:id/check', { preHandler: app.authenticate
   return { data: { ...saved.data, id: saved.id, createdAt: saved.createdAt, updatedAt: saved.updatedAt } };
 });
 
+const clicksignContractSendSchema = z.object({
+  signerName: z.string().trim().min(2).max(140),
+  signerEmail: z.string().trim().email().max(254).transform((value) => value.toLowerCase()),
+  documentText: z.string().trim().min(100).max(60_000),
+});
+
+app.post('/api/integrations/clicksign/contracts/:id/send', { preHandler: app.authenticate, config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
+  const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
+  const body = parseBody(clicksignContractSendSchema, request.body, reply);
+  if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Contrato invalido.' });
+  if (!body) return;
+  if (!process.env.CLICKSIGN_API_TOKEN || !await isIntegrationEnabled(request.user.organizationId, 'clicksign')) return reply.code(409).send({ error: 'clicksign_not_configured', message: 'Configure e teste a Clicksign antes de enviar contratos.' });
+  const [contract] = await db.select().from(workspaceRecords).where(and(eq(workspaceRecords.id, params.data.id), eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'contracts'), isNull(workspaceRecords.archivedAt))).limit(1);
+  if (!contract) return reply.code(404).send({ error: 'not_found', message: 'Contrato nao encontrado.' });
+  if (contract.data.status !== 'Rascunho' || contract.data.clicksign && typeof contract.data.clicksign === 'object') return reply.code(409).send({ error: 'contract_already_sent', message: 'Este contrato ja possui um processo Clicksign. Sincronize o status ou use a acao de reenviar notificacao.' });
+  const content = body.documentText;
+  const unresolvedField = content.match(/\[[^\]]{2,100}\]/);
+  if (unresolvedField) return reply.code(422).send({ error: 'contract_fields_incomplete', message: 'Preencha todos os campos entre colchetes do documento antes de enviar para assinatura.' });
+  const title = String(contract.data.title || contract.data.name || 'Contrato');
+  const clientName = String(contract.data.client || '');
+  if (!content.includes(title) || !clientName || !content.includes(clientName)) return reply.code(422).send({ error: 'contract_document_mismatch', message: 'O texto deve identificar o titulo do contrato e o cliente vinculado.' });
+  const baseUrl = process.env.CLICKSIGN_API_BASE_URL || 'https://sandbox.clicksign.com';
+  const sendClaim = { status: 'creating', requestId: randomUUID(), startedAt: new Date().toISOString() };
+  const [claimed] = await db.update(workspaceRecords).set({ data: { ...contract.data, clicksign: sendClaim }, updatedAt: new Date() }).where(and(
+    eq(workspaceRecords.id, contract.id), eq(workspaceRecords.organizationId, request.user.organizationId),
+    eq(workspaceRecords.resource, 'contracts'), sql`${workspaceRecords.data}->'clicksign' IS NULL`,
+  )).returning();
+  if (!claimed) return reply.code(409).send({ error: 'contract_send_in_progress', message: 'Outro envio foi iniciado ou este contrato ja tem um envelope. Atualize a ficha antes de continuar.' });
+  let envelope: Awaited<ReturnType<typeof createClicksignEnvelope>>;
+  try {
+    envelope = await createClicksignEnvelope({ baseUrl, token: process.env.CLICKSIGN_API_TOKEN, name: `${String(contract.data.code || 'Contrato')} - ${title}`.slice(0, 180), filename: `${String(contract.data.code || 'contrato').replace(/[^a-zA-Z0-9_-]+/g, '-')}.txt`, text: content, signerName: body.signerName, signerEmail: body.signerEmail });
+  } catch (error) {
+    const statusCode = (error as { statusCode?: number }).statusCode;
+    app.log.warn({ error: error instanceof Error ? error.message : 'unknown' }, 'Clicksign envelope creation failed');
+    await db.update(workspaceRecords).set({ data: { ...claimed!.data, clicksign: { ...sendClaim, status: 'error', httpStatus: statusCode || null } }, updatedAt: new Date() }).where(eq(workspaceRecords.id, contract.id));
+    return reply.code(502).send({ error: 'clicksign_send_failed', message: 'A Clicksign nao confirmou o envelope. Como a criacao pode ter sido parcial, confira a conta Clicksign antes de tentar novamente.' });
+  }
+  const now = new Date().toISOString();
+  const clicksign = { ...envelope, status: 'running', notificationStatus: 'pending', signerName: body.signerName, signerEmail: body.signerEmail, sentAt: now };
+  const [saved] = await db.transaction(async (tx) => {
+    const [updated] = await tx.update(workspaceRecords).set({ data: { ...claimed!.data, documentText: content, clicksign, status: 'Aguardando assinatura', tone: 'amber' }, updatedAt: new Date() }).where(and(eq(workspaceRecords.id, contract.id), eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'contracts'))).returning();
+    await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'contracts', entityId: contract.id, action: 'signature_requested', payload: { provider: 'clicksign', envelopeId: envelope.envelopeId, recipient: body.signerEmail } });
+    return [updated];
+  });
+  let notificationSent = false;
+  try {
+    await notifyClicksignEnvelope(baseUrl, process.env.CLICKSIGN_API_TOKEN, envelope.envelopeId);
+    notificationSent = true;
+    const [notified] = await db.update(workspaceRecords).set({ data: { ...saved!.data, clicksign: { ...clicksign, notificationStatus: 'sent', notifiedAt: new Date().toISOString() } }, updatedAt: new Date() }).where(eq(workspaceRecords.id, contract.id)).returning();
+    return { data: { ...notified!.data, id: notified!.id, createdAt: notified!.createdAt, updatedAt: notified!.updatedAt }, notificationSent };
+  } catch (error) {
+    app.log.warn({ error: error instanceof Error ? error.message : 'unknown', envelopeId: envelope.envelopeId }, 'Clicksign notification failed after envelope activation');
+    return { data: { ...saved!.data, id: saved!.id, createdAt: saved!.createdAt, updatedAt: saved!.updatedAt }, notificationSent, warning: 'Envelope ativado; a notificacao nao foi confirmada. Use Reenviar notificacao.' };
+  }
+});
+
+app.post('/api/integrations/clicksign/contracts/:id/notify', { preHandler: app.authenticate, config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
+  const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
+  if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Contrato invalido.' });
+  if (!process.env.CLICKSIGN_API_TOKEN || !await isIntegrationEnabled(request.user.organizationId, 'clicksign')) return reply.code(409).send({ error: 'clicksign_not_configured', message: 'Configure a Clicksign antes de enviar notificacoes.' });
+  const [contract] = await db.select().from(workspaceRecords).where(and(eq(workspaceRecords.id, params.data.id), eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'contracts'), isNull(workspaceRecords.archivedAt))).limit(1);
+  const clicksign = contract?.data.clicksign as Record<string, unknown> | undefined;
+  if (!contract || typeof clicksign?.envelopeId !== 'string') return reply.code(409).send({ error: 'clicksign_envelope_missing', message: 'Este contrato ainda nao tem envelope Clicksign.' });
+  try {
+    await notifyClicksignEnvelope(process.env.CLICKSIGN_API_BASE_URL || 'https://sandbox.clicksign.com', process.env.CLICKSIGN_API_TOKEN, clicksign.envelopeId);
+    const next = { ...clicksign, notificationStatus: 'sent', notifiedAt: new Date().toISOString() };
+    const [saved] = await db.update(workspaceRecords).set({ data: { ...contract.data, clicksign: next }, updatedAt: new Date() }).where(eq(workspaceRecords.id, contract.id)).returning();
+    return { data: { ...saved!.data, id: saved!.id, createdAt: saved!.createdAt, updatedAt: saved!.updatedAt } };
+  } catch {
+    return reply.code(502).send({ error: 'clicksign_notification_failed', message: 'A Clicksign nao confirmou o envio da notificacao. O envelope continua ativo.' });
+  }
+});
+
+app.post('/api/integrations/clicksign/contracts/:id/sync', { preHandler: app.authenticate, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
+  const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
+  if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Contrato invalido.' });
+  if (!process.env.CLICKSIGN_API_TOKEN || !await isIntegrationEnabled(request.user.organizationId, 'clicksign')) return reply.code(409).send({ error: 'clicksign_not_configured', message: 'Configure a Clicksign antes de sincronizar.' });
+  const [contract] = await db.select().from(workspaceRecords).where(and(eq(workspaceRecords.id, params.data.id), eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'contracts'), isNull(workspaceRecords.archivedAt))).limit(1);
+  const clicksign = contract?.data.clicksign as Record<string, unknown> | undefined;
+  if (!contract || typeof clicksign?.envelopeId !== 'string') return reply.code(409).send({ error: 'clicksign_envelope_missing', message: 'Este contrato ainda nao tem envelope Clicksign.' });
+  try {
+    const remote = await getClicksignEnvelope(process.env.CLICKSIGN_API_BASE_URL || 'https://sandbox.clicksign.com', process.env.CLICKSIGN_API_TOKEN, clicksign.envelopeId);
+    const status = remote.status === 'closed' ? 'Assinado' : remote.status === 'canceled' ? 'Cancelado' : 'Aguardando assinatura';
+    const [saved] = await db.transaction(async (tx) => {
+      const [updated] = await tx.update(workspaceRecords).set({ data: { ...contract.data, clicksign: { ...clicksign, status: remote.status, syncedAt: new Date().toISOString() }, status, tone: status === 'Assinado' ? 'green' : status === 'Cancelado' ? 'gray' : 'amber' }, updatedAt: new Date() }).where(and(eq(workspaceRecords.id, contract.id), eq(workspaceRecords.organizationId, request.user.organizationId))).returning();
+      if (status !== contract.data.status) await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'contracts', entityId: contract.id, action: 'signature_status_synced', payload: { provider: 'clicksign', status: remote.status } });
+      return [updated];
+    });
+    return { data: { ...saved!.data, id: saved!.id, createdAt: saved!.createdAt, updatedAt: saved!.updatedAt } };
+  } catch {
+    return reply.code(502).send({ error: 'clicksign_sync_failed', message: 'Nao foi possivel consultar o estado do envelope na Clicksign.' });
+  }
+});
+
 app.post('/api/workspace/:resource', { preHandler: app.authenticate }, async (request, reply) => {
   const params = z.object({ resource: workspaceResource }).safeParse(request.params);
   const body = parseBody(z.object({ data: workspaceDataSchema }), request.body, reply);
@@ -1490,9 +1583,15 @@ app.patch('/api/workspace/:resource/:id', { preHandler: app.authenticate }, asyn
   if (!body) return;
   let previousData: Record<string, unknown> | undefined;
   let rejectedContractTransition = false;
+  let rejectedManagedSignatureMutation = false;
   const updated = await db.transaction(async (tx) => {
     const [current] = await tx.select().from(workspaceRecords).where(and(eq(workspaceRecords.id, params.data.id), eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, params.data.resource), isNull(workspaceRecords.archivedAt))).limit(1);
     if (!current) return undefined;
+    if (params.data.resource === 'contracts' && current.data.clicksign && (
+      (Object.hasOwn(body.data, 'status') && body.data.status !== current.data.status)
+      || (Object.hasOwn(body.data, 'clicksign') && JSON.stringify(body.data.clicksign) !== JSON.stringify(current.data.clicksign))
+      || (Object.hasOwn(body.data, 'documentText') && body.data.documentText !== current.data.documentText)
+    )) { rejectedManagedSignatureMutation = true; return undefined; }
     if (params.data.resource === 'contracts' && isUnverifiedContractTransition(current.data.status, body.data.status)) { rejectedContractTransition = true; return undefined; }
     previousData = current.data;
     const [saved] = await tx.update(workspaceRecords).set({ data: { ...current.data, ...body.data }, updatedAt: new Date() }).where(eq(workspaceRecords.id, current.id)).returning();
@@ -1520,6 +1619,7 @@ app.patch('/api/workspace/:resource/:id', { preHandler: app.authenticate }, asyn
     return saved;
   });
   if (rejectedContractTransition) return reply.code(409).send({ error: 'contract_signature_required', message: 'Contrato so muda para Aguardando assinatura, Assinado ou Ativo apos confirmacao do provedor.' });
+  if (rejectedManagedSignatureMutation) return reply.code(409).send({ error: 'clicksign_contract_managed', message: 'Este contrato possui envelope Clicksign. Sincronize o status no provedor; documento, metadados e estado de assinatura ficam bloqueados para edicao manual.' });
   if (!updated) return reply.code(404).send({ error: 'not_found', message: 'Registro não encontrado.' });
   const normalizeStatus = (value: unknown) => String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
   const priorStatus = normalizeStatus(previousData?.status);

@@ -62,7 +62,7 @@ export function contractText(contract = {}) {
 }
 
 export function downloadContract(contract) {
-  const content = contractText(contract);
+  const content = contract.documentText || contractText(contract);
   const html = `<!doctype html><html lang="pt-BR"><meta charset="utf-8"><title>${escapeHtml(contract.title || 'Contrato')}</title><style>body{font:15px/1.65 Arial,sans-serif;max-width:820px;margin:48px auto;padding:0 28px;color:#182338;white-space:pre-wrap}h1{font-size:23px}</style><body>${escapeHtml(content)}</body></html>`;
   const url = URL.createObjectURL(new Blob([html], { type: 'text/html;charset=utf-8' }));
   const anchor = document.createElement('a'); anchor.href = url; anchor.download = `${String(contract.code || contract.title || 'contrato').replace(/[^a-z0-9_-]+/gi, '-')}.html`; anchor.click();
