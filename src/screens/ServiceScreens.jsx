@@ -168,35 +168,74 @@ function Accounts({ notify }) {
 function FinanceList({ page, notify }) {
   const titles = { receitas: ['Lançamento', 'Cliente / descrição', 'Data', 'Valor', 'Status'], despesas: ['Lançamento', 'Fornecedor / categoria', 'Data', 'Valor', 'Status'] };
   const resourceKey = page === 'despesas' ? 'nexo.finance.despesas.v1' : 'nexo.finance.receitas.v1';
-  const [records, setRecords] = useStoredArray(resourceKey, []);
+  const resource = page === 'despesas' ? 'expenses' : 'revenues';
+  const [records, , refreshRecords] = useStoredArray(resourceKey, []);
   const [formOpen, setFormOpen] = useState(false);
   const [name, setName] = useState('');
   const [amount, setAmount] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [actionId, setActionId] = useState('');
+  const [saveError, setSaveError] = useState('');
   const verb = page === 'despesas' ? 'Nova despesa' : 'Nova receita';
   const amountNumber = (item) => Number(item.amount) || 0;
   const moneyRows = records.map((item) => [item.code || item.id, item.description || '', item.date ? new Date(item.date).toLocaleDateString('pt-BR') : '', money(amountNumber(item)), item.status || 'Pendente']);
-  const submit = (event) => {
+
+  const submit = async (event) => {
     event.preventDefault();
+    if (saving || actionId) return;
     const value = Number(amount.replace(',', '.'));
-    if (!name.trim() || !value) { notify('Preencha a descrição e um valor válido.'); return; }
-    const record = { id: globalThis.crypto?.randomUUID?.() || `${page}-${Date.now()}`, code: `${page.slice(0, 3).toUpperCase()}-${String(Date.now()).slice(-5)}`, description: name.trim(), counterparty: name.trim(), category: 'Lançamento manual', date: new Date().toISOString(), amount: value, status: 'Pendente' };
-    setRecords((current) => [record, ...current]);
-    setName(''); setAmount(''); setFormOpen(false);
-    notify(`${verb} enviada para gravação no workspace.`);
+    if (!name.trim() || !Number.isFinite(value) || value <= 0) { notify('Preencha a descrição e um valor válido.'); return; }
+    const record = { code: `${page.slice(0, 3).toUpperCase()}-${String(Date.now()).slice(-5)}`, description: name.trim(), counterparty: name.trim(), category: 'Lançamento manual', date: new Date().toISOString(), amount: value, status: 'Pendente' };
+    setSaving(true); setSaveError('');
+    try {
+      await apiRequest(`/api/workspace/${resource}`, { method: 'POST', body: JSON.stringify({ data: record }) });
+      setName(''); setAmount(''); setFormOpen(false);
+      try { await refreshRecords(); notify(`${verb} gravada no workspace.`); }
+      catch (error) { setSaveError(`${verb} foi gravada, mas a lista não atualizou. Recarregue os registros. ${error.message || ''}`); }
+    } catch (error) {
+      setSaveError(error.message || `Não foi possível gravar ${verb.toLocaleLowerCase('pt-BR')}.`);
+    } finally { setSaving(false); }
   };
-  const doAction = (message) => {
+
+  const doAction = async (message) => {
+    if (saving || actionId) return;
     const code = message.replace('Opções de ', '');
     const target = records.find((item) => (item.code || item.id) === code);
     if (!target) return notify(message);
-    if (!window.confirm(`${target.status === 'Pendente' ? 'Marcar como pago/recebido' : 'Remover'} “${target.description}” (${money(amountNumber(target))})?`)) return;
-    if (target.status === 'Pendente') setRecords((current) => current.map((item) => item.id === target.id ? { ...item, status: page === 'despesas' ? 'Paga' : 'Recebida', settledAt: new Date().toISOString() } : item));
-    else setRecords((current) => current.filter((item) => item.id !== target.id));
-    notify('Alteração enviada para o workspace.');
+    if (!window.confirm(`${target.status === 'Pendente' ? 'Registrar baixa manual de' : 'Remover'} ${target.description} (${money(amountNumber(target))})?`)) return;
+    setActionId(String(target.id)); setSaveError('');
+    let mutationConfirmed = false;
+    try {
+      if (target.status === 'Pendente') await apiRequest(`/api/workspace/${resource}/${target.id}`, { method: 'PATCH', body: JSON.stringify({ data: { status: page === 'despesas' ? 'Paga' : 'Recebida', settledAt: new Date().toISOString() } }) });
+      else await apiRequest(`/api/workspace/${resource}/${target.id}`, { method: 'DELETE' });
+      mutationConfirmed = true;
+      await refreshRecords();
+      notify(target.status === 'Pendente' ? 'Baixa manual registrada no workspace.' : 'Lançamento removido do workspace.');
+    } catch (error) {
+      setSaveError(mutationConfirmed ? `A API confirmou a alteração, mas a lista não atualizou. Recarregue os registros. ${error.message || ''}` : error.message || 'Não foi possível confirmar a alteração na API.');
+    } finally { setActionId(''); }
   };
+
   const total = records.reduce((sum, item) => sum + amountNumber(item), 0);
   const pending = records.filter((item) => item.status === 'Pendente');
   const delayed = records.filter((item) => item.status === 'Atrasada' || item.status === 'Vencida');
-  return <><div className="ns-metrics ns-metrics-three"><Metric label={page === 'despesas' ? 'Despesas registradas' : 'Receitas registradas'} value={money(total)} note={`${records.length} lançamentos no workspace`} icon={page === 'despesas' ? ArrowUpRight : ArrowDownLeft} /><Metric label="Aguardando" value={money(pending.reduce((sum, item) => sum + amountNumber(item), 0))} note={`${pending.length} lançamentos pendentes`} icon={Clock3} /><Metric label="Em atraso" value={money(delayed.reduce((sum, item) => sum + amountNumber(item), 0))} note={`${delayed.length} precisam de atenção`} icon={AlertCircle} /></div>{formOpen && <form className="ns-inline-form" onSubmit={submit}><div><b>{verb}</b><small>O registro será guardado na conta do workspace.</small></div><input aria-label="Descrição ou cliente" required placeholder="Descrição ou cliente" value={name} onChange={(event) => setName(event.target.value)} /><input aria-label="Valor" required type="number" min="0.01" step="0.01" placeholder="Valor (ex.: 850,00)" value={amount} onChange={(event) => setAmount(event.target.value)} /><button className="ns-primary" type="submit"><Check size={15} />Salvar</button><IconButton label="Fechar formulário" onClick={() => setFormOpen(false)}><X size={16} /></IconButton></form>}<DataTable columns={titles[page]} rows={moneyRows} search onAction={doAction} /><div className="ns-page-bottom"><span><ShieldCheck size={15} /> Lançamentos vinculados ao workspace</span><button className="ns-secondary" type="button" onClick={() => setFormOpen((open) => !open)}><Plus size={15} />{verb}</button></div></>;
+  return <>
+    <div className="ns-metrics ns-metrics-three">
+      <Metric label={page === 'despesas' ? 'Despesas registradas' : 'Receitas registradas'} value={money(total)} note={`${records.length} lançamentos no workspace`} icon={page === 'despesas' ? ArrowUpRight : ArrowDownLeft} />
+      <Metric label="Aguardando" value={money(pending.reduce((sum, item) => sum + amountNumber(item), 0))} note={`${pending.length} lançamentos pendentes`} icon={Clock3} />
+      <Metric label="Em atraso" value={money(delayed.reduce((sum, item) => sum + amountNumber(item), 0))} note={`${delayed.length} precisam de atenção`} icon={AlertCircle} />
+    </div>
+    {saveError && <div className="dashboard-data-error" role="alert">{saveError}<button type="button" onClick={() => setSaveError('')}>Fechar</button></div>}
+    {formOpen && <form className="ns-inline-form" aria-busy={saving} onSubmit={submit}>
+      <div><b>{verb}</b><small>O registro ser&aacute; gravado na conta do workspace.</small></div>
+      <input aria-label="Descri&ccedil;&atilde;o ou cliente" required disabled={saving || Boolean(actionId)} placeholder="Descri&ccedil;&atilde;o ou cliente" value={name} onChange={(event) => setName(event.target.value)} />
+      <input aria-label="Valor" required disabled={saving || Boolean(actionId)} type="number" min="0.01" step="0.01" placeholder="Valor (ex.: 850,00)" value={amount} onChange={(event) => setAmount(event.target.value)} />
+      <button className="ns-primary" type="submit" disabled={saving || Boolean(actionId)}><Check size={15} />{saving ? 'Salvando...' : 'Salvar'}</button>
+      <IconButton label="Fechar formul&aacute;rio" onClick={() => !saving && setFormOpen(false)}><X size={16} /></IconButton>
+    </form>}
+    <div aria-busy={Boolean(actionId)}><DataTable columns={titles[page]} rows={moneyRows} search onAction={doAction} /></div>
+    <div className="ns-page-bottom"><span><ShieldCheck size={15} /> Lan&ccedil;amentos vinculados ao workspace</span><button className="ns-secondary" type="button" disabled={saving || Boolean(actionId)} onClick={() => { setSaveError(''); setFormOpen((open) => !open); }}><Plus size={15} />{verb}</button></div>
+  </>;
 }
 function Inbox({ notify, forceWhatsapp = false }) {
   const [messages, setMessages, refreshMessages] = useStoredArray('nexo.support.conversations.v1', initialMessages);
