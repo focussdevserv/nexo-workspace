@@ -17,7 +17,8 @@ Leitura autenticada do runtime e verificações de produção; este painel preva
 - **Clicksign:** fluxo de envelope implementado, mas `CLICKSIGN_API_TOKEN` ausente; sem contrato enviado.
 - **Sentry:** SDKs e remoção de dados sensíveis implementados, mas faltam `SENTRY_DSN` e `VITE_SENTRY_DSN`; ingestão ainda não validada.
 - **Catálogo e documentos:** 88 produtos/serviços com modelos de proposta/contrato; preços continuam vazios conforme pedido, sem valores inventados. A aceitação da proposta cria contrato, projeto e tarefas atomicamente.
-- **Publicação:** após as últimas mudanças, app, API/PostgreSQL, Coolify health routes do n8n responderam HTTP 200. As compilações e 47 testes API passaram na última fatia Google.
+- **Publicação:** o commit `e64c85f` está no `main` e o HTML de produção aponta para o bundle novo. App/API e os health checks `flow.pagfocuss.tech/healthz` e `n8n.pagfocuss.tech/healthz` responderam HTTP 200. O bundle inicial caiu de 635,33 kB (177,91 kB gzip) para 304,92 kB (97,21 kB gzip); Comercial, Projetos/Agenda, Atendimento/Financeiro e Gestão são carregados sob demanda.
+- **Validação de código:** build do frontend, build TypeScript da API e 49 testes da API passaram após a divisão dos módulos. Nenhum dado de cliente, pagamento, mensagem ou evento foi criado para teste.
 
 **Pendências operacionais:** escanear QR no WhatsApp; consentir novamente os escopos Google; inserir os tokens GitHub e Clicksign e os DSNs Sentry no Coolify. Não iniciar ações que enviem mensagens/e-mails, cobrem clientes ou criem eventos sem autorização explícita e dados comerciais reais.
 
