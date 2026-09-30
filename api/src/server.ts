@@ -31,6 +31,7 @@ import { isUnverifiedContractTransition, requiresExternalSignature } from './con
 import { checkPublicSite } from './monitoring/site-check.js';
 import { scrubSentryEvent } from './integrations/sentry-scrub.js';
 import { resolveActivityNotificationTitle } from './notifications.js';
+import { mapGoogleCalendarEvents } from './integrations/google-calendar.js';
 
 const env = z.object({
   PORT: z.coerce.number().int().positive().default(3001),
@@ -598,6 +599,49 @@ app.post('/api/integrations/google/disconnect', { preHandler: app.authenticate, 
   return { data: { disconnected: true } };
 });
 
+app.get('/api/integrations/google/calendar/events', { preHandler: app.authenticate, config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {
+  const query = z.object({
+    from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  }).safeParse(request.query);
+  if (!query.success) return reply.code(400).send({ error: 'validation_error', message: 'Informe o período da agenda no formato AAAA-MM-DD.' });
+  const fromDate = new Date(`${query.data.from}T00:00:00Z`);
+  const toDate = new Date(`${query.data.to}T00:00:00Z`);
+  const days = (toDate.getTime() - fromDate.getTime()) / 86_400_000;
+  if (!Number.isFinite(days) || days < 0 || days > 62 || fromDate.toISOString().slice(0, 10) !== query.data.from || toDate.toISOString().slice(0, 10) !== query.data.to) {
+    return reply.code(400).send({ error: 'invalid_calendar_range', message: 'O intervalo precisa ser válido e não pode exceder 62 dias.' });
+  }
+  if (!await isIntegrationEnabled(request.user.organizationId, 'google')) return reply.code(409).send({ error: 'integration_disconnected', message: 'Reative o Google Workspace em Integrações antes de sincronizar o calendário.' });
+  try {
+    const accessToken = await googleAccessToken(request.user.organizationId, request.user.sub);
+    const base = 'https://www.googleapis.com/calendar/v3/calendars/primary/events';
+    const timeMin = new Date(`${query.data.from}T00:00:00-03:00`).toISOString();
+    const endExclusive = new Date(toDate.getTime() + 86_400_000);
+    const timeMax = new Date(`${endExclusive.toISOString().slice(0, 10)}T00:00:00-03:00`).toISOString();
+    const result: unknown[] = [];
+    let pageToken = '';
+    for (let page = 0; page < 4; page += 1) {
+      const params = new URLSearchParams({ timeMin, timeMax, singleEvents: 'true', orderBy: 'startTime', maxResults: '250', fields: 'items(id,status,summary,description,start,end,attendees(email),hangoutLink,htmlLink,conferenceData(entryPoints(entryPointType,uri))),nextPageToken' });
+      if (pageToken) params.set('pageToken', pageToken);
+      const response = await fetch(`${base}?${params}`, { headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' }, signal: AbortSignal.timeout(12_000) });
+      if (!response.ok) {
+        if (response.status === 401 || response.status === 403) return reply.code(409).send({ error: 'google_calendar_scope_required', message: 'O Google não liberou a leitura do Calendar. Reautorize a conta com o escopo calendar.events e confira se a API Google Calendar está habilitada.' });
+        return reply.code(502).send({ error: 'google_calendar_read_failed', message: 'Não foi possível ler os eventos do Google Calendar agora.' });
+      }
+      const data = await response.json() as { items?: unknown[]; nextPageToken?: string };
+      if (Array.isArray(data.items)) result.push(...data.items);
+      pageToken = typeof data.nextPageToken === 'string' ? data.nextPageToken : '';
+      if (!pageToken) break;
+    }
+    return { data: mapGoogleCalendarEvents(result), truncated: Boolean(pageToken) };
+  } catch (error) {
+    const statusCode = (error as { statusCode?: number }).statusCode;
+    if (statusCode === 409 || statusCode === 503) return reply.code(statusCode).send({ error: 'google_authorization_required', message: 'Autorize o Google Workspace em Integrações antes de sincronizar eventos.' });
+    app.log.warn({ error: error instanceof Error ? error.name : 'unknown' }, 'Google Calendar event read failed');
+    return reply.code(502).send({ error: 'google_calendar_unavailable', message: 'Não foi possível ler o Google Calendar. Tente novamente.' });
+  }
+});
+
 app.route({ method: ['POST', 'PATCH'], url: '/api/integrations/google/calendar/events', preHandler: app.authenticate, config: { rateLimit: { max: 30, timeWindow: '1 minute' } }, handler: async (request, reply) => {
   const body = parseBody(z.object({
     eventId: z.string().regex(/^[a-v0-9]{5,1024}$/).optional(),
@@ -605,11 +649,19 @@ app.route({ method: ['POST', 'PATCH'], url: '/api/integrations/google/calendar/e
     description: z.string().max(8000).optional(),
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    allDay: z.boolean().default(false),
     startTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
     endTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
     createMeet: z.boolean().default(false),
     attendees: z.array(z.string().email()).max(30).default([]),
   }), request.body, reply); if (!body) return;
+  const validCalendarDate = (value: string) => {
+    const parsed = new Date(`${value}T00:00:00Z`);
+    return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+  };
+  if (!validCalendarDate(body.date) || (body.endDate && (!validCalendarDate(body.endDate) || body.endDate < body.date))) {
+    return reply.code(400).send({ error: 'invalid_calendar_date', message: 'A data inicial ou final do evento é inválida.' });
+  }
   try {
     const accessToken = await googleAccessToken(request.user.organizationId, request.user.sub);
     const base = 'https://www.googleapis.com/calendar/v3/calendars/primary/events';
@@ -625,12 +677,14 @@ app.route({ method: ['POST', 'PATCH'], url: '/api/integrations/google/calendar/e
       if (!existing.ok && existing.status !== 404) return reply.code(502).send({ error: 'google_calendar_lookup_failed', message: 'Não foi possível verificar o evento no Google Calendar.' });
       if (existing.status === 404 && request.method === 'PATCH') return reply.code(404).send({ error: 'google_calendar_event_missing', message: 'O evento não foi encontrado no Google Calendar.' });
     }
+    const allDayEnd = new Date(`${body.date}T12:00:00Z`);
+    allDayEnd.setUTCDate(allDayEnd.getUTCDate() + 1);
     const eventBody = {
       ...(body.eventId && request.method === 'POST' ? { id: body.eventId } : {}),
       summary: body.title,
       description: body.description || '',
-      start: { dateTime: `${body.date}T${body.startTime}:00`, timeZone: 'America/Sao_Paulo' },
-      end: { dateTime: `${body.endDate || body.date}T${body.endTime}:00`, timeZone: 'America/Sao_Paulo' },
+      start: body.allDay ? { date: body.date } : { dateTime: `${body.date}T${body.startTime}:00`, timeZone: 'America/Sao_Paulo' },
+      end: body.allDay ? { date: body.endDate || allDayEnd.toISOString().slice(0, 10) } : { dateTime: `${body.endDate || body.date}T${body.endTime}:00`, timeZone: 'America/Sao_Paulo' },
       ...(body.attendees.length ? { attendees: body.attendees.map((email) => ({ email })) } : {}),
       ...(body.createMeet ? { conferenceData: { createRequest: { requestId: randomUUID(), conferenceSolutionKey: { type: 'hangoutsMeet' } } } } : {}),
     };

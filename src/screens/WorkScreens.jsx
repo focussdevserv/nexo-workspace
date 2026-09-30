@@ -4,7 +4,7 @@ import {
   CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Circle, Clock3,
   Download, File, FileImage, FileText, Filter, Folder, FolderOpen,
   LayoutGrid, List, MoreHorizontal, Paperclip, Plus, Search, Send,
-  SlidersHorizontal, Sparkles, Timer, Upload, Users, X, ShieldCheck,
+  SlidersHorizontal, Sparkles, Timer, Upload, Users, X, ShieldCheck, RefreshCw,
 } from 'lucide-react';
 import './work.css';
 import { apiRequest, fetchAllRecords } from '../lib/workspace-api.js';
@@ -61,9 +61,10 @@ function Avatar({ name, className = '' }) {
   return <span className={`work-avatar ${className}`} aria-label={name}>{name}</span>;
 }
 function toLocalDateInput(date) { return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`; }
+function nextCalendarDate(date) { const value = new Date(`${date}T12:00:00Z`); value.setUTCDate(value.getUTCDate() + 1); return value.toISOString().slice(0, 10); }
 function calendarEndDate(date, start, end) { if (end > start) return date; const next = new Date(`${date}T12:00:00`); next.setDate(next.getDate() + 1); return toLocalDateInput(next); }
 
-function AgendaCalendar({ events, selectedDate, setSelectedDate, agendaView, setAgendaView, agendaQuery, setAgendaQuery, onSelectEvent, onCreateEvent }) {
+function AgendaCalendar({ events, selectedDate, setSelectedDate, agendaView, setAgendaView, agendaQuery, setAgendaQuery, calendarSyncBusy, calendarSyncError, calendarSyncedAt, onSyncGoogleCalendar, onSelectEvent, onCreateEvent }) {
   const monthDate = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
   const monthDays = new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 0).getDate();
   const monthStart = (monthDate.getDay() + 6) % 7;
@@ -116,11 +117,12 @@ function AgendaCalendar({ events, selectedDate, setSelectedDate, agendaView, set
   return <div className="agenda-workspace agenda-redesign">
     <div className="agenda-toolbar agenda-toolbar-new">
       <div className="agenda-period"><button type="button" aria-label="Período anterior" onClick={() => movePeriod(-1)}><ChevronLeft size={17} /></button><div><strong>{title}</strong><small>{periodSummary}</small></div><button type="button" aria-label="Próximo período" onClick={() => movePeriod(1)}><ChevronRight size={17} /></button><button type="button" className="agenda-today" onClick={() => setSelectedDate(new Date())}>Ir para hoje</button></div>
-      <div className="agenda-toolbar-tools"><div className="agenda-mode" aria-label="Visualização da agenda">{['Dia', 'Semana', 'Mês'].map((mode) => <button type="button" key={mode} aria-pressed={agendaView === mode} className={agendaView === mode ? 'active' : ''} onClick={() => setAgendaView(mode)}>{mode}</button>)}</div><label className="agenda-search"><Search size={15} /><input aria-label="Buscar evento ou cliente" placeholder="Buscar na agenda" value={agendaQuery} onChange={(event) => setAgendaQuery(event.target.value)} />{agendaQuery && <button type="button" aria-label="Limpar busca" onClick={() => setAgendaQuery('')}><X size={14} /></button>}</label></div>
+      <div className="agenda-toolbar-tools"><button type="button" className="agenda-google-sync" onClick={onSyncGoogleCalendar} disabled={calendarSyncBusy} title={calendarSyncedAt ? `Ultima leitura: ${calendarSyncedAt}` : "Ler eventos do Google Calendar"}><RefreshCw size={14} className={calendarSyncBusy ? "agenda-spin" : ""}/><span>{calendarSyncBusy ? "Sincronizando..." : "Atualizar Google"}</span></button><div className="agenda-mode" aria-label="Visualizacao da agenda">{["Dia", "Semana", "M\u00eas"].map((mode) => <button type="button" key={mode} aria-pressed={agendaView === mode} className={agendaView === mode ? "active" : ""} onClick={() => setAgendaView(mode)}>{mode}</button>)}</div><label className="agenda-search"><Search size={15} /><input aria-label="Buscar evento ou cliente" placeholder="Buscar na agenda" value={agendaQuery} onChange={(event) => setAgendaQuery(event.target.value)} />{agendaQuery && <button type="button" aria-label="Limpar busca" onClick={() => setAgendaQuery("")}><X size={14} /></button>}</label></div>
     </div>
     <section className="agenda-main agenda-main-new agenda-main-rebuilt agenda-main-single">
       <div className="agenda-view-area agenda-view-area-new">
         <div className="agenda-view-heading"><div><span>{agendaView === 'Dia' ? (isToday ? 'HOJE' : 'DIA SELECIONADO') : agendaView === 'Semana' ? 'SEMANA' : 'MÊS'}</span><h3>{agendaView === 'Dia' ? (isToday ? 'Compromissos de hoje' : selectedDate.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })) : agendaView === 'Semana' ? 'Sua semana' : title}</h3><small>{periodSummary}</small></div><span className="agenda-view-hint">Selecione um compromisso para ver ou editar</span></div>
+        {calendarSyncError && <div className="agenda-sync-error" role="status"><CalendarDays size={15}/><span>{calendarSyncError}</span></div>}
         {agendaView === 'Dia' && <div className="agenda-day-list">{dayEvents.map((event) => <button type="button" key={event.id} className={`agenda-event-row tone-${eventTone(event)}`} onClick={() => onSelectEvent(event)}><span className="agenda-event-time">{event.time || '—'}<small>{event.end ? `até ${event.end}` : 'horário'}</small></span><i /><span className="agenda-event-copy"><b>{event.title}</b><small>{event.detail || event.client || 'Compromisso'}{event.people ? ` · ${event.people}` : ''}</small></span><ChevronRight size={17} /></button>)}{!dayEvents.length && <div className="agenda-empty agenda-empty-new"><span><CalendarDays size={21} /></span><b>{agendaQuery ? 'Nenhum resultado para esta busca' : 'Seu dia está livre'}</b><small>{agendaQuery ? 'Tente buscar por outro nome ou cliente.' : 'Aproveite o espaço para avançar nas entregas ou marque um compromisso.'}</small>{!agendaQuery && <button type="button" onClick={onCreateEvent}><Plus size={15} /> Adicionar compromisso</button>}</div>}</div>}
         {agendaView === 'Semana' && <div className="agenda-week-view agenda-week-view-new">{Array.from({ length: 7 }, (_, i) => { const date = weekDate(i); const items = sortEvents(filteredEvents.filter((event) => event.date === toLocalDateInput(date))); return <section key={toLocalDateInput(date)} className={`${sameDay(date, selectedDate) ? 'selected' : ''} ${sameDay(date, now) ? 'is-today' : ''}`}><button type="button" className="agenda-week-day" onClick={() => { setSelectedDate(date); setAgendaView('Dia'); }}><span>{date.toLocaleDateString('pt-BR', { weekday: 'short' })}</span><b>{date.getDate()}</b></button><div className="agenda-week-events">{items.slice(0, 5).map((event) => <button type="button" key={event.id} className={`agenda-week-event tone-${eventTone(event)}`} onClick={() => openEvent(event)}><small>{event.time || '—'}</small><b>{event.title}</b></button>)}{items.length > 5 && <small className="agenda-week-more">+{items.length - 5} eventos</small>}{!items.length && <button type="button" className="agenda-free" onClick={() => { setSelectedDate(date); onCreateEvent(date); }}>Livre <Plus size={12} /></button>}</div></section>; })}</div>}
         {agendaView === 'Mês' && <div className="agenda-month-view agenda-month-view-new">{['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'].map((day, index) => <b key={day + index}>{day}</b>)}{Array.from({ length: monthStart }, (_, i) => <span key={`empty-${i}`} />)}{Array.from({ length: monthDays }, (_, i) => { const day = i + 1; const date = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), day); const items = monthItems(day); return <button type="button" key={day} className={`${sameDay(date, selectedDate) ? 'selected' : ''} ${sameDay(date, now) ? 'is-today' : ''}`} onClick={() => { setSelectedDate(date); setAgendaView('Dia'); }}><strong>{day}</strong>{items.slice(0, 3).map((event) => <span key={event.id} className={`agenda-month-event tone-${eventTone(event)}`}>{event.time || ''} {event.title}</span>)}{items.length > 3 && <small>+{items.length - 3} outros</small>}</button>; })}</div>}
@@ -156,10 +158,35 @@ function WorkScreen({ page }) {
   const [selectedDate, setSelectedDate] = useState(() => new Date());
   const [agendaView, setAgendaView] = useState('Dia');
   const [agendaQuery, setAgendaQuery] = useState('');
+  const [googleCalendarEvents, setGoogleCalendarEvents] = useState([]);
+  const [calendarSyncBusy, setCalendarSyncBusy] = useState(false);
+  const [calendarSyncError, setCalendarSyncError] = useState('');
+  const [calendarSyncedAt, setCalendarSyncedAt] = useState('');
+  const [calendarSyncRevision, setCalendarSyncRevision] = useState(0);
   const [composer, setComposer] = useState('');
   const [savingAgenda, setSavingAgenda] = useState(false);
   const uploadRef = useRef(null);
   const [uploadingFiles, setUploadingFiles] = useState(false);
+  useEffect(() => {
+    if (key !== 'agenda') return undefined;
+    let active = true;
+    const start = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate());
+    const end = new Date(start);
+    if (agendaView === 'Semana') {
+      start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
+      end.setTime(start.getTime()); end.setDate(start.getDate() + 6);
+    } else if (agendaView === 'M\u00eas') {
+      start.setDate(1); end.setFullYear(start.getFullYear(), start.getMonth() + 1, 0);
+    }
+    const from = toLocalDateInput(start);
+    const to = toLocalDateInput(end);
+    setCalendarSyncBusy(true); setCalendarSyncError('');
+    apiRequest(`/api/integrations/google/calendar/events?from=${from}&to=${to}`)
+      .then((result) => { if (!active) return; setGoogleCalendarEvents(result.data || []); setCalendarSyncedAt(new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })); setCalendarSyncError(result.truncated ? 'A agenda contem mais eventos do que esta consulta exibiu. Reduza o periodo para ver todos.' : ''); })
+      .catch((error) => { if (!active) return; setGoogleCalendarEvents([]); setCalendarSyncError(error.message || 'Nao foi possivel ler os eventos do Google Calendar.'); })
+      .finally(() => { if (active) setCalendarSyncBusy(false); });
+    return () => { active = false; };
+  }, [key, selectedDate, agendaView, calendarSyncRevision]);
   const [googleAccountEmail, setGoogleAccountEmail] = useState('');
   const [draft, setDraft] = useState({ title: '', client: '', project: '', due: '', assignee: '', time: '16:30', detail: '', priority: 'Normal', syncGoogleCalendar: true, createMeet: false, attendees: '' });
   const [timerNow, setTimerNow] = useState(Date.now());
@@ -280,33 +307,45 @@ function WorkScreen({ page }) {
 
   const saveEventChanges = async (patch) => {
     const updated = { ...selectedEvent, ...patch };
-    if (!updated.date || !updated.time || !updated.end || updated.end <= updated.time) { notify('Informe a data e um término posterior ao início.'); return; }
-    const localSave = await setEvents((current) => current.map((item) => String(item.id) === String(selectedEvent.id) ? updated : item));
-    if (!localSave.ok) { notify(`Não foi possível salvar o evento: ${localSave.error?.message || 'erro na API.'}`); return; }
+    if (!updated.date || (!updated.allDay && (!updated.time || !updated.end || updated.end <= updated.time))) { notify('Informe uma data e um termino posterior ao inicio.'); return; }
+    const googleOnly = selectedEvent.calendarSource === 'google';
+    if (!googleOnly) {
+      const localSave = await setEvents((current) => current.map((item) => String(item.id) === String(selectedEvent.id) ? updated : item));
+      if (!localSave.ok) { notify(`Nao foi possivel salvar o evento: ${localSave.error?.message || 'erro na API.'}`); return; }
+    }
     if (!selectedEvent.googleEventId) { notify('Evento atualizado na agenda do Nexo.'); setSelectedEvent(null); return; }
     try {
       const attendees = String(updated.people || '').split(/[;,\s]+/).map((email) => email.trim()).filter((email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email));
-      const result = await apiRequest('/api/integrations/google/calendar/events', { method: 'PATCH', body: JSON.stringify({ eventId: selectedEvent.googleEventId, title: updated.title, description: updated.detail, date: updated.date, endDate: calendarEndDate(updated.date, updated.time, updated.end), startTime: updated.time, endTime: updated.end, attendees, createMeet: Boolean(selectedEvent.googleMeetUrl) }) });
+      const endDate = updated.allDay ? (selectedEvent.allDay && updated.date === selectedEvent.date ? selectedEvent.endDate : nextCalendarDate(updated.date)) : calendarEndDate(updated.date, updated.time, updated.end);
+      const result = await apiRequest('/api/integrations/google/calendar/events', { method: 'PATCH', body: JSON.stringify({ eventId: selectedEvent.googleEventId, title: updated.title, description: updated.detail, date: updated.date, endDate, allDay: Boolean(updated.allDay), startTime: updated.time || '00:00', endTime: updated.end || '23:59', attendees, createMeet: Boolean(selectedEvent.googleMeetUrl) }) });
       const synced = { ...updated, googleMeetUrl: result.data?.meetUrl || updated.googleMeetUrl, calendarSyncStatus: 'connected', calendarSyncError: '' };
-      const syncSave = await setEvents((current) => current.map((item) => String(item.id) === String(selectedEvent.id) ? synced : item));
-      if (!syncSave.ok) { notify('Google Calendar foi atualizado, mas o Nexo não conseguiu gravar o estado da sincronização.'); return; }
-      notify('Evento atualizado no Nexo e no Google Calendar.');
+      if (googleOnly) setGoogleCalendarEvents((current) => current.map((item) => String(item.googleEventId) === String(selectedEvent.googleEventId) ? synced : item));
+      else {
+        const syncSave = await setEvents((current) => current.map((item) => String(item.id) === String(selectedEvent.id) ? synced : item));
+        if (!syncSave.ok) { notify('Google Calendar foi atualizado, mas o estado da sincronizacao nao foi salvo no workspace.'); return; }
+      }
+      notify(googleOnly ? 'Evento atualizado no Google Calendar.' : 'Evento atualizado no Nexo e no Google Calendar.');
     } catch (error) {
+      if (googleOnly) { notify(error.message || 'O Google Calendar nao confirmou a alteracao.'); return; }
       const failed = { ...updated, calendarSyncStatus: 'not_connected', calendarSyncError: error.message || 'Falha ao atualizar o Google Calendar.' };
       const syncSave = await setEvents((current) => current.map((item) => String(item.id) === String(selectedEvent.id) ? failed : item));
-      notify(syncSave.ok ? `Evento salvo no Nexo, mas o Google Calendar não confirmou: ${failed.calendarSyncError}` : 'Evento atualizado no Nexo, porém houve falha ao registrar o estado do Google Calendar.');
+      notify(syncSave.ok ? `Evento salvo no Nexo, mas o Google Calendar nao confirmou: ${failed.calendarSyncError}` : 'Evento atualizado no Nexo, porem houve falha ao registrar a sincronizacao.');
     }
     setSelectedEvent(null);
   };
   const deleteSelectedEvent = async () => {
+    const googleOnly = selectedEvent.calendarSource === 'google';
     if (selectedEvent.googleEventId) {
       try { await apiRequest(`/api/integrations/google/calendar/events/${selectedEvent.googleEventId}`, { method: 'DELETE' }); }
-      catch (error) { notify(error.message || 'O Google Calendar não confirmou a exclusão.'); return; }
+      catch (error) { notify(error.message || 'O Google Calendar nao confirmou a exclusao.'); return; }
     }
-    const deleted = await setEvents((current) => current.filter((item) => String(item.id) !== String(selectedEvent.id)));
-    if (!deleted.ok) { notify(`Não foi possível remover o evento do Nexo: ${deleted.error?.message || 'erro na API.'}`); return; }
+    if (googleOnly) setGoogleCalendarEvents((current) => current.filter((item) => String(item.googleEventId) !== String(selectedEvent.googleEventId)));
+    else {
+      const deleted = await setEvents((current) => current.filter((item) => String(item.id) !== String(selectedEvent.id)));
+      if (!deleted.ok) { notify(`Nao foi possivel remover o evento do Nexo: ${deleted.error?.message || 'erro na API.'}`); return; }
+    }
     setSelectedEvent(null);
-    notify('Evento removido da agenda.');
+    notify(googleOnly ? 'Evento removido do Google Calendar.' : 'Evento removido da agenda.');
   };
 
   return <main className="work-screen">
@@ -327,7 +366,7 @@ function WorkScreen({ page }) {
       <section className="work-panel"><div className="panel-toolbar"><div className="work-tabs">{['Todas', 'A fazer', 'Em andamento', 'Concluída'].map((status) => <button key={status} className={taskStatus === status ? 'active' : ''} onClick={() => setTaskStatus(status)}>{status}</button>)}</div><label className="inline-search"><Search size={15} /><input value={taskQuery} onChange={(e) => setTaskQuery(e.target.value)} placeholder="Buscar tarefa" /></label></div><div className="task-table"><div className="task-table-head"><span>Tarefa</span><span>Projeto</span><span>Responsável</span><span>Prazo</span><span>Status</span><span /></div>{visibleTasks.map((task) => <div className={`task-row ${task.status === 'Concluída' ? 'task-row-done' : ''}`} key={task.id}><button className="task-check" aria-label={task.status === 'Concluída' ? 'Reabrir tarefa' : 'Concluir tarefa'} onClick={() => toggleTask(task.id)}>{task.status === 'Concluída' ? <CheckCircle2 size={19} /> : <Circle size={19} />}</button><div className="task-main"><strong>{task.title}</strong><small>{task.client} <span className={`priority priority-${task.priority.toLowerCase()}`}>{task.priority}</span></small></div><span className="task-project">{task.project}</span><span className="task-owner"><Avatar name={task.assignee} /> {task.assignee}</span><span className="task-due"><Clock3 size={14} />{task.due}</span><StatusPill status={task.status} /><button className="row-more" aria-label="Mais opções" onClick={() => setSelectedTask(task)}><MoreHorizontal size={18} /></button></div>)}{visibleTasks.length === 0 && <Empty title="Nada por aqui" text="Tente outro filtro ou termo de busca." />}</div></section>
     </>}
 
-    {key === 'agenda' && <>{eventsError && <div className="dashboard-data-error" role="alert">{eventsError}</div>}<AgendaCalendar events={events} selectedDate={selectedDate} setSelectedDate={setSelectedDate} agendaView={agendaView} setAgendaView={setAgendaView} agendaQuery={agendaQuery} setAgendaQuery={setAgendaQuery} onSelectEvent={setSelectedEvent} onCreateEvent={addEvent} /></>}
+    {key === 'agenda' && <>{eventsError && <div className="dashboard-data-error" role="alert">{eventsError}</div>}<AgendaCalendar events={[...events, ...googleCalendarEvents.filter((item) => !events.some((event) => event.googleEventId === item.googleEventId))]} selectedDate={selectedDate} setSelectedDate={setSelectedDate} agendaView={agendaView} setAgendaView={setAgendaView} agendaQuery={agendaQuery} setAgendaQuery={setAgendaQuery} calendarSyncBusy={calendarSyncBusy} calendarSyncError={calendarSyncError} calendarSyncedAt={calendarSyncedAt} onSyncGoogleCalendar={() => setCalendarSyncRevision((revision) => revision + 1)} onSelectEvent={setSelectedEvent} onCreateEvent={addEvent} /></>}
     {key === 'horas' && <>
       <section className="hours-overview"><div className="hours-total"><div><span className="eyebrow">CRONÔMETRO {timerRunning ? '· EM ANDAMENTO' : ''}</span><strong className="running-timer">{timerLabel}</strong><small>{timerRunning ? 'Registrando tempo para Site institucional' : 'Tempo desta sessão sincronizado com o workspace'}</small></div><div className="hours-ring"><div><strong>{Math.min(100, Math.round(timerSeconds / 1440))}%</strong><small>meta diária</small></div></div></div><div className="hours-stat"><span className="hours-stat-icon blue"><Timer size={17} /></span><div><small>Faturáveis nesta sessão</small><strong>{Math.floor(timerSeconds / 3600)}h {Math.floor(timerSeconds % 3600 / 60)}m</strong><em>Registro no workspace</em></div></div><div className="hours-stat"><span className="hours-stat-icon lime"><Activity size={17} /></span><div><small>Projetos ativos</small><strong>{projects.filter((project) => project.status !== 'Concluído').length} projetos</strong><em>em acompanhamento</em></div></div><label className="period-select"><span>Período</span><select value={hoursPeriod} onChange={(e) => setHoursPeriod(e.target.value)}><option>Esta semana</option><option>Semana passada</option><option>Este mês</option></select><ChevronDown size={14} /></label></section>
       <section className="work-panel hours-panel"><div className="panel-section-heading"><div><h2>Horas por projeto</h2><p>Registros concluídos · {hoursPeriod.toLowerCase()}</p></div><button className="work-button work-button-quiet" onClick={() => { const completed = hours.filter((item) => item.status === 'completed'); const csv = ['Projeto;Cliente;Tarefa;Horas;Início;Fim', ...completed.map((item) => [item.project, item.client, item.title, item.hours || 0, item.startedAt, item.endedAt].join(';'))].join('\n'); const url = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv' })); const link = document.createElement('a'); link.href = url; link.download = 'horas-workspace.csv'; link.click(); URL.revokeObjectURL(url); notify('Relatório exportado com os registros do workspace.'); }}><Download size={15} /> Exportar</button></div><div className="hours-table"><div className="hours-table-head"><span>Projeto</span><span>Responsável</span><span>Horas</span><span>Progresso</span><span>Último registro</span></div>{hours.filter((item) => item.status === 'completed').map((row) => <div className="hours-row" key={row.id}><div className="hours-project"><span className="file-icon file-folder"><Folder size={16} /></span><span><b>{row.project || 'Sem projeto'}</b><small>{row.client || 'Sem cliente'} · {row.title}</small></span></div><span className="task-owner">Workspace</span><strong>{Number(row.hours || 0).toFixed(2)}h</strong><div className="hours-bar"><i style={{ width: '100%' }} /><small>Registrado</small></div><span className="hours-last">{row.endedAt ? new Date(row.endedAt).toLocaleString('pt-BR') : '—'}</span></div>)}{!hours.some((item) => item.status === 'completed') && <div className="work-empty-state">Nenhum tempo registrado ainda.</div>}</div><button className={`start-timer ${timerRunning ? 'timer-active' : ''}`} onClick={toggleTimer}><span><Timer size={17} /></span><b>{timerRunning ? `Parar cronômetro · ${timerLabel}` : 'Iniciar cronômetro'}</b><small>{selectedTask?.title || 'Selecione uma tarefa para vincular o tempo'}</small><ArrowRight size={16} /></button></section>
@@ -370,8 +409,8 @@ function normalizePage(page) {
 function Metric({ label, value, note, icon: Icon, tone }) { return <article className="work-metric"><span className={`metric-icon ${tone}`}><Icon size={17} /></span><div><small>{label}</small><strong>{value}</strong><span>{note}</span></div><ArrowUpRight size={15} className="metric-arrow" /></article>; }
 function StatusPill({ status }) { const slug = status.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s/g, '-'); return <span className={`status-pill status-${slug}`}><i />{status}</span>; }
 function EventDetail({ event, onClose, onSave, onDelete }) {
-  const [draft, setDraft] = useState({ title: event.title || '', date: event.date || new Date().toISOString().slice(0, 10), time: event.time || '09:00', end: event.end || '09:30', detail: event.detail || '', people: event.people || '' });
-  return <div className="work-modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}><form className="work-compose-modal" onSubmit={(e) => { e.preventDefault(); onSave(draft); }}><header><div><span className="eyebrow">AGENDA · COMPROMISSO</span><h2>{event.title}</h2></div><button type="button" aria-label="Fechar" onClick={onClose}><X size={18}/></button></header><label>Titulo<input required value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })}/></label><div className="work-compose-grid"><label>Data<input required type="date" value={draft.date} onChange={(e) => setDraft({ ...draft, date: e.target.value })}/></label><label>Inicio<input required type="time" value={draft.time} onChange={(e) => setDraft({ ...draft, time: e.target.value })}/></label><label>Termino<input required type="time" value={draft.end} onChange={(e) => setDraft({ ...draft, end: e.target.value })}/></label><label>Participantes<input value={draft.people} onChange={(e) => setDraft({ ...draft, people: e.target.value })}/></label></div><label>Cliente / contexto<input value={draft.detail} onChange={(e) => setDraft({ ...draft, detail: e.target.value })}/></label>{event.calendarSyncStatus === 'connected' ? <p className="work-modal-note">Evento sincronizado com Google Calendar.</p> : <p className="work-modal-note">{event.calendarSyncError || (event.calendarSyncStatus === 'pending' ? 'Sincronização com Google Calendar em andamento.' : event.calendarSyncStatus === 'not_connected' ? 'Evento salvo no Nexo, mas ainda sem sincronização com Google Calendar.' : 'Evento salvo na agenda do Nexo.')}</p>}{event.googleMeetUrl && <a className="work-meet-link" href={event.googleMeetUrl} target="_blank" rel="noreferrer">Entrar no Google Meet</a>}<footer><button type="button" className="work-button work-button-quiet file-remove" onClick={onDelete}>Excluir evento</button><span/><button type="button" className="work-button work-button-quiet" onClick={onClose}>Cancelar</button><button className="work-button work-button-primary"><Check size={14}/>Salvar evento</button></footer></form></div>;
+  const [draft, setDraft] = useState({ title: event.title || '', date: event.date || new Date().toISOString().slice(0, 10), time: event.time || '09:00', end: event.end || '09:30', detail: event.detail || '', people: event.people || '', allDay: Boolean(event.allDay) });
+  return <div className="work-modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}><form className="work-compose-modal" onSubmit={(e) => { e.preventDefault(); onSave(draft); }}><header><div><span className="eyebrow">AGENDA ? COMPROMISSO</span><h2>{event.title}</h2></div><button type="button" aria-label="Fechar" onClick={onClose}><X size={18}/></button></header><label>Titulo<input required value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })}/></label><div className="work-compose-grid"><label>Data<input required type="date" value={draft.date} onChange={(e) => setDraft({ ...draft, date: e.target.value })}/></label><label className="work-sync-option"><input type="checkbox" checked={draft.allDay} onChange={(e) => setDraft({ ...draft, allDay: e.target.checked })}/>Evento de dia inteiro</label>{!draft.allDay && <><label>Inicio<input required type="time" value={draft.time} onChange={(e) => setDraft({ ...draft, time: e.target.value })}/></label><label>Termino<input required type="time" value={draft.end} onChange={(e) => setDraft({ ...draft, end: e.target.value })}/></label></>}<label>Participantes<input value={draft.people} onChange={(e) => setDraft({ ...draft, people: e.target.value })}/></label></div><label>Detalhes<input value={draft.detail} onChange={(e) => setDraft({ ...draft, detail: e.target.value })}/></label>{event.calendarSyncStatus === 'connected' ? <p className="work-modal-note">Evento sincronizado com Google Calendar.</p> : <p className="work-modal-note">{event.calendarSyncError || (event.calendarSyncStatus === 'pending' ? 'Sincronizacao com Google Calendar em andamento.' : event.calendarSyncStatus === 'not_connected' ? 'Evento salvo no Nexo, mas sem sincronizacao com Google Calendar.' : 'Evento salvo na agenda do Nexo.')}</p>}{event.googleMeetUrl && <a className="work-meet-link" href={event.googleMeetUrl} target="_blank" rel="noreferrer">Entrar no Google Meet</a>}{event.googleHtmlLink && <a className="work-meet-link" href={event.googleHtmlLink} target="_blank" rel="noreferrer">Abrir no Google Calendar</a>}<footer><button type="button" className="work-button work-button-quiet file-remove" onClick={onDelete}>Excluir evento</button><span/><button type="button" className="work-button work-button-quiet" onClick={onClose}>Cancelar</button><button className="work-button work-button-primary"><Check size={14}/>Salvar evento</button></footer></form></div>;
 }
 
 function ApprovalDetail({ approval, onClose, onComment, onDecision }) {
