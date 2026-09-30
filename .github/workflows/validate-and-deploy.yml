@@ -12,9 +12,6 @@ jobs:
   validate:
     name: Build and API checks
     runs-on: ubuntu-latest
-    outputs:
-      web_main_asset: ${{ steps.web_assets.outputs.main_asset }}
-      web_commercial_asset: ${{ steps.web_assets.outputs.commercial_asset }}
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -30,20 +27,6 @@ jobs:
 
       - name: Build web app
         run: npm run build
-
-      - name: Record expected production assets
-        id: web_assets
-        shell: bash
-        run: |
-          set -euo pipefail
-          main_asset="$(grep -oE 'index-[A-Za-z0-9_-]+\.js' dist/index.html | head -n 1)"
-          test -n "$main_asset"
-          main_bundle="dist/assets/$main_asset"
-          commercial_asset="$(grep -oE 'CommercialScreens-[A-Za-z0-9_-]+\.js' "$main_bundle" | head -n 1)"
-          test -n "$commercial_asset"
-          echo "main_asset=$main_asset" >> "$GITHUB_OUTPUT"
-          echo "commercial_asset=$commercial_asset" >> "$GITHUB_OUTPUT"
-          echo "Expected frontend assets: $main_asset and $commercial_asset" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Install API dependencies
         run: npm ci --prefix api
@@ -61,15 +44,13 @@ jobs:
     env:
       COOLIFY_WEBHOOK: ${{ secrets.COOLIFY_WEBHOOK }}
       COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
-      EXPECTED_MAIN_ASSET: ${{ needs.validate.outputs.web_main_asset }}
-      EXPECTED_COMMERCIAL_ASSET: ${{ needs.validate.outputs.web_commercial_asset }}
     steps:
       - name: Explain missing Coolify secrets
         if: ${{ env.COOLIFY_WEBHOOK == '' || env.COOLIFY_TOKEN == '' }}
         run: |
           {
             echo '## Verifying Coolify Git deployment'
-            echo 'Coolify trigger secrets are absent. Waiting for the configured Git repository integration to publish this commit and verifying the exact built assets on the production domain.'
+            echo 'Coolify trigger secrets are absent. Waiting for the configured Git repository integration to publish this commit and verifying its revision manifests on the production domain.'
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Queue Coolify deployment
@@ -88,25 +69,27 @@ jobs:
           echo 'Coolify aceitou o pedido de deploy.' >> "$GITHUB_STEP_SUMMARY"
           rm -f "$response_file"
 
-      - name: Verify deployed app, API route, and exact assets
+      - name: Verify deployed app, API route, and commit revision
         run: |
           set -euo pipefail
           for attempt in $(seq 1 30); do
-            api_health="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 https://focussdev.space/api/health || true)"
-            route_status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 'https://focussdev.space/api/integrations/google/calendar/events?from=2026-09-30&to=2026-09-30' || true)"
-            expected_assets_published='false'
-            if [[ "$api_health" == '200' && "$route_status" == '401' ]]; then
-              html="$(curl --silent --show-error --fail --max-time 10 https://focussdev.space || true)"
-              main_asset="$(printf '%s' "$html" | grep -oE '/assets/index-[A-Za-z0-9_-]+\.js' | head -n 1 || true)"
-              if [[ "$main_asset" == "/assets/$EXPECTED_MAIN_ASSET" ]]; then
-                main_bundle="$(curl --silent --show-error --fail --max-time 10 "https://focussdev.space$main_asset" || true)"
-                if printf '%s' "$main_bundle" | grep -Fq "$EXPECTED_COMMERCIAL_ASSET" && curl --silent --show-error --fail --max-time 10 "https://focussdev.space/assets/$EXPECTED_COMMERCIAL_ASSET" -o /dev/null; then
-                  expected_assets_published='true'
-                fi
-              fi
+            health_json="$(curl --silent --show-error --fail --max-time 10 https://focussdev.space/api/health || true)"
+            api_health=''
+            api_revision=''
+            if [[ -n "$health_json" ]]; then
+              api_health="$(printf '%s' "$health_json" | jq -r '.status // empty')"
+              api_revision="$(printf '%s' "$health_json" | jq -r '.revision // empty')"
             fi
-            if [[ "$api_health" == '200' && "$route_status" == '401' && "$expected_assets_published" == 'true' ]]; then
-              echo "App e API saudáveis; rota autenticada e os assets esperados ($EXPECTED_MAIN_ASSET, $EXPECTED_COMMERCIAL_ASSET) estão publicados." >> "$GITHUB_STEP_SUMMARY"
+            route_status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 'https://focussdev.space/api/integrations/google/calendar/events?from=2026-09-30&to=2026-09-30' || true)"
+            web_revision="$(curl --silent --show-error --fail --max-time 10 https://focussdev.space/nexo-build.json | jq -r '.revision // empty' || true)"
+            html="$(curl --silent --show-error --fail --max-time 10 https://focussdev.space || true)"
+            main_asset="$(printf '%s' "$html" | grep -oE '/assets/index-[A-Za-z0-9_-]+\.js' | head -n 1 || true)"
+            main_asset_status=''
+            if [[ -n "$main_asset" ]]; then
+              main_asset_status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 "https://focussdev.space$main_asset" || true)"
+            fi
+            if [[ "$api_health" == 'ok' && "$api_revision" == "$GITHUB_SHA" && "$web_revision" == "$GITHUB_SHA" && "$route_status" == '401' && "$main_asset_status" == '200' ]]; then
+              echo "App e API saudáveis; rota autenticada e manifests web/API confirmam o commit $GITHUB_SHA." >> "$GITHUB_STEP_SUMMARY"
               exit 0
             fi
             sleep 10
