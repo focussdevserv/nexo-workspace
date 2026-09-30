@@ -582,7 +582,15 @@ function WahaSessions({ notify }) {
   const [error, setError] = useState('');
   const selectedSession = sessions.find((item) => item.id === selected);
   const refresh = async () => {
-    try { const result = await apiRequest('/api/integrations/waha/sessions'); setSessions(result.data || []); setError(''); }
+    try {
+      const result = await apiRequest('/api/integrations/waha/sessions');
+      const nextSessions = Array.isArray(result.data) ? result.data : [];
+      setSessions(nextSessions);
+      setSelected((current) => current && nextSessions.some((item) => item.id === current)
+        ? current
+        : nextSessions.find((item) => item.status === 'SCAN_QR_CODE')?.id || null);
+      setError('');
+    }
     catch (err) { setError(err.message || 'Não foi possível carregar as sessões WAHA.'); }
     finally { setLoading(false); }
   };
@@ -593,7 +601,7 @@ function WahaSessions({ notify }) {
     catch (err) { setQr(''); setError(err.message || 'Não foi possível gerar o QR Code.'); }
   };
   useEffect(() => {
-    if (!selected) return undefined;
+    if (!selected) { setQr(''); return undefined; }
     if (selectedSession?.status !== 'SCAN_QR_CODE') { setQr(''); return undefined; }
     loadQr(selected);
     const timer = window.setInterval(() => loadQr(selected), 12000);
