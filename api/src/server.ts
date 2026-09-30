@@ -17,6 +17,7 @@ import { isSafeWorkspaceData } from './security/workspace-data.js';
 import { renderProposalEmail } from './email/proposal.js';
 import { buildGoogleRawMessage, decodeGoogleDriveUpload } from './integrations/google-mail.js';
 import { buildOverduePaymentEvent, overduePaymentRetryDelayMs } from './integrations/overdue-payment.js';
+import { sameMercadoPagoPaymentSnapshot } from './integrations/mercadopago.js';
 import { classifyWahaQrResponse } from './integrations/waha.js';
 import { mapN8nCollections, n8nAutomationTemplates, buildN8nAutomationWorkflow, n8nApiKeyFailureMessage, n8nApiValidationMessage, type N8nAutomationTemplateId } from './integrations/n8n.js';
 import { isUnverifiedContractTransition, requiresExternalSignature } from './contracts/status.js';
@@ -1314,12 +1315,18 @@ app.post('/api/integrations/mercadopago/webhook', async (request, reply) => {
       const order = await mercadoPago<Record<string, any>>(`/v1/orders/${encodeURIComponent(resourceId)}`);
       const externalReference = String(order.external_reference ?? '');
       const details = paymentDetailsFromOrder(order);
-      const [local] = await db.select({ id: billingOrders.id, organizationId: billingOrders.organizationId, status: billingOrders.status, description: billingOrders.description, clientName: billingOrders.clientName, amount: billingOrders.amount }).from(billingOrders).where(eq(billingOrders.id, externalReference)).limit(1);
+      const [local] = await db.select({ id: billingOrders.id, organizationId: billingOrders.organizationId, status: billingOrders.status, statusDetail: billingOrders.statusDetail, mpPaymentId: billingOrders.mpPaymentId, description: billingOrders.description, clientName: billingOrders.clientName, amount: billingOrders.amount }).from(billingOrders).where(eq(billingOrders.id, externalReference)).limit(1);
       if (local) {
         const nextStatus = providerStatus(details.status);
-        await db.update(billingOrders).set({ status: nextStatus, statusDetail: details.statusDetail, mpPaymentId: details.paymentId, paymentDetails: details as Record<string, unknown>, updatedAt: new Date() }).where(eq(billingOrders.id, local.id));
-        await db.insert(activityEvents).values({ organizationId: local.organizationId, entityType: 'billing_order', entityId: local.id, action: 'provider_updated', payload: { status: providerStatus(details.status) } });
-        if (nextStatus === 'paid' && local.status !== 'paid') void dispatchN8nEvent(local.organizationId, 'payment.confirmed', { id: local.id, title: local.description, client: local.clientName, amount: local.amount });
+        const duplicateSnapshot = sameMercadoPagoPaymentSnapshot(
+          { status: local.status, statusDetail: local.statusDetail, paymentId: local.mpPaymentId },
+          { status: nextStatus, statusDetail: details.statusDetail, paymentId: details.paymentId },
+        );
+        if (!duplicateSnapshot) {
+          await db.update(billingOrders).set({ status: nextStatus, statusDetail: details.statusDetail, mpPaymentId: details.paymentId, paymentDetails: details as Record<string, unknown>, updatedAt: new Date() }).where(eq(billingOrders.id, local.id));
+          await db.insert(activityEvents).values({ organizationId: local.organizationId, entityType: 'billing_order', entityId: local.id, action: 'provider_updated', payload: { status: nextStatus } });
+          if (nextStatus === 'paid' && local.status !== 'paid') void dispatchN8nEvent(local.organizationId, 'payment.confirmed', { id: local.id, title: local.description, client: local.clientName, amount: local.amount });
+        }
       }
     } else if (topic === 'subscription_preapproval') {
       const remote = await mercadoPago<Record<string, any>>(`/preapproval/${encodeURIComponent(resourceId)}`);

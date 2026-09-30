@@ -344,3 +344,7 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - Preços, custos e prazos continuam vazios e os itens entram como rascunho. Os campos entre colchetes precisam ser revisados/preenchidos antes de enviar documentos; nenhum preço, prazo ou promessa foi inventado.
 - A seleção do serviço na proposta/contrato continua usando os modelos do catálogo. Teste novo cobre os 88 itens e confirma modelos presentes sem dados comerciais fictícios.
 - Validação: 30 testes de API passaram; build do frontend e `git diff --check` passaram. Não inseri itens no banco em produção; o cadastro segue pela ação explícita “Cadastrar catálogo informado”.
+## Webhook Mercado Pago idempotente para replays de status — 30/09/2026
+- O webhook agora compara status normalizado, detalhe e ID do pagamento com o snapshot salvo antes de atualizar a cobrança ou registrar atividade. Replays idênticos deixam de produzir atualizações/atividades repetidas e não redespacham `payment.confirmed`; alterações nesses campos continuam sendo registradas.
+- Teste unitário cobre replay idêntico, normalização de campos opcionais e mudanças de status/detalhe/ID. Não usei chamadas de escrita nem cobranças reais no Mercado Pago.
+- Validação local: build TypeScript da API, 32 testes e `git diff --check` passaram. A validação de produção será apenas health check após o deploy; o caminho assinado de webhook não foi exercitado em produção.
