@@ -26,6 +26,19 @@ test('backs off retry attempts and caps delay at one hour', () => {
   assert.equal(overduePaymentRetryDelayMs(20), 60 * 60_000);
 });
 
+test('filters already-enqueued billing orders before limiting the scan batch', async () => {
+  const server = await readFile(new URL('../src/server.ts', import.meta.url), 'utf8');
+  const scannerStart = server.indexOf('async function processOverdueBillingEvents');
+  const queryStart = server.indexOf('const expiredOrders = await db.select', scannerStart);
+  const queryEnd = server.indexOf('for (const order of expiredOrders)', queryStart);
+  const query = server.slice(queryStart, queryEnd);
+
+  assert.ok(scannerStart >= 0 && queryStart >= scannerStart && queryEnd > queryStart);
+  assert.match(query, /notExists\(db\.select\(\{ id: billingOverdueEvents\.id \}\)/);
+  assert.match(query, /billingOverdueEvents\.billingOrderId, billingOrders\.id/);
+  assert.ok(query.indexOf('notExists') < query.indexOf('.limit(100)'));
+});
+
 test('adds an incremental outbox migration without recreating existing billing tables', async () => {
   const migration = await readFile(new URL('../drizzle/0004_billing_overdue_events.sql', import.meta.url), 'utf8');
   assert.match(migration, /CREATE TABLE "billing_overdue_events"/);
