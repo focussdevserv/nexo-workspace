@@ -250,7 +250,7 @@ function integrationConfigured(provider: IntegrationProvider) {
     clicksign: Boolean(process.env.CLICKSIGN_API_TOKEN),
     github: Boolean(process.env.GITHUB_TOKEN),
     n8n: Boolean(process.env.N8N_BASE_URL && process.env.N8N_API_KEY),
-    sentry: Boolean(process.env.SENTRY_DSN),
+    sentry: Boolean(process.env.SENTRY_DSN && process.env.VITE_SENTRY_DSN),
   })[provider];
 }
 
@@ -788,7 +788,13 @@ app.post('/api/integrations/:provider/test', { preHandler: app.authenticate, con
       const result = await response.json() as { data?: unknown[] };
       return tested('connected', `API do n8n autenticada. ${result.data?.length ?? 0} workflow(s) retornado(s) nesta consulta.`);
     }
-    return tested('setup_required', 'O DSN do Sentry está no servidor, mas validar a ingestão exige enviar um evento de teste que criaria um evento no projeto.');
+    const apiDsnConfigured = Boolean(process.env.SENTRY_DSN);
+    const webDsnConfigured = Boolean(process.env.VITE_SENTRY_DSN);
+    if (!apiDsnConfigured || !webDsnConfigured) {
+      const missing = [!apiDsnConfigured ? 'SENTRY_DSN (API)' : '', !webDsnConfigured ? 'VITE_SENTRY_DSN (frontend/build)' : ''].filter(Boolean).join(' e ');
+      return tested('setup_required', `Configure ${missing} no Coolify e refaça o deploy. O teste não cria incidentes artificiais.`);
+    }
+    return tested('setup_required', 'Os DSNs do frontend e da API estão configurados. A ingestão não foi testada para evitar criar um incidente artificial; erros reais serão enviados pelos SDKs.');
   } catch (error) {
     app.log.warn({ provider, error: error instanceof Error ? error.name : 'unknown' }, 'Integration connection test failed');
     return failed('Não foi possível confirmar a conexão. Confira o serviço, a URL e as credenciais no Coolify.');

@@ -370,3 +370,4 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - O card de Integracoes informa que SENTRY_DSN (API) e VITE_SENTRY_DSN (build web) sao ambos necessarios. O teste nao fabrica incidente; sem DSNs configurados, a ingestao ainda nao pode ser comprovada em producao.
 - A agenda redesenhada ja esta em producao desde os commits 40e95d8 e 7c6ffb1: dia/semana/mes, busca, resumo, mini calendario, lista futura, persistencia e sincronizacao explicita com Calendar/Meet. Este deploy nao altera a agenda.
 - Validacao local: build Vite, build TypeScript da API, 36 testes API, auditoria npm de dependencias de producao (0 vulnerabilidades) e git diff --check passaram. O bundle web ainda excede 500 kB.
+- Correcao complementar: o indicador do Sentry exige agora os DSNs da API e do build web, e explica quais variaveis faltam sem apresentar uma integracao parcial como pronta. Nenhum evento artificial e criado pelo teste.
