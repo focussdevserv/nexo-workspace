@@ -348,3 +348,9 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - O webhook agora compara status normalizado, detalhe e ID do pagamento com o snapshot salvo antes de atualizar a cobrança ou registrar atividade. Replays idênticos deixam de produzir atualizações/atividades repetidas e não redespacham `payment.confirmed`; alterações nesses campos continuam sendo registradas.
 - Teste unitário cobre replay idêntico, normalização de campos opcionais e mudanças de status/detalhe/ID. Não usei chamadas de escrita nem cobranças reais no Mercado Pago.
 - Validação local: build TypeScript da API, 32 testes e `git diff --check` passaram. A validação de produção será apenas health check após o deploy; o caminho assinado de webhook não foi exercitado em produção.
+
+## Correcao da tela de integracoes e base Clicksign - 30/09/2026
+- A funcao React Integrations havia sido removida durante uma alteracao da tela de monitoramento; isso deixava a rota de integracoes com referencia inexistente. O componente foi restaurado e a consulta manual HTTP/SSL de ativos cadastrados foi mantida.
+- Clicksign agora aparece no status e na tela de integracoes. O teste autenticado consulta envelopes draft pela API v3, sem criar, notificar ou alterar contratos. O host e limitado aos ambientes oficiais sandbox e producao; padrao e sandbox.
+- Para conexao real, cadastrar CLICKSIGN_API_TOKEN e (opcional) CLICKSIGN_API_BASE_URL no servico API no Coolify e redeployar. Nao havia token disponivel para validar com a Clicksign. Envio de contrato, webhook e atualizacao automatica do status de assinatura ainda nao estao implementados nesta fatia.
+- Build Vite, build TypeScript da API, 32 testes API e git diff --check passaram. Nenhum dado real foi criado ou alterado.

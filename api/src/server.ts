@@ -157,7 +157,7 @@ async function wahaRequest<T = Record<string, unknown>>(path: string, init: Requ
   return payload as T;
 }
 
-const integrationProviders = ['mercadopago', 'evolution', 'waha', 'resend', 'google', 'github', 'n8n', 'sentry'] as const;
+const integrationProviders = ['mercadopago', 'evolution', 'waha', 'resend', 'google', 'clicksign', 'github', 'n8n', 'sentry'] as const;
 type IntegrationProvider = typeof integrationProviders[number];
 type IntegrationControl = { provider?: string; enabled?: boolean; lastTestStatus?: string | null; lastTestMessage?: string | null; testedAt?: string | null };
 type GoogleTokenSet = { accessToken: string; refreshToken: string; expiresAt: number; email: string };
@@ -235,6 +235,7 @@ function integrationConfigured(provider: IntegrationProvider) {
     waha: Boolean(env.WAHA_API_URL && env.WAHA_API_KEY),
     resend: Boolean(process.env.RESEND_API_KEY),
     google: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
+    clicksign: Boolean(process.env.CLICKSIGN_API_TOKEN),
     github: Boolean(process.env.GITHUB_TOKEN),
     n8n: Boolean(process.env.N8N_BASE_URL && process.env.N8N_API_KEY),
     sentry: Boolean(process.env.SENTRY_DSN),
@@ -657,7 +658,7 @@ app.get('/api/integrations/status', { preHandler: app.authenticate }, async (req
   if (typeof googleConnection?.data.sealedTokens === 'string') {
     try { googleEmail = openGoogleTokens(googleConnection.data.sealedTokens).email; } catch { /* corrupted credentials are shown as disconnected */ }
   }
-  const names: Record<IntegrationProvider, string> = { mercadopago: 'Mercado Pago', evolution: 'Evolution API', waha: 'WAHA', resend: 'Resend', google: 'Google Workspace', github: 'GitHub', n8n: 'n8n', sentry: 'Sentry' };
+  const names: Record<IntegrationProvider, string> = { mercadopago: 'Mercado Pago', evolution: 'Evolution API', waha: 'WAHA', resend: 'Resend', google: 'Google Workspace', clicksign: 'Clicksign', github: 'GitHub', n8n: 'n8n', sentry: 'Sentry' };
   return { data: integrationProviders.map((provider) => {
     const control = controlByProvider.get(provider);
     const configured = integrationConfigured(provider);
@@ -689,7 +690,7 @@ app.post('/api/integrations/:provider/connection', { preHandler: app.authenticat
 });
 
 app.post('/api/integrations/:provider/test', { preHandler: app.authenticate, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
-  const params = z.object({ provider: z.enum(['mercadopago', 'evolution', 'waha', 'resend', 'github', 'google', 'n8n', 'sentry']) }).safeParse(request.params);
+  const params = z.object({ provider: z.enum(integrationProviders) }).safeParse(request.params);
   if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Integração inválida.' });
   const provider = params.data.provider;
   const unavailable = async (message: string) => {
@@ -753,6 +754,19 @@ app.post('/api/integrations/:provider/test', { preHandler: app.authenticate, con
       if (!response.ok) return failed(`Google Workspace respondeu com HTTP ${response.status}. Reconecte a conta se a autorização expirou.`);
       const profile = await response.json() as { email?: string };
       return tested('connected', `Google Workspace conectado como ${profile.email || tokens.email}.`);
+    }
+    if (provider === 'clicksign') {
+      const token = process.env.CLICKSIGN_API_TOKEN;
+      if (!token) return unavailable('Configure CLICKSIGN_API_TOKEN no serviço API do Coolify.');
+      const baseUrl = (process.env.CLICKSIGN_API_BASE_URL || 'https://sandbox.clicksign.com').replace(/\/$/, '');
+      let origin: string;
+      try { origin = new URL(baseUrl).origin; } catch { return unavailable('CLICKSIGN_API_BASE_URL deve ser https://sandbox.clicksign.com ou https://app.clicksign.com.'); }
+      if (!['https://sandbox.clicksign.com', 'https://app.clicksign.com'].includes(origin) || origin !== baseUrl) return unavailable('CLICKSIGN_API_BASE_URL deve ser https://sandbox.clicksign.com ou https://app.clicksign.com.');
+      const response = await fetch(`${baseUrl}/api/v3/envelopes?filter%5Bstatus%5D=draft`, { headers: { Authorization: token, Accept: 'application/vnd.api+json', 'Content-Type': 'application/vnd.api+json' }, signal: AbortSignal.timeout(12_000) });
+      if (response.status === 401 || response.status === 403) return failed(`Clicksign respondeu com HTTP ${response.status}. Confira o token e o ambiente (sandbox ou produção).`);
+      if (!response.ok) return failed(`Clicksign respondeu com HTTP ${response.status}. Confira o token e a URL do ambiente.`);
+      const result = await response.json() as { data?: unknown[] };
+      return tested('connected', `Clicksign conectado. ${result.data?.length ?? 0} envelope(s) em rascunho consultado(s); nenhum contrato foi criado ou enviado.`);
     }
     if (provider === 'n8n') {
       const baseUrl = process.env.N8N_BASE_URL?.replace(/\/$/, '');
