@@ -1,4 +1,5 @@
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import * as Sentry from '@sentry/react';
 import {
   Activity, ArrowDownRight, ArrowRight, ArrowUpRight, Bell, BriefcaseBusiness,
   CalendarDays, Check, CheckSquare, ChevronDown, ChevronRight, CircleDollarSign,
@@ -85,6 +86,15 @@ function ModuleLoading() {
   return <div className="module-loading" role="status" aria-live="polite">Carregando módulo...</div>;
 }
 
+function ModuleErrorFallback({ resetError }) {
+  return <section className="module-load-error" role="alert">
+    <span className="eyebrow">NEXO / MODULO</span>
+    <h2>Nao foi possivel abrir esta tela</h2>
+    <p>O restante do workspace continua disponivel. Tente novamente ou abra outra area pelo menu.</p>
+    <button className="primary-button" type="button" onClick={resetError}>Tentar novamente</button>
+  </section>;
+}
+
 function readLocalValue(key, fallback) { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? fallback; } catch { return fallback; } }
 function amountValue(value) { return Number(String(value || '').replace(/[^\d,]/g, '').replace(',', '.')) || 0; }
 function workspacePageSlug(label) { return label.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''); }
@@ -163,7 +173,7 @@ function WorkspaceShell() {
   const refreshNotifications = useCallback(async () => {
     try {
       const result = await apiRequest('/api/notifications');
-      setNotificationItems(result.data || []);
+      setNotificationItems(Array.isArray(result.data) ? result.data.filter((item) => item && typeof item === 'object' && !Array.isArray(item)) : []);
       setNotificationUnread(result.unreadCount || 0);
       setNotificationError('');
     } catch (error) { setNotificationError(error.message || 'Não foi possível carregar as notificações.'); }
@@ -358,7 +368,7 @@ function WorkspaceShell() {
             <button className="alert-card" onClick={() => setActiveNav('Propostas')}><span className="alert-icon blue-bg"><FileText size={18} /></span><span><b>Propostas pendentes</b><small>{dashboardRecords.proposals.filter((item) => !['Aprovada', 'Recusada', 'accepted', 'rejected'].includes(item.status)).length ? 'Aguardando retorno de clientes' : 'Nenhuma proposta pendente'}</small></span><span className="alert-count blue-count">{dashboardRecords.proposals.filter((item) => !['Aprovada', 'Recusada', 'accepted', 'rejected'].includes(item.status)).length}</span><ChevronRight size={17} /></button>
             <button className="alert-card" onClick={() => setActiveNav('Agenda')}><span className="alert-icon blue-bg"><CalendarDays size={18} /></span><span><b>Eventos de hoje</b><small>{todayEvents.length ? `${todayEvents.length} compromisso${todayEvents.length === 1 ? '' : 's'} na agenda` : 'Nenhum compromisso agendado'}</small></span><span className="alert-count blue-count">{todayEvents.length}</span><ChevronRight size={17} /></button>
           </section>
-          </main> : <ModuleScreen page={activeNav} />}
+          </main> : <Sentry.ErrorBoundary fallback={ModuleErrorFallback} key={activeNav}><ModuleScreen page={activeNav} /></Sentry.ErrorBoundary>}
         </div>
       </section>
       {toast && <div className="toast" role="status"><Check size={16} />{toast}</div>}
