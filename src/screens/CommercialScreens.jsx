@@ -79,6 +79,7 @@ export default function CommercialScreen({ page }) {
   const recordType = dataAliases[key] || key;
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('Todos');
+  const [extraFilters, setExtraFilters] = useState({});
   const [toast, setToast] = useState('');
   const [period, setPeriod] = useState('Últimos 30 dias');
   const [records, persistRecords, refreshRecords] = useCommercialRecords();
@@ -86,12 +87,21 @@ export default function CommercialScreen({ page }) {
   const emptyDraft = { title: '', client: '', clientId: '', email: '', phone: '', value: '', detail: '', serviceId: '', scope: '', deadline: '', paymentTerms: '50% na aprovação e 50% na entrega' };
   const [draft, setDraft] = useState(emptyDraft);
   const data = records[recordType] || dataFor(localPage);
+  const extraFilterFields = useMemo(() => [
+    { key: 'source', label: 'Origem' }, { key: 'owner', label: 'Responsável' },
+    { key: 'service', label: 'Serviço' }, { key: 'segment', label: 'Segmento' },
+    { key: 'city', label: 'Cidade' }, { key: 'status', label: 'Status', read: (item) => item.status || item.stage },
+  ].flatMap((field) => {
+    const values = [...new Set(data.map((item) => String(field.read ? field.read(item) || '' : item[field.key] || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    return values.length > 1 ? [{ ...field, values }] : [];
+  }), [data]);
   const visible = useMemo(() => data.filter((item) => {
     const term = search.trim().toLocaleLowerCase('pt-BR');
     const text = Object.values(item).join(' ').toLocaleLowerCase('pt-BR');
     const status = item.status || item.stage;
-    return (!term || text.includes(term)) && (filter === 'Todos' || status === filter || item.source === filter);
-  }), [data, search, filter]);
+    const matchesExtra = extraFilterFields.every((field) => !extraFilters[field.key] || String(field.read ? field.read(item) || '' : item[field.key] || '') === extraFilters[field.key]);
+    return (!term || text.includes(term)) && (filter === 'Todos' || status === filter || item.source === filter) && matchesExtra;
+  }), [data, search, filter, extraFilters, extraFilterFields]);
   const notify = (message) => { setToast(message); window.clearTimeout(notify.timer); notify.timer = window.setTimeout(() => setToast(''), 3000); };
   const createLabel = key === 'servicos' ? 'Novo serviço' : key === 'clientes' ? 'Adicionar cliente' : key === 'empresas' ? 'Nova empresa' : key === 'contatos' ? 'Novo contato' : key === 'propostas' ? 'Criar proposta' : key === 'contratos' ? 'Novo contrato' : key === 'pipeline' ? 'Nova oportunidade' : 'Adicionar lead';
   const createRecord = async (event) => {
@@ -183,8 +193,10 @@ function StatusControl({ page, statusDraft, setStatusDraft }) {
   return <label>Status / etapa<select value={statusDraft} onChange={(event) => setStatusDraft(event.target.value)}>{existingSigningState && <option value={statusDraft} disabled>{statusDraft} · estado já registrado</option>}{existingApprovedProposalState && <option value={statusDraft} disabled>Aprovada · convertida</option>}{options.map((option) => <option key={option}>{option}</option>)}</select>{page === 'contratos' && <small>Sem provedor de assinatura conectado, o Nexo não permite marcar um contrato como assinado ou ativo.</small>}{existingApprovedProposalState && <small>A aprovação cria o contrato, o projeto e suas tarefas em conjunto; esse status não pode ser definido manualmente.</small>}</label>;
 }
 
-function Toolbar({ search, setSearch, filter, setFilter, filters = ['Todos'], placeholder = 'Buscar...' }) {
-  return <div className="com-toolbar"><label className="com-search"><Search size={17} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={placeholder} aria-label={placeholder} />{search && <button aria-label="Limpar busca" onClick={() => setSearch('')}>×</button>}</label><label className="com-filter"><SlidersHorizontal size={15} /><select value={filter} onChange={(event) => setFilter(event.target.value)} aria-label="Filtrar resultados">{filters.map((item) => <option key={item}>{item}</option>)}</select><ChevronDown size={14} /></label><button className="com-icon-action" aria-label="Mais filtros" title="Mais filtros"><Filter size={16} /></button></div>;
+function Toolbar({ search, setSearch, filter, setFilter, filters = ['Todos'], placeholder = 'Buscar...', extraFilterFields = [], extraFilters = {}, onExtraFilterChange = () => {} }) {
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const activeExtraFilters = Object.values(extraFilters).filter(Boolean).length;
+  return <div className="com-toolbar"><label className="com-search"><Search size={17} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={placeholder} aria-label={placeholder} />{search && <button type="button" aria-label="Limpar busca" onClick={() => setSearch('')}>×</button>}</label><label className="com-filter"><SlidersHorizontal size={15} /><select value={filter} onChange={(event) => setFilter(event.target.value)} aria-label="Filtrar resultados">{filters.map((item) => <option key={item}>{item}</option>)}</select><ChevronDown size={14} /></label><div className="com-more-filter-wrap"><button type="button" className={'com-icon-action ' + (filtersOpen || activeExtraFilters ? 'active' : '')} aria-label="Mais filtros" title="Mais filtros" aria-expanded={filtersOpen} aria-controls="commercial-extra-filters" onClick={() => setFiltersOpen((open) => !open)}><Filter size={16} />{activeExtraFilters > 0 && <span>{activeExtraFilters}</span>}</button>{filtersOpen && <section className="com-extra-filters" id="commercial-extra-filters" aria-label="Filtros adicionais"><header><strong>Filtros adicionais</strong><button type="button" onClick={() => extraFilterFields.forEach((field) => onExtraFilterChange(field.key, ''))}>Limpar</button></header>{extraFilterFields.length ? extraFilterFields.map((field) => <label key={field.key}>{field.label}<select value={extraFilters[field.key] || ''} onChange={(event) => onExtraFilterChange(field.key, event.target.value)}><option value="">Todos</option>{field.values.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>) : <p>Não há filtros adicionais para os registros atuais.</p>}</section>}</div></div>;
 }
 
 function ClientProfileModal({ client: initialClient, onClose, onUpdate, onAction }) {
@@ -323,7 +335,7 @@ function ListView({ page, items, search, setSearch, filter, setFilter, onAction,
   return <>
     {stats && <div className="com-metrics">{stats.map(([label, value, detail, Icon, tone]) => <Metric key={label} {...{ label, value, detail, icon: Icon, tone }} />)}</div>}
     <section className="com-panel"><div className="com-panel-heading"><div><h2>{page === 'leads' ? 'Todos os leads' : page === 'clientes' ? 'Sua carteira' : page === 'empresas' ? 'Empresas cadastradas' : page === 'contatos' ? 'Pessoas e decisores' : page === 'propostas' ? 'Todas as propostas' : 'Todos os contratos'}</h2><p>{items.length} {label} encontrados <span>·</span> Atualizado há poucos minutos</p></div><div className="com-toolbar-actions"><button className="com-secondary" onClick={() => onAction('Relatório preparado para exportação.') }><Download size={15} /> Exportar</button><button className="com-secondary square" aria-label="Mais opções" onClick={() => onAction('Mais opções de exibição.') }><MoreHorizontal size={17} /></button></div></div>
-      <Toolbar search={search} setSearch={setSearch} filter={filter} setFilter={setFilter} filters={filters} placeholder={`Buscar ${label}...`} />
+      <Toolbar search={search} setSearch={setSearch} filter={filter} setFilter={setFilter} filters={filters} placeholder={`Buscar ${label}...`} extraFilterFields={extraFilterFields} extraFilters={extraFilters} onExtraFilterChange={(field, value) => setExtraFilters((currentFilters) => ({ ...currentFilters, [field]: value }))} />
       <div className="com-table-wrap"><table className={`com-table com-table-${page}`}><thead><tr>{titles[page].map((title) => <th key={title}>{title}</th>)}<th aria-label="Ações" /></tr></thead><tbody>{items.map((item, index) => <tr key={item.name || item.title}><td>{page === 'leads' ? <Identity name={item.name} sub={item.email} initials={item.initials} tone={item.tone} /> : page === 'clientes' || page === 'empresas' || page === 'contatos' ? <Identity name={item.name} sub={page === 'contatos' ? item.role : page === 'clientes' ? item.since : item.segment} initials={item.initials} tone={item.tone} /> : <div className="com-table-primary"><b>{item.title}</b><small>{item.code}</small></div>}</td>
         {page === 'leads' && <><td><b>{item.company}</b><small>{item.service}</small></td><td><Badge tone={item.source === 'Instagram' ? 'purple' : item.source === 'Indicação' ? 'green' : 'blue'}>{item.source}</Badge></td><td><Badge tone={stageTone(item.stage)}>{item.stage}</Badge></td><td className="com-amount">{item.value}</td><td className="com-muted">{item.date}</td></>}
         {page === 'clientes' && <><td><b>{item.person}</b><small>{item.email}</small></td><td><span className="com-text-line">{item.segment}</span><small>{item.email}</small></td><td>{item.projects}</td><td className="com-amount">{item.value}</td><td><Badge tone={item.status === 'Ativo' ? 'green' : 'amber'}>{item.status}</Badge></td></>}
