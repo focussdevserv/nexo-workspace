@@ -46,7 +46,7 @@ const env = z.object({
   MERCADOPAGO_ACCESS_TOKEN: z.string().optional(),
   MERCADOPAGO_WEBHOOK_SECRET: z.string().optional(),
   WAHA_API_URL: z.string().url().optional(),
-  WAHA_API_KEY: z.string().min(32).optional(),
+  WAHA_API_KEY: z.preprocess((value) => value === '' ? undefined : value, z.string().min(32).optional()),
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   GOOGLE_REDIRECT_URI: z.preprocess((value) => value === '' ? undefined : value, z.string().url().optional()),

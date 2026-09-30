@@ -63,6 +63,6 @@ Coolify lista Ubuntu 24.04 LTS como compatível. A documentação informa mínim
 
 ## Estado atual e próximo trabalho
 
-A API já tem organização/usuários, autenticação e CRUD de clientes com escopo por organização. A interface ainda não está conectada às rotas e não existe tela de login/onboarding; portanto, esse deploy publica a UI atual e a API, mas os dados da UI continuam locais até a integração do CRM.
+O repositório Git privado está conectado a este projeto e a interface usa autenticação e API com persistência PostgreSQL para os módulos implementados. O workflow GitHub Actions valida build, lint, testes e revisão publicada.
 
-Não há neste computador acesso ao DNS, credenciais SSH nem Docker, e o projeto ainda não tem um remoto Git configurado. Por isso os arquivos de deploy ficam preparados aqui; a instalação do painel e o deploy na VPS dependem desses acessos.
+A publicação está bloqueada operacionalmente: os secrets COOLIFY_WEBHOOK e COOLIFY_TOKEN não estão cadastrados no GitHub Actions. As últimas tentativas falharam enquanto o domínio retornava HTTP 503; a leitura mais recente confirmou site e API saudáveis, mas ainda na revisão 4b8022789d5bc7b70461fb5b39b5a7b01cd56bd2. Cadastre esses secrets ou habilite o auto-deploy do repositório no Coolify antes de reenviar o workflow.

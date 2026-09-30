@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { ArrowRight, KeyRound, LoaderCircle, LockKeyhole, ShieldCheck } from 'lucide-react';
-import { apiRequest } from '../lib/workspace-api.js';
+import { apiRequest, parseApiResponse } from '../lib/workspace-api.js';
 import './workspace-access.css';
 
 export default function WorkspaceAccess({ children }) {
@@ -17,7 +17,7 @@ export default function WorkspaceAccess({ children }) {
     window.addEventListener('nexo:session-expired', onExpired);
     let active = true;
     apiRequest('/api/auth/me').then((response) => { if (active) { const profile = { ...response.user, organizationName: response.organization?.name }; sessionStorage.setItem('nexo.api.user', JSON.stringify(profile)); setUser(profile); } })
-      .catch(() => { if (active) { sessionStorage.removeItem('nexo.api.user'); setUser(null); } })
+      .catch((err) => { if (active) { sessionStorage.removeItem('nexo.api.user'); setUser(null); if (/API do Nexo|conectar à API/i.test(err.message || '')) setError(err.message); } })
       .finally(() => { if (active) setChecking(false); });
     return () => { active = false; window.removeEventListener('nexo:session-expired', onExpired); };
   }, []);
@@ -29,7 +29,7 @@ export default function WorkspaceAccess({ children }) {
         method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: form.email.trim().toLowerCase(), password: form.password }),
       });
-      const payload = await response.json().catch(() => ({}));
+      const payload = await parseApiResponse(response);
       if (!response.ok) throw new Error(payload.message || 'Nao foi possivel entrar. Confira seus dados.');
       const profile = { ...payload.user, organizationName: payload.organization?.name };
       sessionStorage.setItem('nexo.api.user', JSON.stringify(profile));

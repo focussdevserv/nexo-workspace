@@ -1,17 +1,34 @@
 import { useCallback, useEffect, useState } from 'react';
 
 export async function apiRequest(path, options = {}) {
-  const response = await fetch(path, {
-    ...options,
-    credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (response.status === 401) {
+  let response;
+  try {
+    response = await fetch(path, {
+      ...options,
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    });
+  } catch {
+    throw new Error('Não foi possível conectar à API do Nexo. Confira se o servidor está em execução.');
+  }
+  const payload = await parseApiResponse(response);
+  if (response.status === 401 && path !== '/api/auth/me') {
     window.dispatchEvent(new CustomEvent('nexo:session-expired'));
   }
   if (!response.ok) throw new Error(payload.message || 'Não foi possível concluir a solicitação.');
   return payload;
+}
+
+export async function parseApiResponse(response) {
+  const contentType = response.headers.get('content-type') || '';
+  if (!contentType.toLowerCase().includes('application/json')) {
+    throw new Error('A API do Nexo não respondeu corretamente. Verifique a conexão com o servidor.');
+  }
+  try {
+    return await response.json();
+  } catch {
+    throw new Error('A API do Nexo retornou uma resposta inválida. Tente novamente.');
+  }
 }
 
 export async function fetchAllRecords(path, request = apiRequest, pageSize = 200) {

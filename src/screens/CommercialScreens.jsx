@@ -30,7 +30,7 @@ const config = {
 
 const normalizePage = (page) => String(page || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
 const titleFor = (page) => config[normalizePage(page)] || config.crm;
-const dataAliases = { clientes: 'clients', empresas: 'companies', contatos: 'contacts', servicos: 'services' };
+const dataAliases = { clientes: 'clients', empresas: 'companies', contatos: 'contacts', propostas: 'proposals', servicos: 'services', contratos: 'contracts' };
 const dataFor = (page) => datasets[dataAliases[normalizePage(page)] || normalizePage(page)] || datasets.leads;
 
 function useCommercialRecords() {

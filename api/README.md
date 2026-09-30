@@ -4,10 +4,12 @@ API em Fastify/TypeScript com PostgreSQL e Drizzle. CRM, cobranças e assinatura
 
 ## Desenvolvimento
 
-1. Instale Docker Desktop ou configure um PostgreSQL acessível.
-2. Copie `api/.env.example` para `api/.env` e gere um `JWT_SECRET` aleatório com pelo menos 32 caracteres.
-3. Defina `POSTGRES_PASSWORD` em um `.env` na raiz e rode `docker compose up -d postgres`.
-4. Rode `npm install` em `api/`, depois `npm run db:migrate` e `npm run dev`.
+1. Instale Docker Desktop e configure um PostgreSQL acessível pela máquina host, ou use uma instalação local do PostgreSQL.
+2. Copie `api/.env.example` para `api/.env`, defina `DATABASE_URL` para esse banco e gere um `JWT_SECRET` aleatório com pelo menos 32 caracteres.
+3. Rode `npm --prefix api install`, `npm --prefix api run db:migrate` e `npm --prefix api run dev` na raiz do projeto. A API inicia em `http://localhost:3001`.
+4. Em outro terminal, rode `npm install` e `npm run dev`. O Vite encaminha `/api/*` para a API local em `localhost:3001`.
+
+Se usar PostgreSQL pelo Docker Compose, a porta do banco não é publicada no host por padrão. Use uma instalação local ou configure uma porta local explicitamente para desenvolvimento antes de executar as migrações.
 
 O cadastro publico foi removido. `OWNER_EMAIL` (padrao `contato@focussdev.art`) e a unica conta permitida; o startup apaga outros usuarios apenas depois de localizar essa conta. Senhas usam Argon2id e a sessao fica em cookie HttpOnly, Secure em producao e SameSite=Strict, com expiracao de oito horas.
 
