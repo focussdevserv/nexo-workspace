@@ -333,3 +333,9 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - `07a4d33` publicado em `main`. Após a janela transitória de 503, a página serviu `index-CPEkp3oZ.js` com os textos do fluxo de upload/vínculo de anexo. `https://focussdev.space/api/health` confirmou banco conectado; n8n `/healthz` respondeu `ok`.
 - A confirmação é de deploy/health, não de upload efetivo: não criei arquivo no Drive nem alterei tarefa real nesta validação.
 - O IP `2.25.239.145` responde ao Coolify na porta 8000 com redirecionamento HTTP para `/login`; `panel.focussdev.space` não resolve. O acesso direto ao login em HTTP não oferece TLS e é uma pendência de segurança operacional. Configurar hostname com certificado e restringir a porta direta é necessário antes de usar o painel para credenciais.
+
+## Agenda: persistência e sincronização explícitas — 30/09/2026
+- A criação de eventos agora aguarda a gravação no workspace antes de chamar Google Calendar. A interface só mostra sucesso local após a confirmação da API; falhas de Calendar preservam o evento no Nexo, exibem a mensagem do provedor e registram o estado de sincronização.
+- A edição aguarda a gravação do evento e a atualização do Calendar; a exclusão aguarda a confirmação do Calendar quando há vínculo e a exclusão no Nexo. Erros da API deixam de ser tratados como sucesso nos fluxos da agenda.
+- A sincronização malsucedida fica visível na ficha do evento. O formulário impede submissões duplicadas enquanto o salvamento está em andamento.
+- Builds e testes locais passaram. Não criei reuniões nem alterei dados do workspace em produção. A publicação será verificada por health check e pelo bundle servido; nenhuma automação do navegador será usada enquanto o usuário estiver no PC.
