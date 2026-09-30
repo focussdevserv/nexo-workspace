@@ -18,7 +18,9 @@ export async function fetchAllRecords(path, request = apiRequest, pageSize = 200
   const safePageSize = Math.max(1, Math.min(200, Math.floor(Number(pageSize) || 200)));
   const queryPage = (offset) => `${path}${path.includes('?') ? '&' : '?'}limit=${safePageSize}&offset=${offset}`;
   const firstPage = await request(queryPage(0));
-  const firstRecords = firstPage.data || [];
+  // Treat malformed or stale API payloads as an empty list. A bad row should
+  // never take down an entire workspace screen inside React's error boundary.
+  const firstRecords = Array.isArray(firstPage.data) ? firstPage.data.filter(isWorkspaceRecord) : [];
   const total = Number(firstPage.pagination?.total);
   if (!Number.isFinite(total) || total <= firstRecords.length) return firstRecords;
   const records = [...firstRecords];
@@ -26,9 +28,13 @@ export async function fetchAllRecords(path, request = apiRequest, pageSize = 200
   const firstOffset = Math.max(0, Number(firstPage.pagination?.offset) || 0);
   for (let offset = firstOffset + firstRecords.length; offset < total; offset += actualPageSize) {
     const page = await request(queryPage(offset));
-    records.push(...(page.data || []));
+    if (Array.isArray(page.data)) records.push(...page.data.filter(isWorkspaceRecord));
   }
   return records.slice(0, total);
+}
+
+function isWorkspaceRecord(record) {
+  return record !== null && typeof record === 'object' && !Array.isArray(record);
 }
 
 export function useWorkspaceRecords(resource) {

@@ -101,7 +101,7 @@ export default function CommercialScreen({ page }) {
   const [composer, setComposer] = useState(false);
   const emptyDraft = { title: '', client: '', clientId: '', email: '', phone: '', value: '', detail: '', serviceId: '', serviceIds: [], scope: '', deadline: '', paymentTerms: '50% na aprovação e 50% na entrega' };
   const [draft, setDraft] = useState(emptyDraft);
-  const data = records[recordType] || dataFor(localPage);
+  const data = Array.isArray(records[recordType]) ? records[recordType].filter((item) => item && typeof item === 'object' && !Array.isArray(item)) : dataFor(localPage);
   const extraFilterFields = useMemo(() => [
     { key: 'source', label: 'Origem' }, { key: 'owner', label: 'Responsável' },
     { key: 'service', label: 'Serviço' }, { key: 'segment', label: 'Segmento' },
@@ -246,7 +246,7 @@ function ClientProfileModal({ client: initialClient, onClose, onUpdate, onAction
   const [client, setClient] = useState(initialClient);
   const [tab, setTab] = useState('Resumo');
   const [note, setNote] = useState('');
-  const [contacts, setContacts] = useState(initialClient.contacts || []);
+  const [contacts, setContacts] = useState(Array.isArray(initialClient.contacts) ? initialClient.contacts.filter((person) => person && typeof person === 'object' && !Array.isArray(person)) : []);
   const [contactDraft, setContactDraft] = useState({ name: '', role: '', email: '', phone: '' });
   const [related, setRelated] = useState({});
   const [projectModal, setProjectModal] = useState(false);
@@ -266,7 +266,10 @@ function ClientProfileModal({ client: initialClient, onClose, onUpdate, onAction
     })().catch(() => { if (active) setRelated({}); });
     return () => { active = false; };
   }, [initialClient.id]);
-  const findClient = (value) => String(value || '').toLowerCase().includes(client.name.toLowerCase());
+  const findClient = (value) => {
+    const clientName = String(client.name || '').trim().toLocaleLowerCase('pt-BR');
+    return Boolean(clientName) && String(value || '').toLocaleLowerCase('pt-BR').includes(clientName);
+  };
   const projects = (related.projects || []).filter((item) => findClient(item.client));
   const tasks = (related.tasks || []).filter((item) => findClient(item.client));
   const billing = (related.billing || []).filter((item) => findClient(item.clientName || item.client));
@@ -395,7 +398,7 @@ function ListView({ page, items, search, setSearch, filter, setFilter, onAction,
 
 function Identity({ name, sub, initials, tone }) { return <div className="com-identity"><Avatar initials={initials} tone={tone} /><span><b>{name}</b><small>{sub}</small></span></div>; }
 function EmptyState({ query, noun, onClear }) { return <div className="com-empty"><span><Search size={20} /></span><b>Nenhum {noun} encontrado</b><small>{query ? 'Tente outro termo ou ajuste os filtros.' : 'Nenhum item corresponde aos filtros selecionados.'}</small><button onClick={onClear}>Limpar busca e filtros</button></div>; }
-function stageTone(stage = '') { return stage.includes('Novo') ? 'blue' : stage.includes('Qualificação') ? 'purple' : stage.includes('Reunião') ? 'amber' : 'green'; }
+function stageTone(stage = '') { const value = String(stage || ''); return value.includes('Novo') ? 'blue' : value.includes('Qualificação') ? 'purple' : value.includes('Reunião') ? 'amber' : 'green'; }
 
 function PipelineView({ items = datasets.leads, onMove, onUpdate, onAction, onSearch, search, mode }) {
   const [selectedDeal, setSelectedDeal] = useState(null);
