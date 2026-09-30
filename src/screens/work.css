@@ -273,6 +273,12 @@
 .agenda-v2 .agenda-all-day-row>span{display:flex;align-items:center;padding-left:5px;color:#87938b;font-size:9px}
 .agenda-v2 .agenda-all-day-row>div{display:flex;align-items:center;gap:5px;min-width:0;padding:4px;border-left:1px solid #edf1ee}
 .agenda-v2 .agenda-grid-allday{max-width:100%;overflow:hidden;padding:5px 8px;border:0;border-radius:6px;background:#edf6ef;color:#34764b;font-size:9px;text-overflow:ellipsis;white-space:nowrap}
+.agenda-v2 .agenda-grid-empty{display:flex;align-items:center;gap:10px;margin:10px 0;padding:10px 12px;border:1px solid #e5eee7;border-radius:10px;background:linear-gradient(100deg,#f6faf7,#fff)}
+.agenda-v2 .agenda-grid-empty>span{display:grid;width:31px;height:31px;flex:none;place-items:center;border-radius:9px;background:#eaf5ed;color:#378052}
+.agenda-v2 .agenda-grid-empty>div{display:grid;gap:3px;min-width:0;flex:1}
+.agenda-v2 .agenda-grid-empty b{color:#31483a;font-size:10px}
+.agenda-v2 .agenda-grid-empty small{color:#829087;font-size:9px}
+.agenda-v2 .agenda-grid-empty>button{display:flex;align-items:center;gap:5px;min-height:31px;padding:0 10px;border:0;border-radius:7px;background:#287a4d;color:#fff;font-size:9px;font-weight:700}
 .agenda-v2 .agenda-time-scroll{grid-template-columns:58px minmax(0,1fr);max-height:640px;overflow:auto;scrollbar-color:#cbd7ce transparent;scrollbar-width:thin}
 .agenda-v2 .agenda-time-axis{display:grid;grid-template-rows:repeat(14,var(--hour-height));padding-right:8px;color:#87938b;font-size:9px;text-align:right}
 .agenda-v2 .agenda-time-axis>span{position:relative;top:-6px}
