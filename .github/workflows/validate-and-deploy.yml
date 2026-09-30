@@ -16,6 +16,8 @@ jobs:
   validate:
     name: Build and API checks
     runs-on: ubuntu-latest
+    outputs:
+      deploy_required: ${{ steps.runtime_changes.outputs.deploy_required }}
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -41,8 +43,27 @@ jobs:
       - name: Run API tests
         run: npm --prefix api test
 
+      - name: Detect runtime changes
+        id: runtime_changes
+        env:
+          EVENT_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == 'workflow_dispatch' || -z "${EVENT_BEFORE:-}" || "$EVENT_BEFORE" =~ ^0+$ ]]; then
+            echo 'deploy_required=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git fetch --no-tags --depth=1 origin "$EVENT_BEFORE"
+          runtime_paths=(src api/src api/drizzle api/tsconfig.json api/drizzle.config.ts public index.html Dockerfile api/Dockerfile compose.yaml nginx.conf .dockerignore package.json package-lock.json api/package.json api/package-lock.json)
+          if git diff --quiet "$EVENT_BEFORE" "$GITHUB_SHA" -- "${runtime_paths[@]}"; then
+            echo 'deploy_required=false' >> "$GITHUB_OUTPUT"
+            echo 'No runtime files changed; production deploy verification is not required.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'deploy_required=true' >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Record revision for Coolify auto deploy
-        if: ${{ github.ref == 'refs/heads/main' }}
+        if: ${{ github.ref == 'refs/heads/main' && steps.runtime_changes.outputs.deploy_required == 'true' }}
         run: |
           set -euo pipefail
           printf '{"revision":"%s"}\n' "$GITHUB_SHA" > public/nexo-build.json
@@ -60,6 +81,7 @@ jobs:
   deploy:
     name: Deploy and verify production
     needs: validate
+    if: ${{ needs.validate.outputs.deploy_required == 'true' }}
     runs-on: ubuntu-latest
     env:
       COOLIFY_WEBHOOK: ${{ secrets.COOLIFY_WEBHOOK }}
@@ -92,7 +114,7 @@ jobs:
       - name: Verify deployed app, API route, and commit revision
         run: |
           set -euo pipefail
-          for attempt in $(seq 1 30); do
+          for attempt in $(seq 1 90); do
             health_json="$(curl --silent --show-error --fail --max-time 10 https://focussdev.space/api/health || true)"
             api_health=''
             api_revision=''
