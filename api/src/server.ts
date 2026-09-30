@@ -20,6 +20,7 @@ import { buildOverduePaymentEvent, overduePaymentRetryDelayMs } from './integrat
 import { classifyWahaQrResponse } from './integrations/waha.js';
 import { mapN8nCollections, n8nAutomationTemplates, buildN8nAutomationWorkflow, n8nApiKeyFailureMessage, n8nApiValidationMessage, type N8nAutomationTemplateId } from './integrations/n8n.js';
 import { isUnverifiedContractTransition, requiresExternalSignature } from './contracts/status.js';
+import { checkPublicSite } from './monitoring/site-check.js';
 
 const env = z.object({
   PORT: z.coerce.number().int().positive().default(3001),
@@ -1398,6 +1399,36 @@ app.get('/api/workspace/:resource', { preHandler: app.authenticate }, async (req
     db.select({ count: sql<number>`count(*)::int` }).from(workspaceRecords).where(where),
   ]);
   return { data: rows.map((row) => ({ ...row.data, id: row.id, createdAt: row.createdAt, updatedAt: row.updatedAt })), pagination: { ...query.data, total: count[0]?.count ?? 0 } };
+});
+
+app.post('/api/monitoring/site-assets/:id/check', { preHandler: app.authenticate }, async (request, reply) => {
+  const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
+  if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Identificador de ativo inválido.' });
+  const [asset] = await db.select().from(workspaceRecords).where(and(
+    eq(workspaceRecords.id, params.data.id), eq(workspaceRecords.organizationId, request.user.organizationId),
+    eq(workspaceRecords.resource, 'site-assets'), isNull(workspaceRecords.archivedAt),
+  )).limit(1);
+  if (!asset) return reply.code(404).send({ error: 'not_found', message: 'Ativo não encontrado.' });
+  const target = String(asset.data.url ?? asset.data.domain ?? asset.data.name ?? '').trim();
+  let result;
+  try { result = await checkPublicSite(target); }
+  catch (error) {
+    const code = error instanceof Error ? error.message : '';
+    if (code === 'host_not_public') return reply.code(400).send({ error: 'host_not_public', message: 'O endereço precisa ser público; IPs privados e locais não podem ser verificados.' });
+    if (code === 'invalid_url') return reply.code(400).send({ error: 'invalid_url', message: 'Informe um domínio ou URL HTTP/HTTPS válido.' });
+    return reply.code(422).send({ error: 'site_check_failed', message: 'Não foi possível consultar o domínio. Confira o endereço e tente novamente.' });
+  }
+  const health = result.status;
+  const [saved] = await db.transaction(async (tx) => {
+    const [updated] = await tx.update(workspaceRecords).set({
+      data: { ...asset.data, url: result.url, health, status: health, httpStatus: result.httpStatus, latencyMs: result.latencyMs, sslExpiresAt: result.sslExpiresAt, checkedAt: result.checkedAt },
+      updatedAt: new Date(),
+    }).where(and(eq(workspaceRecords.id, asset.id), eq(workspaceRecords.organizationId, request.user.organizationId), isNull(workspaceRecords.archivedAt))).returning();
+    await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'site-assets', entityId: asset.id, action: 'checked', payload: { status: result.status, httpStatus: result.httpStatus, latencyMs: result.latencyMs, checkedAt: result.checkedAt } });
+    return [updated];
+  });
+  if (!saved) return reply.code(404).send({ error: 'not_found', message: 'Ativo não encontrado.' });
+  return { data: { ...saved.data, id: saved.id, createdAt: saved.createdAt, updatedAt: saved.updatedAt } };
 });
 
 app.post('/api/workspace/:resource', { preHandler: app.authenticate }, async (request, reply) => {

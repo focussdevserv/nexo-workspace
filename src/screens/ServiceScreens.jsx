@@ -377,9 +377,17 @@ function Tickets({ notify }) {
 function Sites({ page, notify }) {
   const assetsStore = useWorkspaceRecords('site-assets');
   const clientsStore = useWorkspaceRecords('clients');
-  const monitorsStore = useWorkspaceRecords('monitors');
   const assetsState = assetsStore.records;
-  const monitorsState = monitorsStore.records;
+  const [checkingId, setCheckingId] = useState('');
+  const checkSite = async (asset) => {
+    setCheckingId(String(asset.id));
+    try {
+      const result = await apiRequest('/api/monitoring/site-assets/' + encodeURIComponent(asset.id) + '/check', { method: 'POST', body: '{}' });
+      assetsStore.setRecords((current) => current.map((item) => String(item.id) === String(result.data.id) ? result.data : item));
+      notify(result.data.health === 'Online' ? 'Site respondeu. Status e certificado foram atualizados.' : 'Site não respondeu; confira endereço e hospedagem.');
+    } catch (error) { notify(error.message || 'Não foi possível verificar o site.'); }
+    finally { setCheckingId(''); }
+  };
   const [assetModal, setAssetModal] = useState(false);
   const [assetDraft, setAssetDraft] = useState({ name: '', clientId: '', type: 'Domínio + hospedagem', renewalDate: '' });
   const visible = page === 'dominios' ? assetsState.filter((asset) => asset.type.toLowerCase().startsWith('dom')) : page === 'hospedagens' ? assetsState.filter((asset) => asset.type.toLowerCase().includes('hospedagem')) : assetsState;
@@ -406,115 +414,25 @@ function Sites({ page, notify }) {
   const renewalsSoon = visible.filter((asset) => { const days = daysUntilRenewal(asset); return days !== null && days >= 0 && days <= 30; }).length;
   const missingRenewal = visible.filter((asset) => daysUntilRenewal(asset) === null).length;
   const [expanded, setExpanded] = useState('');
-  if (page === 'monitoramento') return <><div className="ns-metrics ns-metrics-three"><Metric label="Sites cadastrados" value={String(monitorsState.length)} note="neste workspace" icon={Activity} /><Metric label="Disponibilidade" value="—" note="sem verificações automáticas" icon={TrendingUp} /><Metric label="Incidentes registrados" value={String(monitorsState.filter((item) => item.status === 'Offline').length)} note="com base nos registros existentes" icon={AlertCircle} /></div>{monitorsStore.loading && <p className="ns-empty-history">Carregando registros de monitoramento…</p>}{monitorsStore.error && <div className="dashboard-data-error" role="alert">{monitorsStore.error}<button type="button" onClick={monitorsStore.refresh}>Tentar novamente</button></div>}<div className="ns-monitor-list">{monitorsState.map((item) => <article className="ns-monitor-row" key={item.id}><span className="ns-monitor-pulse"><i /></span><span className="ns-monitor-main"><b>{item.name || item.url}</b><small>{item.url || item.detail}</small></span><span className="ns-monitor-status">{item.status || 'Não verificado'}</span><span className="ns-monitor-data"><small>Última verificação</small><b>{item.checkedAt ? new Date(item.checkedAt).toLocaleString('pt-BR') : '—'}</b></span><span className="ns-monitor-data"><small>Disponibilidade</small><b>{item.uptime || '—'}</b></span></article>)}{monitorsState.length === 0 && !monitorsStore.loading && <div className="ns-empty-history">Nenhum registro de monitoramento.</div>}</div><div className="ns-info-note"><ShieldCheck size={17} /><span>O Nexo ainda não executa verificações automáticas de uptime ou SSL. Os registros exibidos são apenas os dados salvos neste workspace.</span></div></>;
-  return <>{assetsStore.loading && <p className="ns-empty-history">Carregando ativos…</p>}{assetsStore.error && <div className="dashboard-data-error" role="alert">{assetsStore.error}<button type="button" onClick={assetsStore.refresh}>Tentar novamente</button></div>}<div className="ns-metrics ns-metrics-three"><Metric label="Ativos cadastrados" value={String(visible.length)} note="Sites, domínios e hospedagens" icon={Globe2} /><Metric label="Renovam em até 30 dias" value={String(renewalsSoon)} note="Com data de renovação cadastrada" icon={CalendarClock} /><Metric label="Sem data de renovação" value={String(missingRenewal)} note="Ativos que precisam de uma data" icon={AlertCircle} /></div><div className="ns-assets-list">{visible.map((asset) => { const Icon = (asset.type || '').toLowerCase().includes('hospedagem') ? HardDrive : Globe2; const renewalDateValue = renewalDateFor(asset); const renewalDate = renewalDateValue ? renewalDateValue.toLocaleDateString('pt-BR') : 'Não informada'; return <article className="ns-asset-row" key={asset.id}><span className="ns-asset-icon"><Icon size={19} /></span><span className="ns-asset-main"><b>{asset.name}</b><small>{asset.client || clientsStore.records.find((client) => String(client.id) === String(asset.clientId))?.name || 'Cliente não vinculado'}</small></span><span className="ns-asset-type">{asset.type || 'Tipo não informado'}</span><span className="ns-asset-renew"><small>Renovação</small><b>{renewalDate}</b></span><Status>{asset.health || 'Não verificado'}</Status><IconButton label={`Detalhes de ${asset.name}`} onClick={() => setExpanded(expanded === asset.id ? '' : asset.id)}><ChevronDown size={16} /></IconButton>{expanded === asset.id && <div className="ns-asset-detail"><span>Cliente vinculado <b>{asset.clientId ? 'Sim' : 'Não vinculado'}</b></span><span>DNS <b>{asset.dnsProvider || 'Não informado'}</b></span><span>Renovação automática <b>{asset.autoRenew === true ? 'Ativa' : asset.autoRenew === false ? 'Inativa' : 'Não informado'}</b></span><button type="button" onClick={async () => { if (!window.confirm(`Remover ${asset.name} do cadastro?`)) return; try { await assetsStore.remove(asset.id); if (expanded === asset.id) setExpanded(''); notify('Ativo removido do workspace.'); } catch (error) { notify(error.message || 'Não foi possível remover o ativo.'); } }}>Remover <Trash2 size={13} /></button></div>}</article>; })}{visible.length === 0 && !assetsStore.loading && <div className="ns-empty-history">Nenhum ativo cadastrado.</div>}</div><div className="ns-page-bottom"><span><Cloud size={15} /> Ativos salvos no workspace</span><button className="ns-secondary" type="button" onClick={() => setAssetModal(true)}><Plus size={15} />Adicionar ativo</button></div><div className="ns-info-note"><ShieldCheck size={17} /><span>Status de uptime e SSL não verificado. O cadastro não executa monitoramento automático.</span></div>{assetModal && <div className="ns-integration-modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) setAssetModal(false); }}><form className="ns-integration-modal" onSubmit={addAsset}><header><span className="ns-integration-logo google"><Globe2 size={18} /></span><div><h2>Adicionar ativo</h2><p>Registre um site, domínio ou hospedagem vinculado a um cliente.</p></div><button type="button" aria-label="Fechar" onClick={() => setAssetModal(false)}><X size={17} /></button></header><div className="ns-integration-fields"><label>Domínio ou nome<input required autoFocus value={assetDraft.name} onChange={(e) => setAssetDraft({ ...assetDraft, name: e.target.value })} placeholder="exemplo.com.br" /></label><label>Cliente cadastrado<select required value={assetDraft.clientId} onChange={(e) => setAssetDraft({ ...assetDraft, clientId: e.target.value })}><option value="">Selecione um cliente</option>{clientsStore.records.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}</select></label><label>Tipo<select value={assetDraft.type} onChange={(e) => setAssetDraft({ ...assetDraft, type: e.target.value })}><option>Domínio + hospedagem</option><option>Domínio</option><option>Hospedagem</option><option>Site</option></select></label><label>Próxima renovação<input type="date" value={assetDraft.renewalDate} onChange={(e) => setAssetDraft({ ...assetDraft, renewalDate: e.target.value })} /></label></div>{clientsStore.error && <div className="ns-info-note" role="alert">{clientsStore.error}<button type="button" onClick={clientsStore.refresh}>Tentar novamente</button></div>}{clientsStore.records.length === 0 && !clientsStore.loading && <div className="ns-info-note">Cadastre um cliente antes de adicionar um ativo.</div>}<div className="ns-integration-modal-note"><ShieldCheck size={15} />O registro será salvo no banco de dados. O monitoramento precisa ser habilitado separadamente.</div><footer><button className="ns-secondary" type="button" onClick={() => setAssetModal(false)}>Cancelar</button><button className="ns-primary" type="submit" disabled={clientsStore.loading || clientsStore.records.length === 0}><Check size={14} />Salvar ativo</button></footer></form></div>}</>;
-}
-
-function Integrations({ notify }) {
-  const [integrationStatus, setIntegrationStatus] = useState({});
-  const [statusLoading, setStatusLoading] = useState(true);
-  const [filter, setFilter] = useState('Todas');
-  const [configuring, setConfiguring] = useState(null);
-  const [testing, setTesting] = useState(false);
-  const [changingConnection, setChangingConnection] = useState('');
-  const [testResult, setTestResult] = useState(null);
-  const refreshStatus = async (verifyConnections = true) => {
-    setStatusLoading(true);
-    try {
-      const { data } = await apiRequest('/api/integrations/status');
-      let latest = data;
-      if (verifyConnections) {
-        const candidates = data.filter((item) => item.configured && item.enabled);
-        await Promise.all(candidates.map((item) => apiRequest(`/api/integrations/${item.provider}/test`, { method: 'POST', body: '{}' }).catch(() => null)));
-        if (candidates.length) latest = (await apiRequest('/api/integrations/status')).data;
-      }
-      setIntegrationStatus(Object.fromEntries(latest.map((item) => [item.name, item])));
-    } catch (error) { notify(error.message || 'Nao foi possivel consultar o status das integracoes.'); }
-    finally { setStatusLoading(false); }
-  };
-  useEffect(() => { refreshStatus(); }, []);
-  useEffect(() => {
-    const url = new URL(window.location.href);
-    const result = url.searchParams.get('google');
-    if (!result) return;
-    url.searchParams.delete('google');
-    const reason = url.searchParams.get('reason');
-    url.searchParams.delete('reason');
-    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
-    if (result === 'connected') notify('Conta Google autorizada com sucesso.');
-    else notify(`Não foi possível conectar o Google (${reason || 'erro de autorização'}). Confira o OAuth e tente novamente.`);
-    refreshStatus(false);
-  }, []);
-  const categories = ['Todas', 'Pagamentos', 'WhatsApp', 'E-mail', 'Produtividade', 'Desenvolvimento', 'Automacoes', 'Monitoramento'];
-  const setup = {
-    'Mercado Pago': { provider: 'mercadopago', vars: ['MERCADOPAGO_ACCESS_TOKEN', 'MERCADOPAGO_WEBHOOK_SECRET'], note: 'O access token fica somente no serviço API. O teste consulta os meios de pagamento sem criar uma cobrança.' },
-    'Evolution API': { provider: 'evolution', vars: ['EVOLUTION_API_URL', 'EVOLUTION_API_KEY'], note: 'Informe a URL base da Evolution API e a chave global. O teste lista as instâncias sem exibir a chave.' },
-    WAHA: { provider: 'waha', vars: ['WAHA_API_URL', 'WAHA_API_KEY'], note: 'No Coolify, WAHA_API_URL pode apontar para http://waha:3000 quando o serviço está no mesmo Compose.' },
-    Resend: { provider: 'resend', vars: ['RESEND_API_KEY'], note: 'O teste consulta os domínios da conta. Ele não envia e-mails.' },
-    'Google Workspace': { provider: 'google', vars: ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_REDIRECT_URI'], note: 'Conecte sua conta Google para habilitar Gmail, Calendar, Drive e reuniões Meet. Cadastre no Google Cloud a URI de retorno exibida no servidor.' },
-    GitHub: { provider: 'github', vars: ['GITHUB_TOKEN'], note: 'O teste consulta a identidade do token. Use um token com o menor conjunto de permissões necessário.' },
-    n8n: { provider: 'n8n', vars: ['N8N_BASE_URL', 'N8N_API_KEY'], note: 'Gere uma API key em Configurações > n8n API no n8n e salve em N8N_API_KEY no Coolify. O teste consulta a API autenticada de workflows, sem criar, ativar ou executar nenhum fluxo.' },
-    Sentry: { provider: 'sentry', vars: ['SENTRY_DSN'], note: 'O teste não envia um evento artificial ao Sentry, para não criar um incidente falso no projeto.' },
-  };
-  const testConnection = async () => {
-    if (!configuring) return;
-    if (integrationStatus[configuring.name]?.enabled === false) { setTestResult({ status: 'disconnected', message: 'Reative esta integração no Nexo antes de testar a conexão.' }); return; }
-    setTesting(true); setTestResult(null);
-    try {
-      const result = await apiRequest(`/api/integrations/${setup[configuring.name].provider}/test`, { method: 'POST', body: '{}' });
-      setTestResult({ status: result.data.status, message: result.data.message });
-      if (result.data.status === 'connected') await refreshStatus(false);
-    } catch (error) { setTestResult({ status: 'error', message: error.message || 'Falha ao testar a conexão.' }); }
-    finally { setTesting(false); }
-  };
-  const authorizeGoogle = () => { window.location.assign('/api/integrations/google/authorize'); };
-  const disconnectGoogle = async () => {
-    if (!window.confirm('Desconectar a conta Google? O Nexo revogará o acesso e removerá os tokens salvos.')) return;
-    setTesting(true); setTestResult(null);
-    try {
-      await apiRequest('/api/integrations/google/disconnect', { method: 'POST', body: '{}' });
-      await refreshStatus(false);
-      setTestResult({ status: 'connected', message: 'Conta Google desconectada e autorização revogada.' });
-      notify('Conta Google desconectada.');
-    } catch (error) { setTestResult({ status: 'error', message: error.message || 'Não foi possível desconectar a conta Google.' }); }
-    finally { setTesting(false); }
-  };
-  const changeConnection = async (item, enabled) => {
-    if (!enabled) {
-      const details = item.name === 'WAHA'
-        ? 'Isso pausa as sessões WhatsApp ativas. A chave continuará guardada no Coolify.'
-        : 'O Nexo deixará de usar esta integração. As credenciais continuarão guardadas no Coolify.';
-      if (!window.confirm(`Desconectar ${item.name}? ${details}`)) return;
-    }
-    setChangingConnection(item.name);
-    try {
-      await apiRequest(`/api/integrations/${setup[item.name].provider}/connection`, { method: 'POST', body: JSON.stringify({ enabled }) });
-      await refreshStatus();
-      notify(enabled ? `${item.name} reativada no Nexo. Teste a conexão para confirmar.` : `${item.name} desconectada do Nexo.`);
-    } catch (error) { notify(error.message || `Não foi possível ${enabled ? 'reativar' : 'desconectar'} ${item.name}.`); }
-    finally { setChangingConnection(''); }
-  };
-  const connectionLabel = (item) => {
-    const state = integrationStatus[item.name];
-    if (!state) return statusLoading ? 'Consultando status…' : 'Status indisponível';
-    if (!state.configured) return 'Não configurada';
-    if (!state.enabled) return 'Desconectada no Nexo';
-    if (item.name === 'Google Workspace' && state.accountEmail) return `Conectada: ${state.accountEmail}`;
-    if (item.name === 'Google Workspace') return 'Autorização necessária';
-    if (state.lastTestStatus === 'connected') return 'Conectada no último teste';
-    if (state.lastTestStatus === 'setup_required') return 'Configuração incompleta';
-    if (state.lastTestStatus === 'error') return 'Falha no último teste';
-    return 'Credenciais configuradas · testar';
-  };
-  const connectionTone = (item) => {
-    const state = integrationStatus[item.name];
-    return state?.enabled && state.lastTestStatus === 'connected' ? 'connected' : !state?.configured || state?.enabled === false ? 'disconnected' : 'pending';
-  };
-  const providerCategory = (name) => name === 'Mercado Pago' ? 'Pagamentos' : ['Evolution API', 'WAHA'].includes(name) ? 'WhatsApp' : name === 'Resend' ? 'E-mail' : name === 'Google Workspace' ? 'Produtividade' : name === 'GitHub' ? 'Desenvolvimento' : name === 'n8n' ? 'Automacoes' : 'Monitoramento';
-  const visible = integrations.filter((item) => filter === 'Todas' || providerCategory(item.name) === filter);
-  const connectedCount = Object.values(integrationStatus).filter((item) => item?.configured && item?.enabled && item?.lastTestStatus === 'connected').length;
-  const configuredCount = Object.values(integrationStatus).filter((item) => item?.configured).length;
-  const failedCount = Object.values(integrationStatus).filter((item) => item?.enabled && item?.lastTestStatus === 'error').length;
+  if (page === 'monitoramento') {
+    const checked = assetsState.filter((item) => item.checkedAt);
+    const online = checked.filter((item) => item.health === 'Online').length;
+    return <>
+      <div className="ns-metrics ns-metrics-three"><Metric label="Ativos monitoráveis" value={String(assetsState.length)} note="domínios e sites cadastrados" icon={Activity} /><Metric label="Online na última consulta" value={checked.length ? online + '/' + checked.length : '—'} note="verificações manuais registradas" icon={TrendingUp} /><Metric label="Offline na última consulta" value={String(checked.filter((item) => item.health === 'Offline').length)} note="rever endereço ou hospedagem" icon={AlertCircle} /></div>
+      {assetsStore.loading && <p className="ns-empty-history">Carregando ativos…</p>}
+      {assetsStore.error && <div className="dashboard-data-error" role="alert">{assetsStore.error}<button type="button" onClick={assetsStore.refresh}>Tentar novamente</button></div>}
+      <div className="ns-monitor-list">{assetsState.map((item) => <article className="ns-monitor-row" key={item.id}>
+        <span className={'ns-monitor-pulse' + (item.health === 'Offline' ? ' warn' : '')}><i /></span>
+        <span className="ns-monitor-main"><b>{item.name}</b><small>{item.url || item.domain || item.name}</small></span>
+        <span className={'ns-monitor-status' + (item.health === 'Offline' ? ' warn' : '')}>{item.health || 'Não verificado'}</span>
+        <span className="ns-monitor-data"><small>Última verificação</small><b>{item.checkedAt ? new Date(item.checkedAt).toLocaleString('pt-BR') : '—'}</b></span>
+        <span className="ns-monitor-data"><small>SSL expira</small><b>{item.sslExpiresAt ? new Date(item.sslExpiresAt).toLocaleDateString('pt-BR') : '—'}</b></span>
+        <button className="ns-check-button" type="button" onClick={() => checkSite(item)} disabled={checkingId === String(item.id)}>{checkingId === String(item.id) ? 'Verificando…' : item.checkedAt ? 'Verificar' : 'Verificar agora'}</button>
+      </article>)}
+      {assetsState.length === 0 && !assetsStore.loading && <div className="ns-empty-history">Cadastre um site ou domínio para verificar sua disponibilidade.</div>}</div>
+      <div className="ns-info-note"><ShieldCheck size={17} /><span>A consulta manual confirma resposta HTTP e validade SSL naquele momento. Não é monitoramento contínuo nem calcula uptime histórico.</span></div>
+    </>;
+  }
   return <>
     <section className="integration-overview" aria-label="Resumo das integrações"><div className="integration-overview-copy"><span className="integration-overview-icon"><Link2 size={19}/></span><div><span className="integration-eyebrow">CONEXÕES DO WORKSPACE</span><h2>Status da plataforma</h2><p>Conecte serviços e confira o estado reportado pela VPS. Segredos permanecem no servidor.</p></div><button className="ns-integration-refresh" type="button" onClick={() => refreshStatus()} disabled={statusLoading}><RefreshCw size={15} className={statusLoading ? 'ns-spinning' : ''}/>Atualizar status</button></div><div className="integration-overview-stats"><article><span>Conectadas</span><b>{statusLoading ? '—' : connectedCount}</b><small>confirmadas em teste</small></article><article><span>Configuradas</span><b>{statusLoading ? '—' : configuredCount}</b><small>com credenciais no servidor</small></article><article className={failedCount ? 'has-errors' : ''}><span>Precisam de atenção</span><b>{statusLoading ? '—' : failedCount}</b><small>com falha no último teste</small></article></div></section>
     <div className="ns-integration-filters" role="group" aria-label="Filtrar integracoes">{categories.map((item) => <button type="button" aria-pressed={filter === item} className={filter === item ? 'active' : ''} key={item} onClick={() => setFilter(item)}>{item}</button>)}</div>
