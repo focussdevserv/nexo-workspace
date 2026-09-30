@@ -383,3 +383,8 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - Evolution, Clicksign e GitHub retornaram sem credenciais configuradas. Sentry permanece `setup_required`; nao enviamos incidente artificial.
 - A consulta autenticada do n8n confirmou 6 workflows ativos e 0 execucoes. Nao simulei lead, pagamento ou ticket para gerar execucao. O teste da WAHA confirma API acessivel, mas nao confirma telefone pareado nem mensagem entregue. Google conectado confirma OAuth/perfil, nao envio Gmail ou upload Drive.
 - Durante o deploy, app/API e n8n apresentaram indisponibilidade transitória 503; os tres endpoints voltaram a HTTP 200 com PostgreSQL conectado.
+
+## Fila persistente para eventos n8n - 30/09/2026
+- Os eventos lead.created, ticket.created, project.published, proposal.accepted e payment.confirmed agora entram na tabela `n8n_event_deliveries` antes da resposta da API. Cada workflow recebe uma entrega idempotente, com lease para concorrencia, retry crescente (ate 8 tentativas) e remocao do payload de cliente ao concluir ou descartar.
+- O callback de acoes agora tem indice unico por organizacao/evento e trata replay concorrente como ja processado. O outbox existente de cobrancas vencidas permanece independente.
+- Testes locais: build TypeScript e 37 testes API passaram, incluindo backoff, limite de tentativas e journal/indices da migracao. Nenhum evento real ou registro artificial foi criado nesta validacao; a execucao remota do fluxo aguarda o proximo evento operacional real. Health apos deploy confirmara que a migracao aplicou no banco de producao.

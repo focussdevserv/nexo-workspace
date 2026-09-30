@@ -13,7 +13,7 @@ import { and, asc, desc, eq, ilike, isNull, lte, or, sql } from 'drizzle-orm';
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { db, pool } from './db/index.js';
-import { activityEvents, billingOrders, billingOverdueEvents, billingSubscriptions, clients, organizations, users, workspaceRecords } from './db/schema.js';
+import { activityEvents, billingOrders, billingOverdueEvents, billingSubscriptions, clients, n8nEventDeliveries, organizations, users, workspaceRecords } from './db/schema.js';
 import { isSafeWorkspaceData } from './security/workspace-data.js';
 import { renderProposalEmail } from './email/proposal.js';
 import { buildGoogleRawMessage, decodeGoogleDriveUpload } from './integrations/google-mail.js';
@@ -22,6 +22,7 @@ import { sameMercadoPagoPaymentSnapshot } from './integrations/mercadopago.js';
 import { classifyWahaQrResponse } from './integrations/waha.js';
 import { clicksignBaseUrl, createClicksignEnvelope, getClicksignEnvelope, notifyClicksignEnvelope } from './integrations/clicksign.js';
 import { mapN8nCollections, n8nAutomationTemplates, buildN8nAutomationWorkflow, n8nApiKeyFailureMessage, n8nApiValidationMessage, type N8nAutomationTemplateId } from './integrations/n8n.js';
+import { N8N_DELIVERY_MAX_ATTEMPTS, n8nDeliveryExhausted, n8nDeliveryRetryDelayMs } from './integrations/n8n-delivery.js';
 import { isUnverifiedContractTransition, requiresExternalSignature } from './contracts/status.js';
 import { checkPublicSite } from './monitoring/site-check.js';
 import { scrubSentryEvent } from './integrations/sentry-scrub.js';
@@ -826,6 +827,8 @@ const n8nWebhookHeader = 'X-Nexo-Signature';
 const n8nWebhookSecret = createHmac('sha256', env.JWT_SECRET).update('nexo-workspace-automation-bridge-v1').digest('hex');
 let overdueWorkerTimer: NodeJS.Timeout | null = null;
 let overdueWorkerRunning = false;
+let n8nDeliveryWorkerTimer: NodeJS.Timeout | null = null;
+let n8nDeliveryWorkerRunning = false;
 async function getN8nWebhookCredential() {
   const existing = await n8nApiRequest('/credentials?limit=250') as { data?: Array<{ id?: string; name?: string; type?: string }> };
   const match = existing.data?.find((item) => item.name === 'Nexo Workspace Automation Bridge' && item.type === 'httpHeaderAuth');
@@ -839,7 +842,7 @@ async function getN8nWebhookCredential() {
   return { id: created.id, name: 'Nexo Workspace Automation Bridge' };
 }
 
-async function dispatchN8nEvent(organizationId: string, eventKey: string, record: Record<string, unknown>, eventId: string = randomUUID()) {
+async function sendN8nEvent(organizationId: string, eventKey: string, record: Record<string, unknown>, eventId: string = randomUUID()) {
   try {
     const baseUrl = process.env.N8N_BASE_URL?.replace(/\/$/, '');
     const apiKey = process.env.N8N_API_KEY;
@@ -869,6 +872,100 @@ async function dispatchN8nEvent(organizationId: string, eventKey: string, record
   } catch (error) {
     app.log.warn({ eventKey, error: error instanceof Error ? error.name : 'unknown' }, 'n8n event dispatch failed');
     return false;
+  }
+}
+
+async function enqueueN8nEvent(organizationId: string, eventKey: string, record: Record<string, unknown>, eventId: string = randomUUID()) {
+  if (!isSafeWorkspaceData(record) || !z.string().uuid().safeParse(eventId).success) return false;
+  try {
+    if (!await isIntegrationEnabled(organizationId, 'n8n')) return false;
+    const automations = await db.select({ id: workspaceRecords.id }).from(workspaceRecords).where(and(
+      eq(workspaceRecords.organizationId, organizationId), eq(workspaceRecords.resource, 'automations'), isNull(workspaceRecords.archivedAt),
+      sql`${workspaceRecords.data}->>'eventKey' = ${eventKey}`, sql`${workspaceRecords.data}->>'active' = 'true'`,
+    ));
+    if (!automations.length) return false;
+    await db.insert(n8nEventDeliveries).values(automations.map((automation) => ({
+      organizationId, automationId: automation.id, eventId, eventKey, record,
+    }))).onConflictDoNothing({ target: [n8nEventDeliveries.automationId, n8nEventDeliveries.eventId] });
+    void processN8nEventDeliveries();
+    return true;
+  } catch (error) {
+    app.log.warn({ eventKey, error: error instanceof Error ? error.name : 'unknown' }, 'n8n event could not be queued');
+    return false;
+  }
+}
+
+async function processN8nEventDeliveries() {
+  if (n8nDeliveryWorkerRunning) return;
+  n8nDeliveryWorkerRunning = true;
+  try {
+    const now = new Date();
+    const claimed = await db.transaction(async (tx) => {
+      const rows = await tx.select().from(n8nEventDeliveries).where(and(
+        isNull(n8nEventDeliveries.deliveredAt), isNull(n8nEventDeliveries.discardedAt), lte(n8nEventDeliveries.nextAttemptAt, now),
+      )).orderBy(asc(n8nEventDeliveries.nextAttemptAt)).limit(25).for('update', { skipLocked: true });
+      const ready = [];
+      const leaseUntil = new Date(now.getTime() + 2 * 60_000);
+      for (const row of rows) {
+        const [claimedRow] = await tx.update(n8nEventDeliveries).set({ attempts: row.attempts + 1, nextAttemptAt: leaseUntil, updatedAt: now })
+          .where(eq(n8nEventDeliveries.id, row.id)).returning();
+        if (claimedRow) ready.push(claimedRow);
+      }
+      return ready;
+    });
+
+    for (const delivery of claimed) {
+      let delivered = false;
+      let terminalError = '';
+      let lastError = 'provider_unavailable';
+      const [automation] = await db.select().from(workspaceRecords).where(and(
+        eq(workspaceRecords.id, delivery.automationId), eq(workspaceRecords.organizationId, delivery.organizationId),
+        eq(workspaceRecords.resource, 'automations'), isNull(workspaceRecords.archivedAt),
+      )).limit(1);
+      if (!automation || automation.data.active !== true || automation.data.eventKey !== delivery.eventKey || !await isIntegrationEnabled(delivery.organizationId, 'n8n')) {
+        terminalError = 'automation_inactive_or_removed';
+      } else {
+        const path = String(automation.data.n8nWebhookPath ?? '');
+        if (!/^nexo\/[0-9a-f-]{36}$/i.test(path)) {
+          terminalError = 'invalid_webhook_path';
+        } else {
+          try {
+            const baseUrl = process.env.N8N_BASE_URL?.replace(/\/$/, '');
+            if (!baseUrl) throw new Error('n8n_not_configured');
+            const response = await fetch(new URL(`/webhook/${path}`, `${baseUrl}/`), {
+              method: 'POST', signal: AbortSignal.timeout(8_000),
+              headers: { 'Content-Type': 'application/json', [n8nWebhookHeader]: n8nWebhookSecret },
+              body: JSON.stringify({ eventId: delivery.eventId, eventKey: delivery.eventKey, record: delivery.record }),
+            });
+            delivered = response.ok;
+            if (!response.ok) lastError = `provider_http_${response.status}`;
+          } catch (error) {
+            lastError = error instanceof Error && error.name === 'TimeoutError' ? 'provider_timeout' : 'provider_unavailable';
+          }
+        }
+      }
+
+      const updatedAt = new Date();
+      if (delivered) {
+        await db.update(n8nEventDeliveries).set({ deliveredAt: updatedAt, record: {}, lastError: null, updatedAt })
+          .where(eq(n8nEventDeliveries.id, delivery.id));
+        continue;
+      }
+      if (terminalError || n8nDeliveryExhausted(delivery.attempts)) {
+        await db.update(n8nEventDeliveries).set({ discardedAt: updatedAt, record: {}, lastError: terminalError || 'delivery_attempts_exhausted', updatedAt })
+          .where(eq(n8nEventDeliveries.id, delivery.id));
+        app.log.warn({ eventKey: delivery.eventKey, reason: terminalError || 'delivery_attempts_exhausted' }, 'n8n event delivery discarded');
+        continue;
+      }
+      await db.update(n8nEventDeliveries).set({
+        nextAttemptAt: new Date(updatedAt.getTime() + n8nDeliveryRetryDelayMs(delivery.attempts)), lastError, updatedAt,
+      }).where(eq(n8nEventDeliveries.id, delivery.id));
+      app.log.warn({ eventKey: delivery.eventKey, attempt: delivery.attempts, reason: lastError }, 'n8n event delivery will retry');
+    }
+  } catch (error) {
+    app.log.error({ error: error instanceof Error ? error.name : 'unknown' }, 'n8n delivery queue processing failed');
+  } finally {
+    n8nDeliveryWorkerRunning = false;
   }
 }
 
@@ -935,12 +1032,21 @@ app.post('/api/integrations/n8n/actions', { config: { rateLimit: { max: 120, tim
     ...(template.taskKind === 'lead' ? { sourceLeadId: sourceId } : {}), ...(template.taskKind === 'project' ? { projectId: sourceId } : {}),
     ...(template.taskKind === 'overduePayment' ? { sourceBillingOrderId: sourceId, clientId: typeof event.clientId === 'string' ? event.clientId : null } : {}),
   };
-  const [task] = await db.transaction(async (tx) => {
-    const rows = await tx.insert(workspaceRecords).values({ organizationId: automation.organizationId, createdBy: ownerAccountId, resource: 'tasks', data }).returning();
-    await tx.insert(activityEvents).values({ organizationId: automation.organizationId, actorUserId: ownerAccountId, entityType: 'tasks', entityId: rows[0]!.id, action: 'created', payload: { automation: `n8n:${template.taskKind}`, sourceN8nAutomationId: automation.id } });
-    return rows;
+  const result = await db.transaction(async (tx) => {
+    const [task] = await tx.insert(workspaceRecords).values({ organizationId: automation.organizationId, createdBy: ownerAccountId, resource: 'tasks', data })
+      .onConflictDoNothing().returning({ id: workspaceRecords.id });
+    if (!task) {
+      const [duplicate] = await tx.select({ id: workspaceRecords.id }).from(workspaceRecords).where(and(
+        eq(workspaceRecords.organizationId, automation.organizationId), eq(workspaceRecords.resource, 'tasks'), isNull(workspaceRecords.archivedAt),
+        sql`${workspaceRecords.data}->>'n8nEventId' = ${body.event.eventId}`,
+      )).limit(1);
+      if (!duplicate) throw new Error('n8n_event_task_conflict_without_record');
+      return { taskId: duplicate.id, inserted: false };
+    }
+    await tx.insert(activityEvents).values({ organizationId: automation.organizationId, actorUserId: ownerAccountId, entityType: 'tasks', entityId: task.id, action: 'created', payload: { automation: `n8n:${template.taskKind}`, sourceN8nAutomationId: automation.id } });
+    return { taskId: task.id, inserted: true };
   });
-  return { data: { status: 'processed', taskId: task!.id } };
+  return { data: { status: result.inserted ? 'processed' : 'already_processed', taskId: result.taskId } };
 });
 
 app.post('/api/workspace/automations/:id/n8n-workflow', { preHandler: app.authenticate, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
@@ -1355,7 +1461,7 @@ app.post('/api/integrations/mercadopago/webhook', async (request, reply) => {
         if (!duplicateSnapshot) {
           await db.update(billingOrders).set({ status: nextStatus, statusDetail: details.statusDetail, mpPaymentId: details.paymentId, paymentDetails: details as Record<string, unknown>, updatedAt: new Date() }).where(eq(billingOrders.id, local.id));
           await db.insert(activityEvents).values({ organizationId: local.organizationId, entityType: 'billing_order', entityId: local.id, action: 'provider_updated', payload: { status: nextStatus } });
-          if (nextStatus === 'paid' && local.status !== 'paid') void dispatchN8nEvent(local.organizationId, 'payment.confirmed', { id: local.id, title: local.description, client: local.clientName, amount: local.amount });
+          if (nextStatus === 'paid' && local.status !== 'paid') await enqueueN8nEvent(local.organizationId, 'payment.confirmed', { id: local.id, title: local.description, client: local.clientName, amount: local.amount });
         }
       }
     } else if (topic === 'subscription_preapproval') {
@@ -1588,8 +1694,8 @@ app.post('/api/workspace/:resource', { preHandler: app.authenticate }, async (re
     }
     return created;
   });
-  if (params.data.resource === 'leads') void dispatchN8nEvent(request.user.organizationId, 'lead.created', { ...saved!.data, id: saved!.id });
-  if (params.data.resource === 'tickets') void dispatchN8nEvent(request.user.organizationId, 'ticket.created', { ...saved!.data, id: saved!.id });
+  if (params.data.resource === 'leads') await enqueueN8nEvent(request.user.organizationId, 'lead.created', { ...saved!.data, id: saved!.id });
+  if (params.data.resource === 'tickets') await enqueueN8nEvent(request.user.organizationId, 'ticket.created', { ...saved!.data, id: saved!.id });
   return reply.code(201).send({ data: { ...saved!.data, id: saved!.id, createdAt: saved!.createdAt, updatedAt: saved!.updatedAt } });
 });
 
@@ -1642,8 +1748,8 @@ app.patch('/api/workspace/:resource/:id', { preHandler: app.authenticate }, asyn
   const priorStatus = normalizeStatus(previousData?.status);
   const nextStatus = normalizeStatus(body.data.status);
   const publishedStatuses = new Set(['publicado', 'entregue', 'concluido']);
-  if (params.data.resource === 'projects' && publishedStatuses.has(nextStatus) && !publishedStatuses.has(priorStatus)) void dispatchN8nEvent(request.user.organizationId, 'project.published', { ...updated.data, id: updated.id });
-  if (params.data.resource === 'proposals' && nextStatus === 'aprovada' && priorStatus !== 'aprovada') void dispatchN8nEvent(request.user.organizationId, 'proposal.accepted', { ...updated.data, id: updated.id });
+  if (params.data.resource === 'projects' && publishedStatuses.has(nextStatus) && !publishedStatuses.has(priorStatus)) await enqueueN8nEvent(request.user.organizationId, 'project.published', { ...updated.data, id: updated.id });
+  if (params.data.resource === 'proposals' && nextStatus === 'aprovada' && priorStatus !== 'aprovada') await enqueueN8nEvent(request.user.organizationId, 'proposal.accepted', { ...updated.data, id: updated.id });
   return { data: { ...updated.data, id: updated.id, createdAt: updated.createdAt, updatedAt: updated.updatedAt } };
 });
 
@@ -1821,7 +1927,7 @@ async function processOverdueBillingEvents() {
           .where(eq(billingOverdueEvents.id, dispatch.id));
         continue;
       }
-      const delivered = await dispatchN8nEvent(dispatch.organizationId, 'payment.overdue', record, dispatch.eventId);
+      const delivered = await sendN8nEvent(dispatch.organizationId, 'payment.overdue', record, dispatch.eventId);
       if (delivered) {
         await db.update(billingOverdueEvents).set({ deliveredAt: new Date(), lastError: null, updatedAt: new Date() })
           .where(eq(billingOverdueEvents.id, dispatch.id));
@@ -1849,7 +1955,11 @@ app.setErrorHandler((error, request, reply) => {
   return reply.code(500).send({ error: 'internal_error', message: 'Não foi possível concluir a solicitação.' });
 });
 
-app.addHook('onClose', async () => { if (overdueWorkerTimer) clearInterval(overdueWorkerTimer); await pool.end(); });
+app.addHook('onClose', async () => {
+  if (overdueWorkerTimer) clearInterval(overdueWorkerTimer);
+  if (n8nDeliveryWorkerTimer) clearInterval(n8nDeliveryWorkerTimer);
+  await pool.end();
+});
 try {
   if (process.env.RUN_MIGRATIONS !== 'false') await migrate(db, { migrationsFolder: resolve(process.cwd(), 'drizzle') });
   const removedAccounts = await db.transaction(async (tx) => {
@@ -1865,5 +1975,8 @@ try {
   overdueWorkerTimer = setInterval(() => { void processOverdueBillingEvents(); }, 60_000);
   overdueWorkerTimer.unref();
   void processOverdueBillingEvents();
+  n8nDeliveryWorkerTimer = setInterval(() => { void processN8nEventDeliveries(); }, 15_000);
+  n8nDeliveryWorkerTimer.unref();
+  void processN8nEventDeliveries();
 }
 catch (error) { app.log.error(error); process.exit(1); }

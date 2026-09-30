@@ -1,4 +1,4 @@
-import { relations } from 'drizzle-orm';
+import { relations, sql } from 'drizzle-orm';
 import { boolean, index, integer, jsonb, numeric, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 
 export const organizations = pgTable('organizations', {
@@ -90,6 +90,25 @@ export const billingOverdueEvents = pgTable('billing_overdue_events', {
   index('billing_overdue_events_retry_idx').on(table.deliveredAt, table.discardedAt, table.nextAttemptAt),
 ]);
 
+export const n8nEventDeliveries = pgTable('n8n_event_deliveries', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  organizationId: uuid('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
+  automationId: uuid('automation_id').notNull(),
+  eventId: uuid('event_id').notNull(),
+  eventKey: text('event_key').notNull(),
+  record: jsonb('record').$type<Record<string, unknown>>().default({}).notNull(),
+  attempts: integer('attempts').default(0).notNull(),
+  nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).defaultNow().notNull(),
+  deliveredAt: timestamp('delivered_at', { withTimezone: true }),
+  discardedAt: timestamp('discarded_at', { withTimezone: true }),
+  lastError: text('last_error'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('n8n_delivery_automation_event_unique').on(table.automationId, table.eventId),
+  index('n8n_event_deliveries_retry_idx').on(table.deliveredAt, table.discardedAt, table.nextAttemptAt),
+]);
+
 export const billingSubscriptions = pgTable('billing_subscriptions', {
   id: uuid('id').defaultRandom().primaryKey(),
   organizationId: uuid('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
@@ -124,6 +143,8 @@ export const workspaceRecords = pgTable('workspace_records', {
 }, (table) => [
   index('workspace_records_org_resource_updated_idx').on(table.organizationId, table.resource, table.updatedAt),
   index('workspace_records_org_resource_created_idx').on(table.organizationId, table.resource, table.createdAt),
+  uniqueIndex('workspace_task_n8n_event_unique').on(table.organizationId, sql`(${table.data}->>'n8nEventId')`)
+    .where(sql`${table.resource} = 'tasks' AND ${table.archivedAt} IS NULL AND ${table.data} ? 'n8nEventId'`),
 ]);
 
 export const organizationsRelations = relations(organizations, ({ many }) => ({ users: many(users), clients: many(clients) }));
