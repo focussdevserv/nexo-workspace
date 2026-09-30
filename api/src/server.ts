@@ -1096,15 +1096,21 @@ app.get('/api/integrations/n8n/workflows', { preHandler: app.authenticate, confi
   if (!process.env.N8N_BASE_URL || !process.env.N8N_API_KEY) return reply.code(503).send({ error: 'n8n_not_configured', message: 'Configure a URL segura do n8n e a chave da API no Coolify.' });
   if (!await isIntegrationEnabled(request.user.organizationId, 'n8n')) return reply.code(409).send({ error: 'integration_disconnected', message: 'Reative o n8n em Integrações para consultar workflows.' });
   try {
-    const [workflowResult, executionResult] = await Promise.all([
+    const [workflowResult, executionResult, deliveryQueueResult] = await Promise.all([
       n8nApiRequest('/workflows?limit=100') as Promise<{ data?: unknown[]; nextCursor?: string | null }>,
       n8nApiRequest('/executions?limit=25&includeData=false') as Promise<{ data?: unknown[]; nextCursor?: string | null }>,
+      db.select({
+        pending: sql<number>`count(*) filter (where ${n8nEventDeliveries.deliveredAt} is null and ${n8nEventDeliveries.discardedAt} is null)`,
+        delivered: sql<number>`count(*) filter (where ${n8nEventDeliveries.deliveredAt} is not null)`,
+        discarded: sql<number>`count(*) filter (where ${n8nEventDeliveries.discardedAt} is not null)`,
+      }).from(n8nEventDeliveries).where(eq(n8nEventDeliveries.organizationId, request.user.organizationId)),
     ]);
     const mapped = mapN8nCollections(
       Array.isArray(workflowResult.data) ? workflowResult.data : [],
       Array.isArray(executionResult.data) ? executionResult.data : [],
     );
-    return { data: { ...mapped, workflowNextCursor: workflowResult.nextCursor ?? null, executionNextCursor: executionResult.nextCursor ?? null } };
+    const [queue] = deliveryQueueResult;
+    return { data: { ...mapped, workflowNextCursor: workflowResult.nextCursor ?? null, executionNextCursor: executionResult.nextCursor ?? null, deliveryQueue: { pending: Number(queue?.pending || 0), delivered: Number(queue?.delivered || 0), discarded: Number(queue?.discarded || 0) } } };
   } catch (error) {
     const statusCode = (error as { statusCode?: number }).statusCode ?? 502;
     return reply.code(statusCode).send({ error: statusCode === 403 ? 'n8n_api_forbidden' : 'n8n_request_failed', message: statusCode === 403 ? 'A chave do n8n não tem permissão para listar workflows e execuções.' : 'Não foi possível carregar workflows reais do n8n. Confira a integração e tente novamente.' });
