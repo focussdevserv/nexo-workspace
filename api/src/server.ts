@@ -30,6 +30,7 @@ import { N8N_DELIVERY_MAX_ATTEMPTS, n8nDeliveryExhausted, n8nDeliveryRetryDelayM
 import { isUnverifiedContractTransition, requiresExternalSignature } from './contracts/status.js';
 import { checkPublicSite } from './monitoring/site-check.js';
 import { scrubSentryEvent } from './integrations/sentry-scrub.js';
+import { resolveActivityNotificationTitle } from './notifications.js';
 
 const env = z.object({
   PORT: z.coerce.number().int().positive().default(3001),
@@ -1338,13 +1339,13 @@ app.get('/api/billing/payment-methods', { preHandler: app.authenticate }, async 
 
 const notificationRoutes: Record<string, string> = {
   inbox: 'Caixa de entrada',
-  leads: 'Leads', clients: 'Clientes', client: 'Clientes', proposals: 'Propostas', projects: 'Projetos',
+  leads: 'Leads', clients: 'Clientes', client: 'Clientes', proposals: 'Propostas', contracts: 'Contratos', projects: 'Projetos',
   tasks: 'Tarefas', events: 'Agenda', tickets: 'Tickets', approvals: 'Aprovações',
   billing_order: 'Cobranças', billing_subscription: 'Assinaturas',
 };
 const notificationLabels: Record<string, string> = {
   inbox: 'mensagem WhatsApp',
-  leads: 'lead', clients: 'cliente', client: 'cliente', proposals: 'proposta', projects: 'projeto',
+  leads: 'lead', clients: 'cliente', client: 'cliente', proposals: 'proposta', contracts: 'contrato', projects: 'projeto',
   tasks: 'tarefa', events: 'reunião', tickets: 'ticket de suporte', approvals: 'aprovação',
   billing_order: 'cobrança', billing_subscription: 'assinatura',
 };
@@ -1360,22 +1361,14 @@ app.get('/api/notifications', { preHandler: app.authenticate }, async (request) 
   const data = rows.flatMap((event) => {
     const label = notificationLabels[event.entityType];
     const route = notificationRoutes[event.entityType];
-    if (!label || !route || !['created', 'updated', 'provider_updated', 'received'].includes(event.action)) return [];
+    const title = resolveActivityNotificationTitle(event.entityType, event.action);
+    if (!label || !route || !title) return [];
     const payload = event.payload as Record<string, unknown>;
     const subject = String(payload.label || payload.name || payload.title || '').trim();
-    const titleMap: Record<string, [string, string]> = {
-      inbox: ['Nova mensagem no WhatsApp', 'Nova mensagem no WhatsApp'],
-      leads: ['Novo lead recebido', 'Lead atualizado'], clients: ['Cliente cadastrado', 'Cliente atualizado'], client: ['Cliente cadastrado', 'Cliente atualizado'],
-      proposals: ['Nova proposta', 'Proposta atualizada'], projects: ['Projeto criado', 'Projeto atualizado'],
-      tasks: ['Nova tarefa', 'Tarefa atualizada'], events: ['Reunião agendada', 'Reunião atualizada'],
-      tickets: ['Novo ticket de suporte', 'Ticket de suporte atualizado'], approvals: ['Nova aprovação', 'Aprovação atualizada'],
-      billing_order: ['Cobrança criada', event.action === 'provider_updated' ? 'Pagamento atualizado' : 'Cobrança atualizada'],
-      billing_subscription: ['Assinatura criada', 'Assinatura atualizada'],
-    };
-    const title = titleMap[event.entityType]?.[event.action === 'created' ? 0 : 1] || `${label[0]?.toUpperCase()}${label.slice(1)} atualizado`;
     const amountDetail = typeof payload.amount === 'number' ? `R$ ${payload.amount.toFixed(2).replace('.', ',')}` : '';
     const statusDetail = typeof payload.status === 'string' ? `Status: ${payload.status}` : '';
-    const detail = [subject, amountDetail, statusDetail].filter(Boolean).join(' · ') || `${title}.`;
+    const recipientDetail = typeof payload.recipient === 'string' ? `Destinatário: ${payload.recipient}` : '';
+    const detail = [subject, amountDetail, statusDetail, recipientDetail].filter(Boolean).join(' · ') || `${title}.`;
     return [{
       id: event.id, entityId: event.entityId, entityType: event.entityType, page: route,
       title,
