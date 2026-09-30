@@ -11,6 +11,7 @@ import { apiRequest, fetchAllRecords, useWorkspaceRecords } from '../lib/workspa
 import { completeRequestedServiceCatalog, mergeRequestedServiceCatalog, requestedServiceCatalog } from '../data/service-catalog.js';
 import { resolveProposalServices, summarizeProposalServices } from '../data/proposal-services.js';
 import { buildServiceProject } from '../data/service-project-template.js';
+import { belongsToClient } from '../data/client-link.js';
 import { contractText, downloadContract, editableContractStatuses, isLockedContractStatus } from '../data/contract-document.js';
 
 const datasets = { leads: [], clients: [], companies: [], contacts: [], proposals: [], services: [], contracts: [], projects: [], tasks: [] };
@@ -266,20 +267,16 @@ function ClientProfileModal({ client: initialClient, onClose, onUpdate, onAction
     })().catch(() => { if (active) setRelated({}); });
     return () => { active = false; };
   }, [initialClient.id]);
-  const findClient = (value) => {
-    const clientName = String(client.name || '').trim().toLocaleLowerCase('pt-BR');
-    return Boolean(clientName) && String(value || '').toLocaleLowerCase('pt-BR').includes(clientName);
-  };
-  const projects = (related.projects || []).filter((item) => findClient(item.client));
-  const tasks = (related.tasks || []).filter((item) => findClient(item.client));
-  const billing = (related.billing || []).filter((item) => findClient(item.clientName || item.client));
-  const contracts = (related.contracts || []).filter((item) => findClient(item.client));
-  const subscriptions = (related.subscriptions || []).filter((item) => findClient(item.clientName || item.client));
-  const messages = (related.inbox || []).filter((item) => findClient(item.company));
-  const files = (related.files || []).filter((item) => findClient(item.client));
-  const tickets = (related.tickets || []).filter((item) => findClient(item.client));
-  const approvals = (related.approvals || []).filter((item) => findClient(item.client));
-  const activity = (related.events || []).filter((item) => findClient(item.client));
+  const projects = (related.projects || []).filter((item) => belongsToClient(item, client, item.client));
+  const tasks = (related.tasks || []).filter((item) => belongsToClient(item, client, item.client));
+  const billing = (related.billing || []).filter((item) => belongsToClient(item, client, item.clientName || item.client));
+  const contracts = (related.contracts || []).filter((item) => belongsToClient(item, client, item.client));
+  const subscriptions = (related.subscriptions || []).filter((item) => belongsToClient(item, client, item.clientName || item.client));
+  const messages = (related.inbox || []).filter((item) => belongsToClient(item, client, item.company));
+  const files = (related.files || []).filter((item) => belongsToClient(item, client, item.client));
+  const tickets = (related.tickets || []).filter((item) => belongsToClient(item, client, item.client));
+  const approvals = (related.approvals || []).filter((item) => belongsToClient(item, client, item.client));
+  const activity = (related.events || []).filter((item) => belongsToClient(item, client, item.client));
   const notes = Array.isArray(client.notes) ? client.notes : [];
   const openTab = (page) => { onClose(); window.dispatchEvent(new CustomEvent('nexo:navigate', { detail: page })); };
   const createProject = async (event) => {
