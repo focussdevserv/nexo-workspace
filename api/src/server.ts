@@ -34,6 +34,7 @@ import { checkPublicSite } from './monitoring/site-check.js';
 import { scrubSentryEvent } from './integrations/sentry-scrub.js';
 import { resolveActivityNotificationTitle } from './notifications.js';
 import { mapGoogleCalendarEvents } from './integrations/google-calendar.js';
+import { buildGoogleAuthorizationUrl } from './integrations/google-oauth.js';
 import { canApplyClicksignWebhookStatus, clicksignContractStatus, clicksignWebhookEnvelopeStatus, clicksignWebhookIsReady, parseClicksignWebhookEvent, verifyClicksignWebhook } from './integrations/clicksign-webhook.js';
 
 const env = z.object({
@@ -540,9 +541,7 @@ app.get('/api/integrations/google/authorize', { preHandler: app.authenticate, co
   if (!await isIntegrationEnabled(request.user.organizationId, 'google')) return reply.code(409).send({ error: 'integration_disconnected', message: 'Reative Google Workspace no Nexo antes de autorizar a conta.' });
   const state = app.jwt.sign({ sub: request.user.sub, organizationId: request.user.organizationId, role: 'owner', purpose: 'google-oauth-state', nonce: randomUUID() }, { expiresIn: '10m' });
   reply.setCookie('nexo_google_oauth_state', state, { path: '/api/integrations', httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', maxAge: 10 * 60 });
-  const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
-  url.search = new URLSearchParams({ client_id: env.GOOGLE_CLIENT_ID, redirect_uri: googleRedirectUri, response_type: 'code', scope: googleScopes.join(' '), access_type: 'offline', include_granted_scopes: 'true', prompt: 'consent', state }).toString();
-  return reply.redirect(url.toString());
+  return reply.redirect(buildGoogleAuthorizationUrl({ clientId: env.GOOGLE_CLIENT_ID, redirectUri: googleRedirectUri, scopes: googleScopes, state }));
 });
 
 app.get('/api/integrations/google/callback', { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {

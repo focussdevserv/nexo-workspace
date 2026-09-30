@@ -1,6 +1,38 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildGoogleRawMessage, decodeGoogleDriveUpload } from '../src/integrations/google-mail.js';
+import { buildGoogleAuthorizationUrl } from '../src/integrations/google-oauth.js';
+
+test('requests offline Google access with the complete workspace scopes and OAuth state', () => {
+  const state = 'signed-state-with-reserved+characters/';
+  const authorizationUrl = new URL(buildGoogleAuthorizationUrl({
+    clientId: 'client-id.apps.googleusercontent.com',
+    redirectUri: 'https://focussdev.space/api/integrations/google/callback',
+    scopes: [
+      'openid', 'email', 'profile',
+      'https://www.googleapis.com/auth/calendar.events',
+      'https://www.googleapis.com/auth/drive.file',
+      'https://www.googleapis.com/auth/gmail.send',
+    ],
+    state,
+  }));
+
+  assert.equal(authorizationUrl.origin, 'https://accounts.google.com');
+  assert.equal(authorizationUrl.pathname, '/o/oauth2/v2/auth');
+  assert.equal(authorizationUrl.searchParams.get('client_id'), 'client-id.apps.googleusercontent.com');
+  assert.equal(authorizationUrl.searchParams.get('redirect_uri'), 'https://focussdev.space/api/integrations/google/callback');
+  assert.equal(authorizationUrl.searchParams.get('response_type'), 'code');
+  assert.equal(authorizationUrl.searchParams.get('access_type'), 'offline');
+  assert.equal(authorizationUrl.searchParams.get('include_granted_scopes'), 'true');
+  assert.equal(authorizationUrl.searchParams.get('prompt'), 'consent');
+  assert.equal(authorizationUrl.searchParams.get('state'), state);
+  assert.deepEqual(authorizationUrl.searchParams.get('scope')?.split(' '), [
+    'openid', 'email', 'profile',
+    'https://www.googleapis.com/auth/calendar.events',
+    'https://www.googleapis.com/auth/drive.file',
+    'https://www.googleapis.com/auth/gmail.send',
+  ]);
+});
 
 test('encodes proposal mail as RFC 2045 multipart UTF-8 Gmail raw message', () => {
   const raw = buildGoogleRawMessage({ to: 'cliente@example.com', subject: 'Proposta: criação de site', text: 'Olá, cliente!', html: '<p>Olá, cliente!</p>' });
