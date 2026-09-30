@@ -96,6 +96,11 @@ function AgendaCalendar({ events, selectedDate, setSelectedDate, agendaView, set
   };
   const bookedMinutes = dayEvents.reduce((total, event) => total + duration(event), 0);
   const durationLabel = bookedMinutes ? `${Math.floor(bookedMinutes / 60)}h${bookedMinutes % 60 ? ` ${bookedMinutes % 60}min` : ''}` : '0h';
+  const periodEnd = agendaView === 'Dia' ? selectedDate : agendaView === 'Semana' ? new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + 6) : new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 0);
+  const periodStartKey = agendaView === 'Dia' ? selectedKey : agendaView === 'Semana' ? toLocalDateInput(weekStart) : toLocalDateInput(monthDate);
+  const periodEndKey = toLocalDateInput(periodEnd);
+  const periodEvents = agendaView === 'Dia' ? dayEvents : filteredEvents.filter((event) => event.date >= periodStartKey && event.date <= periodEndKey);
+  const periodSummary = `${periodEvents.length} compromisso${periodEvents.length === 1 ? '' : 's'} ${agendaView === 'Dia' ? `· ${durationLabel} reservado` : 'no período'}`;
   const now = new Date();
   const isToday = sameDay(now, selectedDate);
   const eventTone = (event) => ['blue', 'lime', 'violet'].includes(event.color) ? event.color : 'blue';
@@ -109,7 +114,7 @@ function AgendaCalendar({ events, selectedDate, setSelectedDate, agendaView, set
 
   return <div className="agenda-workspace agenda-redesign">
     <div className="agenda-toolbar agenda-toolbar-new">
-      <div className="agenda-period"><button type="button" aria-label="Período anterior" onClick={() => movePeriod(-1)}><ChevronLeft size={17} /></button><div><strong>{title}</strong><small>{dayEvents.length} compromisso{dayEvents.length === 1 ? '' : 's'} · {durationLabel} reservado</small></div><button type="button" aria-label="Próximo período" onClick={() => movePeriod(1)}><ChevronRight size={17} /></button><button type="button" className="agenda-today" onClick={() => setSelectedDate(new Date())}>Ir para hoje</button></div>
+      <div className="agenda-period"><button type="button" aria-label="Período anterior" onClick={() => movePeriod(-1)}><ChevronLeft size={17} /></button><div><strong>{title}</strong><small>{periodSummary}</small></div><button type="button" aria-label="Próximo período" onClick={() => movePeriod(1)}><ChevronRight size={17} /></button><button type="button" className="agenda-today" onClick={() => setSelectedDate(new Date())}>Ir para hoje</button></div>
       <div className="agenda-toolbar-tools"><div className="agenda-mode" aria-label="Visualização da agenda">{['Dia', 'Semana', 'Mês'].map((mode) => <button type="button" key={mode} aria-pressed={agendaView === mode} className={agendaView === mode ? 'active' : ''} onClick={() => setAgendaView(mode)}>{mode}</button>)}</div><label className="agenda-search"><Search size={15} /><input aria-label="Buscar evento ou cliente" placeholder="Buscar na agenda" value={agendaQuery} onChange={(event) => setAgendaQuery(event.target.value)} />{agendaQuery && <button type="button" aria-label="Limpar busca" onClick={() => setAgendaQuery('')}><X size={14} /></button>}</label></div>
     </div>
     <section className="agenda-main agenda-main-new agenda-main-single">
