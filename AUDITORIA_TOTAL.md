@@ -375,4 +375,5 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 ## Reparacao dos modelos do catalogo - 30/09/2026
 - Consulta autenticada somente leitura em producao confirmou 88 registros, nas quatro categorias solicitadas. Todos estavam sem `proposalTemplate` e `contractTemplate`, apesar de o catalogo fonte conter esses modelos; assim, escolher o servico nao preenchia o escopo da proposta/contrato.
 - O botao do catalogo agora completa somente campos vazios usando os modelos fornecidos, preserva nomes, precos, custos, prazos e textos personalizados, e nao cria itens duplicados. Continua sem inventar valores comerciais.
-- Testes cobrem 88 templates, preservacao de precos/textos e ausencia de duplicatas. Validacao local: build Vite, build TypeScript, 34 testes API e diff-check passaram. A reparacao dos 88 registros reais ainda sera aplicada apos o deploy.
+- Testes cobrem 88 templates, preservacao de precos/textos e ausencia de duplicatas. Validacao local: build Vite, build TypeScript, 34 testes API e diff-check passaram.
+- Apos o deploy, a API autenticada reparou os 88 registros existentes com templates de proposta e contrato e checklists. Verificacao posterior confirmou 88/88 em cada campo, os 10 planos mensais marcados com ciclo mensal e os 88 precos ainda vazios; nenhum preco foi inventado, nenhum registro foi criado ou duplicado.
