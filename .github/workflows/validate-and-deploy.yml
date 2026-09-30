@@ -1,0 +1,98 @@
+name: Validate and deploy Nexo
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Build and API checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install web dependencies
+        run: npm ci
+
+      - name: Build web app
+        run: npm run build
+
+      - name: Install API dependencies
+        run: npm ci --prefix api
+
+      - name: Build API
+        run: npm run api:build
+
+      - name: Run API tests
+        run: npm --prefix api test
+
+  deploy:
+    name: Deploy and verify production
+    needs: validate
+    runs-on: ubuntu-latest
+    env:
+      COOLIFY_WEBHOOK: ${{ secrets.COOLIFY_WEBHOOK }}
+      COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+    steps:
+      - name: Explain missing Coolify secrets
+        if: ${{ env.COOLIFY_WEBHOOK == '' || env.COOLIFY_TOKEN == '' }}
+        run: |
+          {
+            echo '## Coolify deploy skipped'
+            echo 'Validation passed, but production was not deployed because the repository secrets `COOLIFY_WEBHOOK` and/or `COOLIFY_TOKEN` are missing.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Queue Coolify deployment
+        if: ${{ env.COOLIFY_WEBHOOK != '' && env.COOLIFY_TOKEN != '' }}
+        env:
+          WEBHOOK_URL: ${{ secrets.COOLIFY_WEBHOOK }}
+          API_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+        run: |
+          set -euo pipefail
+          response_file="$(mktemp)"
+          status="$(curl --silent --show-error --location --output "$response_file" --write-out '%{http_code}' --max-time 30 --retry 2 --retry-all-errors --request GET "$WEBHOOK_URL" --header "Authorization: Bearer $API_TOKEN")"
+          if [[ "$status" != 2* ]]; then
+            echo "Coolify recusou o deploy (HTTP $status). Confira os secrets e o webhook configurado." >&2
+            exit 1
+          fi
+          echo 'Coolify aceitou o pedido de deploy.' >> "$GITHUB_STEP_SUMMARY"
+          rm -f "$response_file"
+
+      - name: Verify deployed app and API route
+        if: ${{ env.COOLIFY_WEBHOOK != '' && env.COOLIFY_TOKEN != '' }}
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 30); do
+            api_health="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 https://focussdev.space/api/health || true)"
+            route_status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 'https://focussdev.space/api/integrations/google/calendar/events?from=2026-09-30&to=2026-09-30' || true)"
+            agenda_published='false'
+            if [[ "$api_health" == '200' && "$route_status" == '401' ]]; then
+              html="$(curl --silent --show-error --fail --max-time 10 https://focussdev.space || true)"
+              main_asset="$(printf '%s' "$html" | grep -oE '/assets/index-[A-Za-z0-9_-]+\.js' | head -n 1 || true)"
+              if [[ -n "$main_asset" ]]; then
+                main_bundle="$(curl --silent --show-error --fail --max-time 10 "https://focussdev.space$main_asset" || true)"
+                work_asset="$(printf '%s' "$main_bundle" | grep -oE 'WorkScreens-[A-Za-z0-9_-]+\.js' | head -n 1 || true)"
+                if [[ -n "$work_asset" ]] && curl --silent --show-error --fail --max-time 10 "https://focussdev.space/assets/$work_asset" | grep -Fq 'Atualizar Google'; then
+                  agenda_published='true'
+                fi
+              fi
+            fi
+            if [[ "$api_health" == '200' && "$route_status" == '401' && "$agenda_published" == 'true' ]]; then
+              echo 'App e API saudáveis; rota autenticada e nova sincronização da agenda estão publicadas.' >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo 'O deploy foi enfileirado, mas a API/rota não ficou pronta dentro do prazo.' >&2
+          exit 1
