@@ -23,7 +23,7 @@ import { resendOperationalReadiness } from './integrations/resend-readiness.js';
 import { mapGitHubRepositoryActivity } from './integrations/github.js';
 import { googleCalendarTestDisposition } from './integrations/google-health.js';
 import { sameMercadoPagoPaymentSnapshot } from './integrations/mercadopago.js';
-import { classifyWahaQrResponse } from './integrations/waha.js';
+import { classifyWahaQrResponse, classifyWahaSessionReadiness } from './integrations/waha.js';
 import { clicksignBaseUrl, createClicksignEnvelope, getClicksignEnvelope, notifyClicksignEnvelope } from './integrations/clicksign.js';
 import { mapN8nCollections, n8nAutomationTemplates, buildN8nAutomationWorkflow, n8nApiKeyFailureMessage, n8nApiValidationMessage, type N8nAutomationTemplateId } from './integrations/n8n.js';
 import { N8N_DELIVERY_MAX_ATTEMPTS, n8nDeliveryExhausted, n8nDeliveryRetryDelayMs } from './integrations/n8n-delivery.js';
@@ -763,8 +763,14 @@ app.post('/api/integrations/:provider/test', { preHandler: app.authenticate, con
     }
     if (provider === 'waha') {
       if (!env.WAHA_API_URL || !env.WAHA_API_KEY) return unavailable('Configure WAHA_API_URL e WAHA_API_KEY no serviço API.');
-      const sessions = await wahaRequest<Array<{ name?: string }>>('/api/sessions');
-      return tested('connected', `WAHA respondeu. ${sessions.length} sessão(ões) encontrada(s).`);
+      const remoteSessions = await wahaRequest<Array<{ name?: string; status?: string }>>('/api/sessions');
+      const ownedSessions = await db.select().from(workspaceRecords).where(and(
+        eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'whatsapp-sessions'), isNull(workspaceRecords.archivedAt),
+      ));
+      const ownedNames = new Set(ownedSessions.map(wahaSessionName));
+      const managedSessions = remoteSessions.filter((session) => ownedNames.has(String(session.name || '')));
+      const readiness = classifyWahaSessionReadiness(managedSessions);
+      return tested(readiness.status, readiness.message);
     }
     if (provider === 'evolution') {
       const baseUrl = process.env.EVOLUTION_API_URL?.replace(/\/$/, '');

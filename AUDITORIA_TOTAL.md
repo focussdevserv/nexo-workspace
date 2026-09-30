@@ -9,7 +9,7 @@
 Leitura autenticada do runtime e verificações de produção; este painel prevalece sobre observações históricas mais abaixo no documento.
 
 - **Mercado Pago:** credencial e teste conectados. A conta lista meios de pagamento; não foi criada cobrança real para teste.
-- **WAHA:** API conectada e sessão existente em `SCAN_QR_CODE`; o endpoint autenticado entregou uma imagem QR PNG sem cache. Falta o usuário escanear com o telefone. Nenhuma mensagem foi enviada/recebida nesta validação. **Evolution API:** sem credenciais.
+- **WAHA:** API acessível e sessão existente em `SCAN_QR_CODE`; o endpoint autenticado entregou uma imagem QR PNG sem cache. O número ainda não está pareado. O teste agora só marca WhatsApp conectado com sessão gerenciada em `WORKING`; nenhum texto foi enviado/recebido. **Evolution API:** sem credenciais.
 - **Resend:** API conectada, remetente compatível e domínio `focussdev.space` verificado (1/1). Nenhum e-mail enviado no teste.
 - **Google Workspace:** OAuth identifica `emprisefocussdev@gmail.com`, mas a leitura de `primary/events` retorna 403. A tela oferece reautorizar `calendar.events`; falta consentimento do usuário. Gmail e Drive têm fluxos implementados, mas não foram exercitados por envio/upload real.
 - **n8n:** API conectada; 6 de 6 workflows ativos (`lead`, proposta aprovada, pagamento confirmado, pagamento vencido, projeto entregue e ticket). Última leitura: 0 execuções e fila persistente vazia. Não foram fabricados eventos para teste.
@@ -445,3 +445,6 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - Google Workspace agora testa tambem uma leitura limitada de `primary/events` antes de marcar o Calendar como conectado; HTTP 403 vira `setup_required` com indicacao para reautorizar o escopo `calendar.events`. A resposta informa explicitamente que o teste nao envia Gmail nem faz upload no Drive.
 - Validacao local: testes API 47/47, build TypeScript, build Vite e diff-check passaram. A confirmacao do acesso de leitura Calendar em producao sera feita apos este deploy, sem criar evento.- Resultado do teste autenticado pós-deploy: a conta `emprisefocussdev@gmail.com` passou no OAuth, mas `primary/events` recebeu HTTP 403. O estado ficou `setup_required`, sem criar evento. A tela agora exibe `Ajustar acesso` e oferece `Reautorizar escopos Google`; a ação permanece explícita do usuário e não foi iniciada pelo agente.
 - O ajuste de interface passou novamente em 47 testes API, builds TypeScript/Vite e diff-check. Upload Drive e envio Gmail continuam sem teste transacional.
+## Status WAHA distingue API de telefone pareado - 30/09/2026
+- O teste de integração ainda confirma disponibilidade da API, mas só retorna `connected` quando pelo menos uma sessão vinculada ao workspace está em `WORKING`. QR pendente, sessões pausadas e workspace sem sessão ficam `setup_required` com mensagem específica; sessão WAHA não cadastrada no workspace não conta como pareada.
+- O cartão de Integrações passa a exibir `WhatsApp sem pareamento` quando o telefone não está conectado. Builds e 49 testes API passaram; teste de produção e novo deploy serão confirmados após publicação.

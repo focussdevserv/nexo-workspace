@@ -541,6 +541,7 @@ function Integrations({ notify }) {
     if (!state) return statusLoading ? 'Consultando status…' : 'Status indisponível';
     if (!state.configured) return 'Não configurada';
     if (!state.enabled) return 'Desconectada no Nexo';
+    if (item.name === 'WAHA' && state.lastTestStatus === 'setup_required') return 'WhatsApp sem pareamento';
     if (item.name === 'Google Workspace' && state.accountEmail && state.lastTestStatus === 'setup_required') return `Ajustar acesso: ${state.accountEmail}`;
     if (item.name === 'Google Workspace' && state.accountEmail) return `Conectada: ${state.accountEmail}`;
     if (item.name === 'Google Workspace') return 'Autorização necessária';
