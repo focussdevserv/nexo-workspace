@@ -362,3 +362,5 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - O modelo exige completar todos os campos entre colchetes antes do envio. O botao de baixar agora usa o texto revisado. O app nao envia nada ao abrir o contrato; o disparo ocorre so por acao confirmada do usuario.
 - Validei a sequencia API com fetch mock: envelope, documento TXT, signatario, requisitos de assinatura e evidencia por e-mail, ativacao; tambem testei bloqueio de hosts fora do sandbox/producao oficiais. API build, Vite build, 34 testes e diff-check passaram.
 - Pendente: configurar CLICKSIGN_API_TOKEN no Coolify e validar com envelope de sandbox; sem credencial nao foi criada assinatura real. O status atualiza sob demanda, sem webhook Clicksign nesta versao. O bundle principal segue acima de 500 kB.
+
+- Ajuste de deploy: a API recebe CLICKSIGN_API_TOKEN e CLICKSIGN_API_BASE_URL explicitamente pelo compose.yaml; sem isso, variaveis salvas no Coolify nao chegariam ao container. O token permanece vazio por padrao e o ambiente padrao continua sandbox.
