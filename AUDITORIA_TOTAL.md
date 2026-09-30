@@ -413,3 +413,8 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - Aprovar uma proposta agora usa `POST /api/workspace/proposals/:id/accept` e grava, em uma transacao, proposta aprovada, contrato em rascunho, projeto e tarefas; o vínculo por `sourceProposalId` permite repeticao idempotente.
 - A API rejeita aprovacoes feitas por criacao/edicao generica e impede que uma proposta ja convertida perca seu estado aprovado. A tela oferece `Aceitar e iniciar` em propostas abertas, sem exigir uma mudanca manual de status. O callback n8n verifica tarefas ja criadas para nao duplicar o inicio do projeto.
 - Validacao local desta fatia: 40 testes API, build TypeScript, build Vite e `git diff --check` passaram. Nenhuma proposta de teste ou escrita de negocio foi criada em producao. Commit `8541171` publicado; apos janela transitÃ³ria de 503, o site/API voltaram a HTTP 200 com banco conectado, os health checks `flow.pagfocuss.tech` e `n8n.pagfocuss.tech` responderam 200, e o bundle servido confirmou endpoint, acao e retorno de sucesso da conversao.
+
+## Status operacional do Resend - 30/09/2026
+- O teste da integração agora distingue chave/API acessível de envio pronto: só informa `connected` quando existe ao menos um domínio verificado e `RESEND_FROM_EMAIL` válido pertence a um deles.
+- Sem domínio verificado ou remetente compatível, a integração fica `setup_required` com instrução objetiva; isso coincide com os pré-requisitos já exigidos pelo endpoint que envia propostas. Nenhum e-mail foi enviado nesta validação.
+- Três testes cobrem configuração pronta, domínio/remetente ausentes e remetente fora do domínio verificado. API TypeScript, 43 testes API, build Vite e `git diff --check` passaram; bundle principal continua com aviso acima de 500 kB.

@@ -19,6 +19,7 @@ import { renderProposalEmail } from './email/proposal.js';
 import { buildGoogleRawMessage, decodeGoogleDriveUpload } from './integrations/google-mail.js';
 import { buildOverduePaymentEvent, overduePaymentRetryDelayMs } from './integrations/overdue-payment.js';
 import { proposalAcceptanceDisposition } from './integrations/proposal-acceptance.js';
+import { resendOperationalReadiness } from './integrations/resend-readiness.js';
 import { sameMercadoPagoPaymentSnapshot } from './integrations/mercadopago.js';
 import { classifyWahaQrResponse } from './integrations/waha.js';
 import { clicksignBaseUrl, createClicksignEnvelope, getClicksignEnvelope, notifyClicksignEnvelope } from './integrations/clicksign.js';
@@ -749,8 +750,13 @@ app.post('/api/integrations/:provider/test', { preHandler: app.authenticate, con
       const domains = result.data ?? [];
       const verified = domains.filter((domain) => domain.status === 'verified');
       const domainSummary = verified.map((domain) => domain.name).filter(Boolean).slice(0, 4).join(', ');
-      const senderReady = Boolean(process.env.RESEND_FROM_EMAIL && z.string().email().safeParse(process.env.RESEND_FROM_EMAIL.trim()).success && verified.some((domain) => process.env.RESEND_FROM_EMAIL!.trim().toLowerCase().endsWith(`@${domain.name?.toLowerCase()}`)));
-      return tested('connected', `Resend conectado. Domínios verificados: ${verified.length}/${domains.length}${domainSummary ? ` (${domainSummary})` : ''}. Remetente para propostas: ${senderReady ? 'configurado' : 'pendente no Coolify (RESEND_FROM_EMAIL)'} .`);
+      const sender = process.env.RESEND_FROM_EMAIL?.trim() || '';
+      const senderConfigured = z.string().email().safeParse(sender).success;
+      const senderMatchesVerifiedDomain = senderConfigured && verified.some((domain) => sender.toLowerCase().endsWith(`@${domain.name?.toLowerCase()}`));
+      const readiness = resendOperationalReadiness({ verifiedDomainCount: verified.length, senderConfigured, senderMatchesVerifiedDomain });
+      const domainState = `Domínios verificados: ${verified.length}/${domains.length}${domainSummary ? ` (${domainSummary})` : ''}.`;
+      if (readiness.status === 'setup_required') return tested('setup_required', `A API do Resend respondeu, mas o envio de propostas não está pronto. ${domainState} Ação necessária: ${readiness.missing.join('; ')}.`);
+      return tested('connected', `Resend pronto para envio de propostas. ${domainState}`);
     }
     if (provider === 'github') {
       const token = process.env.GITHUB_TOKEN;
