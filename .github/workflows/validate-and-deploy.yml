@@ -18,6 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       deploy_required: ${{ steps.runtime_changes.outputs.deploy_required }}
+      api_deploy_required: ${{ steps.runtime_changes.outputs.api_deploy_required }}
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -51,15 +52,24 @@ jobs:
           set -euo pipefail
           if [[ "$GITHUB_EVENT_NAME" == 'workflow_dispatch' || -z "${EVENT_BEFORE:-}" || "$EVENT_BEFORE" =~ ^0+$ ]]; then
             echo 'deploy_required=true' >> "$GITHUB_OUTPUT"
+            echo 'api_deploy_required=false' >> "$GITHUB_OUTPUT"
             exit 0
           fi
           git fetch --no-tags --depth=1 origin "$EVENT_BEFORE"
           runtime_paths=(src api/src api/drizzle api/tsconfig.json api/drizzle.config.ts public index.html Dockerfile api/Dockerfile compose.yaml nginx.conf .dockerignore package.json package-lock.json api/package.json api/package-lock.json)
           if git diff --quiet "$EVENT_BEFORE" "$GITHUB_SHA" -- "${runtime_paths[@]}"; then
             echo 'deploy_required=false' >> "$GITHUB_OUTPUT"
+            echo 'api_deploy_required=false' >> "$GITHUB_OUTPUT"
             echo 'No runtime files changed; production deploy verification is not required.' >> "$GITHUB_STEP_SUMMARY"
           else
             echo 'deploy_required=true' >> "$GITHUB_OUTPUT"
+            api_paths=(api/src api/drizzle api/tsconfig.json api/drizzle.config.ts api/Dockerfile api/package.json api/package-lock.json compose.yaml)
+            if git diff --quiet "$EVENT_BEFORE" "$GITHUB_SHA" -- "${api_paths[@]}"; then
+              echo 'api_deploy_required=false' >> "$GITHUB_OUTPUT"
+              echo 'Only web/runtime files changed; the deployed API revision may remain unchanged.' >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo 'api_deploy_required=true' >> "$GITHUB_OUTPUT"
+            fi
           fi
 
       - name: Record revision for Coolify auto deploy
@@ -86,6 +96,7 @@ jobs:
     env:
       COOLIFY_WEBHOOK: ${{ secrets.COOLIFY_WEBHOOK }}
       COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+      API_DEPLOY_REQUIRED: ${{ needs.validate.outputs.api_deploy_required }}
     steps:
       - name: Explain missing Coolify secrets
         if: ${{ env.COOLIFY_WEBHOOK == '' || env.COOLIFY_TOKEN == '' }}
@@ -130,7 +141,11 @@ jobs:
             if [[ -n "$main_asset" ]]; then
               main_asset_status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 "https://focussdev.space$main_asset" || true)"
             fi
-            if [[ "$api_health" == 'ok' && "$api_revision" == "$GITHUB_SHA" && "$web_revision" == "$GITHUB_SHA" && "$route_status" == '401' && "$main_asset_status" == '200' ]]; then
+            api_revision_ok='true'
+            if [[ "$API_DEPLOY_REQUIRED" == 'true' && "$api_revision" != "$GITHUB_SHA" ]]; then
+              api_revision_ok='false'
+            fi
+            if [[ "$api_health" == 'ok' && "$api_revision_ok" == 'true' && "$web_revision" == "$GITHUB_SHA" && "$route_status" == '401' && "$main_asset_status" == '200' ]]; then
               echo "App e API saudáveis; rota autenticada e manifests web/API confirmam o commit $GITHUB_SHA." >> "$GITHUB_STEP_SUMMARY"
               exit 0
             fi
