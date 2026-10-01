@@ -478,3 +478,15 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - O scanner de cobrancas vencidas ja existe no backend, com outbox persistente, chave unica por cobranca, revalidacao do status, `FOR UPDATE SKIP LOCKED` e retentativas. Uma falha de escala foi corrigida: a consulta agora exclui cobranças ja enfileiradas, evitando que os mesmos 100 pedidos antigos impeçam outros de entrar na fila.
 - Validacao local dessa correcao: 63 testes API, build TypeScript, build Vite e `git diff --check` passaram. Nenhuma cobrança ou execucao foi criada para teste. A correcao esta em `de842f1` no main, mas ainda nao foi confirmada em producao; o runtime segue em `805987d` e a verificacao de deploy expirou sem os secrets do Coolify.
 - A chave SSH de deploy disponivel neste computador nao foi aceita por `2.25.239.145` como `root` nem `ubuntu`; a consulta autenticada do app retornou HTTP 403. Nenhuma sessao de desktop foi aberta/controlada.
+
+
+## Atualizacao 2026-10-01 - acesso de equipe
+
+- Implementados convites de uso unico com validade de 48 horas, ativacao por senha, suspensao que invalida sessao/convite e autorizacao de rotas por papel. Contas antigas permanecem sem acesso ate receberem convite explicito.
+- Equipe permite listar contas, criar/reemitir convite e suspender membro; o link e compartilhado manualmente, sem envio automatico de e-mail.
+- A interface de ativacao foi conferida em navegador a 390 px. Builds e testes locais devem ser repetidos apos os ajustes desta atualizacao.
+- Bloqueio de validacao real: a migracao `api/drizzle/0007_team_access.sql` ainda precisa ser aplicada no banco de uso; nao ha configuracao local de banco/API neste ambiente. Login, convite e suspensao autenticados nao foram executados ponta a ponta.
+- Limite funcional: papeis admin e member ja tem regras no backend, mas ainda nao ha editor de permissoes granulares nem notificacao automatica de convite.
+
+- Validacao posterior da equipe (2026-10-01): apliquei migracoes 0000-0007 em um PostgreSQL isolado temporario e executei login do owner, convite, ativacao de uso unico, endpoints permitidos e negados, bloqueio de replay e suspensao com revogacao imediata de sessao/login. Todos passaram. O cluster foi parado; a revisao automatica bloqueou a remocao recursiva do diretorio temporario, que permaneceu fora do repositorio.
+- Validacao final local: lint/build do frontend, build da API, 89 testes da API, dois testes de fluxo de caixa e validacao visual da ativacao em viewport 390 px passaram. O E2E isolado nao substitui a aplicacao das migracoes no banco de producao nem a autorizacao das integracoes.

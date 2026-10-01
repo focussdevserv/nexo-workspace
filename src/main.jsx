@@ -4,6 +4,7 @@ import * as Sentry from '@sentry/react';
 import App from './App.jsx';
 import './styles.css';
 import './navigation.css';
+import './dark-mode.css';
 import './notifications.css';
 
 const sentryDsn = import.meta.env.VITE_SENTRY_DSN;

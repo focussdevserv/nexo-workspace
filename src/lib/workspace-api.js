@@ -1,12 +1,52 @@
 import { useCallback, useEffect, useState } from 'react';
 
+const inFlightGetRequests = new Map();
+const recentGetResponses = new Map();
+const GET_CACHE_TTL_MS = 750;
+let mutationEpoch = 0;
+const workspaceResourceLabels = {
+  leads: 'leads', clients: 'clientes', companies: 'empresas', contacts: 'contatos', proposals: 'propostas',
+  services: 'serviços', contracts: 'contratos', projects: 'projetos', tasks: 'tarefas', events: 'agenda',
+  settings: 'configurações', team: 'equipe', repositories: 'repositórios', automations: 'automações',
+  goals: 'metas', tickets: 'tickets', hours: 'horas', files: 'arquivos', approvals: 'aprovações',
+  inbox: 'caixa de entrada', expenses: 'despesas', revenues: 'receitas', accounts: 'contas',
+};
+
 export async function apiRequest(path, options = {}) {
+  const isGet = (options.method || 'GET').toUpperCase() === 'GET';
+  const requestKey = `${mutationEpoch}:${path}`;
+  if (isGet) {
+    const cached = recentGetResponses.get(path);
+    if (cached?.expiresAt > Date.now()) return structuredClone(cached.payload);
+    if (cached) recentGetResponses.delete(path);
+    if (inFlightGetRequests.has(requestKey)) return inFlightGetRequests.get(requestKey).then((payload) => structuredClone(payload));
+  } else {
+    mutationEpoch += 1;
+    recentGetResponses.clear();
+  }
+  const epochAtStart = mutationEpoch;
+  const requestPromise = performApiRequest(path, options);
+  if (isGet) inFlightGetRequests.set(requestKey, requestPromise);
+  try {
+    const payload = await requestPromise;
+    if (isGet && epochAtStart === mutationEpoch) recentGetResponses.set(path, { payload, expiresAt: Date.now() + GET_CACHE_TTL_MS });
+    return isGet ? structuredClone(payload) : payload;
+  } finally {
+    if (isGet && inFlightGetRequests.get(requestKey) === requestPromise) inFlightGetRequests.delete(requestKey);
+    if (!isGet) recentGetResponses.clear();
+  }
+}
+
+async function performApiRequest(path, options) {
   let response;
   try {
     response = await fetch(path, {
       ...options,
       credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+      headers: {
+        ...(options.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+        ...(options.headers || {}),
+      },
     });
   } catch {
     throw new Error('Não foi possível conectar à API do Nexo. Confira se o servidor está em execução.');
@@ -15,11 +55,19 @@ export async function apiRequest(path, options = {}) {
   if (response.status === 401 && path !== '/api/auth/me') {
     window.dispatchEvent(new CustomEvent('nexo:session-expired'));
   }
-  if (!response.ok) throw new Error(payload.message || 'Não foi possível concluir a solicitação.');
+  if (!response.ok) {
+    const error = new Error(payload.message || 'Request failed.');
+    error.code = payload.error;
+    error.details = payload;
+    throw error;
+  }
   return payload;
 }
 
 export async function parseApiResponse(response) {
+  // The API intentionally returns 204 for successful deletes. There is no
+  // response body to parse in that case, but the operation did succeed.
+  if (response.status === 204) return { data: null };
   const contentType = response.headers.get('content-type') || '';
   if (!contentType.toLowerCase().includes('application/json')) {
     throw new Error('A API do Nexo não respondeu corretamente. Verifique a conexão com o servidor.');
@@ -62,7 +110,11 @@ export function useWorkspaceRecords(resource) {
   const refresh = useCallback(async () => {
     setLoading(true);
     try { const result = await fetchAllRecords(`/api/workspace/${resource}`); setRecords(result); setError(''); }
-    catch (err) { setError(err.message || 'Falha ao carregar os dados.'); }
+    catch (err) {
+      const message = err.message || 'Falha ao carregar os dados.';
+      setError(message);
+      if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('nexo:workspace-error', { detail: `Falha ao carregar ${workspaceResourceLabels[resource] || resource}: ${message}` }));
+    }
     finally { setLoading(false); }
   }, [resource]);
   useEffect(() => { refresh(); }, [refresh]);

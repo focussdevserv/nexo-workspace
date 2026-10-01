@@ -5,11 +5,14 @@ import {
   ShieldCheck, SlidersHorizontal, Upload, UserRound, Users, Webhook,
 } from 'lucide-react';
 import './settings.css';
-import { useWorkspaceRecords } from '../lib/workspace-api.js';
+import './branding.css';
+import { apiRequest, useWorkspaceRecords } from '../lib/workspace-api.js';
+import { publishWorkspacePreferences } from '../lib/workspace-preferences.js';
+import { compressBrandLogo } from '../lib/brand-logo.js';
 
 const defaults = {
   workspace: { agency: '', timezone: 'America/Sao_Paulo', weekStart: 'monday', currency: 'BRL', dateFormat: 'dd/MM/yyyy', language: 'pt-BR', fiscalName: '', document: '', email: '', phone: '', website: '', address: '' },
-  preferences: { compact: false, dark: false, startPage: 'Meu Dia', showCompleted: false, confirmDelete: true },
+  preferences: { compact: false, darkMode: false, startPage: 'Meu Dia', showCompleted: false, confirmDelete: true },
   notifications: { taskDue: true, overdue: true, newLead: true, proposal: true, payment: true, weekly: true, email: true, browser: false, whatsapp: false, quietHours: false, quietStart: '20:00', quietEnd: '08:00' },
   billing: { defaultDueDays: '7', reminderDays: '3, 1, 0, -3', lateFee: '2', interest: '1', pix: true, boleto: true, card: true, autoRenew: true },
 };
@@ -23,7 +26,7 @@ const sections = [
   { id: 'security', label: 'Segurança', hint: 'Sessões, autenticação e acesso', icon: ShieldCheck },
   { id: 'data', label: 'Dados e exportação', hint: 'Backup e preferências de dados', icon: Download },
 ];
-export default function SettingsScreen({ notify }) {
+export default function SettingsScreen({ notify, navigationContext = null, onNavigationContextConsumed = () => {} }) {
   const { records, create, update: updateRecord } = useWorkspaceRecords('settings');
   const savedSettings = records.find((item) => item.key === 'workspace-preferences');
   const [settings, setSettings] = useState(structuredClone(defaults));
@@ -31,6 +34,15 @@ export default function SettingsScreen({ notify }) {
   const [dirty, setDirty] = useState(false);
   const [savedAt, setSavedAt] = useState('');
   const fileRef = useRef(null);
+  const backupRef = useRef(null);
+  const logoRef = useRef(null);
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [logoBusy, setLogoBusy] = useState(false);
+  useEffect(() => {
+    const requestedSection = navigationContext?.settingsSection;
+    if (requestedSection && sections.some((section) => section.id === requestedSection)) setActive(requestedSection);
+    if (requestedSection) onNavigationContextConsumed();
+  }, [navigationContext, onNavigationContextConsumed]);
   useEffect(() => {
     if (!savedSettings) return;
     setSettings(Object.fromEntries(Object.entries(defaults).map(([key, value]) => [key, { ...value, ...(savedSettings.settings?.[key] || {}) }])));
@@ -42,12 +54,19 @@ export default function SettingsScreen({ notify }) {
     window.addEventListener('beforeunload', onBeforeUnload);
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
   }, [dirty]);
-  const update = (group, field, value) => { setSettings((current) => ({ ...current, [group]: { ...current[group], [field]: value } })); setDirty(true); };
+  const update = (group, field, value) => {
+    const next = { ...settings, [group]: { ...settings[group], [field]: value } };
+    const baseline = Object.fromEntries(Object.entries(defaults).map(([key, fallback]) => [key, { ...fallback, ...(savedSettings?.settings?.[key] || {}) }]));
+    setSettings(next);
+    if (group === 'preferences') publishWorkspacePreferences(next.preferences);
+    setDirty(JSON.stringify(next) !== JSON.stringify(baseline));
+  };
   const save = async () => {
     try {
       const timestamp = new Date().toISOString();
       const payload = { key: 'workspace-preferences', settings, savedAt: timestamp };
       if (savedSettings) await updateRecord(savedSettings.id, payload); else await create(payload);
+      publishWorkspacePreferences(settings.preferences);
       setSavedAt(timestamp); setDirty(false); notify('Workspace preferences saved.');
     } catch (error) { notify(error.message || 'Could not save preferences to the server.'); }
   };
@@ -72,6 +91,53 @@ export default function SettingsScreen({ notify }) {
       notify('Configurações importadas. Salve para aplicar.');
     } catch { notify('Esse arquivo não contém uma exportação válida do Nexo.'); }
     event.target.value = '';
+  };
+  const uploadBrandLogo = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setLogoBusy(true);
+    try {
+      const brandLogo = await compressBrandLogo(file);
+      setSettings((current) => ({ ...current, workspace: { ...current.workspace, brandLogo } }));
+      setDirty(true);
+      notify('Logotipo preparado. Salve as alterações para aplicá-lo ao portal.');
+    } catch (error) { notify(error.message || 'Não foi possível preparar o logotipo.'); }
+    finally { setLogoBusy(false); event.target.value = ''; }
+  };
+  const removeBrandLogo = () => {
+    setSettings((current) => ({ ...current, workspace: { ...current.workspace, brandLogo: '' } }));
+    setDirty(true);
+  };
+  const exportBackup = async () => {
+    setBackupBusy(true);
+    try {
+      const backup = await apiRequest('/api/workspace/backup');
+      const url = URL.createObjectURL(new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' }));
+      const link = document.createElement('a');
+      link.href = url; link.download = `nexo-workspace-${new Date().toISOString().slice(0, 10)}.json`; link.click();
+      URL.revokeObjectURL(url);
+      notify(backup.excludedRecords ? `Backup baixado. ${backup.excludedRecords} registro(s) de credenciais foram excluídos.` : 'Backup completo do workspace baixado.');
+    } catch (error) { notify(error.message || 'Não foi possível baixar o backup.'); }
+    finally { setBackupBusy(false); }
+  };
+  const restoreBackup = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      if (file.size > 25 * 1024 * 1024) throw new Error('O arquivo de backup excede o limite de 25 MB.');
+      const backup = JSON.parse(await file.text());
+      if (backup.format !== 'nexo-workspace-backup' || backup.version !== 1 || !Array.isArray(backup.records)) throw new Error('Selecione um backup completo exportado pelo Nexo.');
+      if (dirty && !window.confirm('Há configurações não salvas. Continuar e descartá-las após a restauração?')) return;
+      const count = (backup.records?.length || 0) + (backup.clients?.length || 0) + (backup.billingOrders?.length || 0) + (backup.billingSubscriptions?.length || 0);
+      const message = `Restaurar ${count} registro(s) deste backup? Registros com o mesmo ID serão atualizados; os demais dados atuais serão mantidos. Nenhum e-mail, cobrança ou automação externa será disparado.`;
+      if (!window.confirm(message)) return;
+      setBackupBusy(true);
+      const response = await apiRequest('/api/workspace/backup/restore', { method: 'POST', body: JSON.stringify(backup) });
+      const updated = Object.entries(response.data || {}).filter(([key]) => key.endsWith('Created') || key.endsWith('Updated')).reduce((sum, [, value]) => sum + Number(value || 0), 0);
+      notify(`Backup restaurado: ${updated} registro(s) criados ou atualizados. Recarregando o workspace.`);
+      window.setTimeout(() => window.location.reload(), 800);
+    } catch (error) { notify(error.message || 'Não foi possível restaurar este backup.'); }
+    finally { setBackupBusy(false); event.target.value = ''; }
   };
   const reset = () => {
     if (!window.confirm('Restaurar todas as configurações para os valores iniciais?')) return;
@@ -100,12 +166,12 @@ export default function SettingsScreen({ notify }) {
           <Field label="A semana começa em"><select value={settings.workspace.weekStart} onChange={(e) => update('workspace', 'weekStart', e.target.value)}><option value="monday">Segunda-feira</option><option value="sunday">Domingo</option></select></Field>
           <Field label="Página inicial"><select value={settings.preferences.startPage} onChange={(e) => update('preferences', 'startPage', e.target.value)}>{['Meu Dia', 'Agenda', 'Tarefas', 'CRM', 'Projetos'].map((page) => <option key={page}>{page}</option>)}</select></Field>
         </div></SettingsCard>
-        <SettingsCard title="Como você trabalha" description="Pequenos ajustes para deixar a rotina do seu jeito." icon={Palette}><SettingToggle title="Exibição compacta" detail="Mostra mais informações em tabelas e listas." value={settings.preferences.compact} onChange={(v) => update('preferences', 'compact', v)} /><SettingToggle title="Mostrar tarefas concluídas" detail="Mantém tarefas finalizadas visíveis nas listas." value={settings.preferences.showCompleted} onChange={(v) => update('preferences', 'showCompleted', v)} /><SettingToggle title="Confirmar antes de excluir" detail="Pede confirmação antes de remover registros." value={settings.preferences.confirmDelete} onChange={(v) => update('preferences', 'confirmDelete', v)} /></SettingsCard>
+        <SettingsCard title="Como você trabalha" description="Pequenos ajustes para deixar a rotina do seu jeito." icon={Palette}><SettingToggle title="Modo escuro" detail="Reduz o brilho em todas as áreas do workspace." value={settings.preferences.darkMode} onChange={(v) => update('preferences', 'darkMode', v)} /><SettingToggle title="Exibição compacta" detail="Mostra mais informações em tabelas e listas." value={settings.preferences.compact} onChange={(v) => update('preferences', 'compact', v)} /><SettingToggle title="Mostrar tarefas concluídas" detail="Mantém tarefas finalizadas visíveis nas listas." value={settings.preferences.showCompleted} onChange={(v) => update('preferences', 'showCompleted', v)} /><SettingToggle title="Confirmar antes de excluir" detail="Pede confirmação antes de remover registros." value={settings.preferences.confirmDelete} onChange={(v) => update('preferences', 'confirmDelete', v)} /></SettingsCard>
       </>}
 
       {active === 'agency' && <>
         <SettingsCard title="Dados da agência" description="Informações usadas em propostas, contratos e cobranças." icon={Building2}><div className="settings-fields"><Field label="Nome fantasia"><input value={settings.workspace.agency} onChange={(e) => update('workspace', 'agency', e.target.value)} /></Field><Field label="Razão social"><input value={settings.workspace.fiscalName} onChange={(e) => update('workspace', 'fiscalName', e.target.value)} placeholder="Nome registrado da empresa" /></Field><Field label="CNPJ ou CPF"><input value={settings.workspace.document} onChange={(e) => update('workspace', 'document', e.target.value)} placeholder="00.000.000/0001-00" /></Field><Field label="E-mail comercial"><input type="email" value={settings.workspace.email} onChange={(e) => update('workspace', 'email', e.target.value)} placeholder="contato@suaagencia.com.br" /></Field><Field label="Telefone / WhatsApp"><input value={settings.workspace.phone} onChange={(e) => update('workspace', 'phone', e.target.value)} placeholder="(11) 99999-9999" /></Field><Field label="Site"><input value={settings.workspace.website} onChange={(e) => update('workspace', 'website', e.target.value)} placeholder="https://suaagencia.com.br" /></Field><Field label="Endereço" wide><input value={settings.workspace.address} onChange={(e) => update('workspace', 'address', e.target.value)} placeholder="Rua, número, cidade e estado" /></Field></div></SettingsCard>
-        <SettingsCard title="Identidade visual" description="A marca da agência será usada nas experiências compartilhadas." icon={Palette}><div className="settings-brand-preview"><span className="brand-glyph"><i /><b /><em /></span><div><b>{settings.workspace.agency || 'Sua agência'}</b><small>Prévia da marca no portal do cliente</small></div><button className="admin-secondary" onClick={() => notify('Envio de logotipo estará disponível após configurar o armazenamento.')}>Enviar logotipo</button></div><p className="settings-note">PNG ou SVG, recomendado até 2 MB. O armazenamento de arquivos será configurado na etapa de infraestrutura.</p></SettingsCard>
+        <SettingsCard title="Identidade visual" description="A marca da agência será usada nas experiências compartilhadas." icon={Palette}><div className="settings-brand-preview">{settings.workspace.brandLogo ? <img className="settings-brand-logo" src={settings.workspace.brandLogo} alt="Logotipo da agência" /> : <span className="brand-glyph"><i /><b /><em /></span>}<div><b>{settings.workspace.agency || 'Sua agência'}</b><small>Prévia da marca no portal do cliente</small></div><div className="settings-brand-actions"><button type="button" className="admin-secondary" disabled={logoBusy} onClick={() => logoRef.current?.click()}><Upload size={14} />{logoBusy ? 'Preparando…' : settings.workspace.brandLogo ? 'Trocar logotipo' : 'Enviar logotipo'}</button>{settings.workspace.brandLogo && <button type="button" className="admin-secondary" disabled={logoBusy} onClick={removeBrandLogo}>Remover</button>}<input ref={logoRef} hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={uploadBrandLogo} /></div></div><p className="settings-note">PNG, JPEG ou WebP, até 2 MB. A imagem é otimizada para o workspace e aplicada ao portal ao salvar as alterações.</p></SettingsCard>
       </>}
 
       {active === 'notifications' && <>
@@ -114,7 +180,7 @@ export default function SettingsScreen({ notify }) {
       </>}
 
       {active === 'team' && <>
-        <SettingsCard title="Acesso ao workspace" description="O login do Nexo está restrito à conta proprietária configurada no servidor." icon={Users}><div className="settings-security-note"><ShieldCheck size={19} /><div><b>Somente proprietário pode entrar</b><p>O servidor desativa cadastros públicos e rejeita outras contas. Os papéis e permissões por equipe ainda não são oferecidos pelo sistema.</p></div></div><button type="button" className="admin-secondary" onClick={openTeam}><Users size={15} /> Abrir equipe operacional</button></SettingsCard>
+        <SettingsCard title="Acesso ao workspace" description="Convide pessoas pela aba Equipe e escolha o papel de acesso." icon={Users}><div className="settings-security-note"><ShieldCheck size={19} /><div><b>Acesso por convite</b><p>O proprietario pode convidar administradores e membros. O link expira em 48 horas e pode ser usado uma vez. Na aba Equipe, ajuste leitura, edicao e exclusao por modulo e limite o acesso a clientes e projetos selecionados.</p></div></div><button type="button" className="admin-secondary" onClick={openTeam}><Users size={15} /> Gerenciar acessos da equipe</button></SettingsCard>
         <SettingsCard title="Portal do cliente" description="O portal usa links individuais assinados e revogáveis." icon={UserRound}><div className="settings-security-note"><UserRound size={19} /><div><b>Ative cada cliente pela ficha dele</b><p>A equipe pode criar ou revogar o link do portal na ficha do cliente. O acesso público não concede login no workspace.</p></div></div></SettingsCard>
       </>}
 
@@ -126,12 +192,13 @@ export default function SettingsScreen({ notify }) {
       {active === 'integrations' && <SettingsCard title="Gerenciar integrações" description="Veja o estado real, teste conexões e controle os serviços do workspace em um único painel." icon={Link2}><div className="settings-security-note"><ShieldCheck size={19} /><div><b>As credenciais são mantidas no servidor</b><p>O painel de Integrações consulta as configurações da VPS e informa quando cada serviço foi testado, se está conectado ou se precisa de configuração.</p></div></div><button type="button" className="admin-primary" onClick={openIntegrations}><Link2 size={15} /> Abrir painel de Integrações</button></SettingsCard>}
 
       {active === 'security' && <>
-        <SettingsCard title="Proteção da conta" description="A autenticação aplicada atualmente pelo servidor." icon={ShieldCheck}><div className="settings-security-note"><LockKeyhole size={19} /><div><b>Conta proprietária única</b><p>O servidor aceita somente o e-mail proprietário, usa cookie de sessão HTTP-only e expira a sessão após 8 horas. A autenticação em dois fatores não está disponível; nenhum controle fictício é exibido aqui.</p></div></div></SettingsCard>
+        <SettingsCard title="Proteção da conta" description="A autenticação aplicada atualmente pelo servidor." icon={ShieldCheck}><div className="settings-security-note"><LockKeyhole size={19} /><div><b>Acesso protegido por papel</b><p>O servidor aceita a conta proprietária e contas de equipe ativadas por convite. Usa cookie HTTP-only e expira a sessão após 8 horas. A autenticação em dois fatores não está disponível; nenhum controle fictício é exibido aqui.</p></div></div></SettingsCard>
         <SettingsCard title="Credenciais e integrações" description="Tokens privados devem ser gerenciados no servidor." icon={KeyRound}><div className="settings-security-note"><LockKeyhole size={19} /><div><b>Nenhuma chave secreta é armazenada aqui</b><p>As credenciais das integrações ficam nas variáveis protegidas do VPS. Esta tela não salva senhas, tokens ou chaves de API no navegador.</p></div></div><button type="button" className="admin-secondary" onClick={openIntegrations}><Link2 size={15} /> Abrir painel de Integrações</button></SettingsCard>
       </>}
 
       {active === 'data' && <>
-        <SettingsCard title="Exportar configurações" description="Baixe uma cópia das preferências deste workspace em JSON." icon={Download}><div className="settings-data-action"><div><b>Exportar preferências</b><small>Este arquivo contém somente as preferências gerais do workspace; não é um backup de clientes ou arquivos.</small></div><button className="admin-secondary" onClick={exportData}><Download size={15} /> Exportar arquivo</button></div><div className="settings-data-action"><div><b>Importar preferências</b><small>Carregue um JSON exportado pelo Nexo; revise as alterações e salve para aplicar.</small></div><button className="admin-secondary" onClick={() => fileRef.current?.click()}><Upload size={15} /> Escolher arquivo</button><input ref={fileRef} hidden type="file" accept="application/json,.json" onChange={importData} /></div></SettingsCard>
+        <SettingsCard title="Backup do workspace" description="Exporte ou restaure clientes, registros operacionais, histórico financeiro e preferências." icon={Database}><div className="settings-data-action"><div><b>Baixar backup completo</b><small>Inclui os dados deste workspace e os registros do Mercado Pago. Senhas, tokens e filas de automação ficam de fora; arquivos do Drive mantêm o link, sem copiar o conteúdo.</small></div><button type="button" className="admin-secondary" disabled={backupBusy} onClick={exportBackup}><Download size={15} /> {backupBusy ? 'Preparando…' : 'Baixar backup'}</button></div><div className="settings-data-action"><div><b>Restaurar backup</b><small>Disponível no mesmo workspace. Mescla por ID e não dispara integrações; lembretes automáticos de cobranças vencidas do arquivo são suprimidos para evitar reenvio de avisos antigos.</small></div><button type="button" className="admin-secondary" disabled={backupBusy} onClick={() => backupRef.current?.click()}><Upload size={15} /> {backupBusy ? 'Restaurando…' : 'Selecionar backup'}</button><input ref={backupRef} hidden type="file" accept="application/json,.json" onChange={restoreBackup} /></div></SettingsCard>
+        <SettingsCard title="Exportar configurações" description="Baixe uma cópia das preferências deste workspace em JSON." icon={Download}><div className="settings-data-action"><div><b>Exportar preferências</b><small>Este arquivo contém somente as preferências gerais do workspace; use o backup completo para incluir os outros dados.</small></div><button className="admin-secondary" onClick={exportData}><Download size={15} /> Exportar arquivo</button></div><div className="settings-data-action"><div><b>Importar preferências</b><small>Carregue um JSON exportado pelo Nexo; revise as alterações e salve para aplicar.</small></div><button className="admin-secondary" onClick={() => fileRef.current?.click()}><Upload size={15} /> Escolher arquivo</button><input ref={fileRef} hidden type="file" accept="application/json,.json" onChange={importData} /></div></SettingsCard>
         <SettingsCard title="Privacidade e armazenamento" description="As preferências do workspace são persistidas no banco da aplicação." icon={Globe2}><div className="settings-security-note"><Database size={19} /><div><b>Salvas na conta proprietária</b><p>Clientes, projetos e preferências são acessados por sessão autenticada. A exportação nesta tela cobre apenas as preferências mostradas em Configurações, não substituindo backup completo do banco.</p></div></div></SettingsCard>
         <div className="settings-danger-zone"><div><b>Restaurar valores iniciais</b><small>Remove as preferências salvas neste navegador e recupera os valores padrão.</small></div><button onClick={reset}><RotateCcw size={14} /> Restaurar configurações</button></div>
       </>}

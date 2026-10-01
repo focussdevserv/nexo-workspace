@@ -1,6 +1,7 @@
 import '@fastify/jwt';
 import 'fastify';
 import type { FastifyReply, FastifyRequest } from 'fastify';
+import type { WorkspacePermissions } from '../security/authorization.js';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -13,7 +14,7 @@ declare module 'fastify' {
 
 declare module '@fastify/jwt' {
   interface FastifyJWT {
-    payload: { sub: string; organizationId: string; role: 'owner' | 'admin' | 'member'; purpose?: string; nonce?: string };
-    user: { sub: string; organizationId: string; role: 'owner' | 'admin' | 'member'; purpose?: string; nonce?: string };
+    payload: { sub: string; organizationId: string; role: 'owner' | 'admin' | 'member'; permissions?: WorkspacePermissions | null; purpose?: string; nonce?: string; inviteVersion?: number; clientRecordId?: string; version?: number };
+    user: { sub: string; organizationId: string; role: 'owner' | 'admin' | 'member'; permissions?: WorkspacePermissions | null; purpose?: string; nonce?: string; inviteVersion?: number; clientRecordId?: string; version?: number };
   }
 }

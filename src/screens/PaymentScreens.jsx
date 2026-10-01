@@ -2,6 +2,10 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Activity, AlertCircle, ArrowUpRight, Check, CheckCircle2, Copy, CreditCard, ExternalLink, KeyRound, LoaderCircle, LockKeyhole, Plus, RefreshCw, ShieldCheck, X } from 'lucide-react';
 import './payments.css';
 import { fetchAllRecords } from '../lib/workspace-api.js';
+import { filterRecordsForClient } from '../lib/client-record-filter.js';
+import { filterPayments } from '../lib/payment-filters.js';
+import { splitInstallmentAmounts } from '../lib/installment-plan.js';
+import { advanceServiceInstallment } from '../lib/service-installment.js';
 
 const money = (value) => Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const labels = { pending: 'Aguardando pagamento', creating: 'Criando', processing: 'Em processamento', paid: 'Paga', authorized: 'Autorizada', paused: 'Pausada', canceled: 'Cancelada', failed: 'Falhou', refunded: 'Estornada', rejected: 'Recusada', expired: 'Expirada' };
@@ -38,7 +42,7 @@ function MercadoPagoBrick({ amount, onSubmit, onError }) {
 }
 
 function PaymentAccess({ onConnected }) {
-  const [form, setForm] = useState({ email: 'contato@focussdev.art', password: '' });
+  const [form, setForm] = useState({ email: '', password: '' });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const submit = async (event) => {
@@ -51,13 +55,13 @@ function PaymentAccess({ onConnected }) {
     } catch (err) { setError(err.message || 'Falha de conexao com o servidor.'); }
     finally { setBusy(false); }
   };
-  return <section className="pay-access"><span className="pay-access-icon"><LockKeyhole size={19} /></span><span className="pay-eyebrow">FINANCEIRO PROTEGIDO</span><h2>Entre no workspace</h2><p>O acesso financeiro e restrito a conta proprietaria.</p><form onSubmit={submit}>
+  return <section className="pay-access"><span className="pay-access-icon"><LockKeyhole size={19} /></span><span className="pay-eyebrow">FINANCEIRO PROTEGIDO</span><h2>Entre no workspace</h2><p>Acesse com uma conta autorizada para o financeiro.</p><form onSubmit={submit}>
     <label>E-mail<input required type="email" autoCapitalize="none" autoComplete="username" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} /></label><label>Senha<input required type="password" autoComplete="current-password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} /></label>
     {error && <p className="pay-error" role="alert">{error}</p>}<button className="ns-primary" disabled={busy}>{busy ? <LoaderCircle className="spin" size={15} /> : <KeyRound size={15} />}{busy ? 'Verificando...' : 'Entrar no financeiro'}</button>
-  </form><small className="pay-access-note">O cadastro de novas contas esta desativado.</small></section>;
+  </form><small className="pay-access-note">A equipe e os convites sao gerenciados no workspace.</small></section>;
 }
 
-export function PaymentConsole({ kind = 'orders', notify = () => {} }) {
+export function PaymentConsole({ kind = 'orders', notify = () => {}, navigationContext = null, onNavigationContextConsumed = () => {} }) {
   const subscriptionMode = kind === 'subscriptions';
   const [token, setToken] = useState(false);
   useEffect(() => { let active = true; fetch('/api/auth/me', { credentials: 'same-origin' }).then((response) => { if (active) setToken(response.ok); }).catch(() => { if (active) setToken(false); }); return () => { active = false; }; }, []);
@@ -69,7 +73,11 @@ export function PaymentConsole({ kind = 'orders', notify = () => {} }) {
   const [modal, setModal] = useState(false);
   const [result, setResult] = useState(null);
   const [search, setSearch] = useState('');
+  const [clientScope, setClientScope] = useState(null);
+  const [statusFilter, setStatusFilter] = useState('Todos');
+  const [dueFilter, setDueFilter] = useState('Todos');
   const [form, setForm] = useState({ clientId: '', clientName: '', payerEmail: '', description: '', amount: '', method: 'pix', identificationType: 'CPF', identificationNumber: '', frequency: 'months', frequencyInterval: 1, address: { zipCode: '', streetName: '', streetNumber: '', neighborhood: '', city: '', state: '' } });
+  const [installmentContext, setInstallmentContext] = useState(null);
   const endpoint = subscriptionMode ? '/api/billing/subscriptions' : '/api/billing/orders';
   const methodChoices = [
     { value: 'pix', label: 'Pix · QR Code' },
@@ -90,21 +98,50 @@ export function PaymentConsole({ kind = 'orders', notify = () => {} }) {
     try {
       const [records, availableMethods, clients] = await Promise.all([
         fetchAllRecords(endpoint, request),
-        subscriptionMode ? Promise.resolve({ data: [] }) : request('/api/billing/payment-methods'),
+        subscriptionMode ? Promise.resolve({ data: [] }) : request('/api/billing/payment-methods').catch((methodError) => ({ data: [], error: methodError.message })),
         fetchAllRecords('/api/workspace/clients', request),
       ]);
       setItems(records); setMethods(availableMethods.data || []); setClients(clients);
+      if (availableMethods.error) setError(`${availableMethods.error} As cobranças existentes continuam disponíveis; configure o Mercado Pago para emitir novas.`);
     } catch (err) { setError(err.message); }
   }, [endpoint, request, subscriptionMode, token]);
+  const persistInstallmentProgress = useCallback(async () => {
+    if (subscriptionMode || !installmentContext) return '';
+    const client = clients.find((item) => String(item.id) === String(installmentContext.clientId));
+    const charges = Array.isArray(client?.serviceCharges) ? client.serviceCharges : [];
+    const nextCharges = advanceServiceInstallment(charges, installmentContext.serviceId, installmentContext.index);
+    if (!client || !nextCharges) return 'A cobrança foi criada, mas não foi possível confirmar a parcela no cadastro do cliente. Confira a lista de cobranças antes de tentar novamente.';
+    try {
+      await request(`/api/workspace/clients/${encodeURIComponent(client.id)}`, { method: 'PATCH', body: JSON.stringify({ data: { serviceCharges: nextCharges } }) });
+      return '';
+    } catch {
+      return 'A cobrança foi criada, mas o controle da próxima parcela não foi atualizado. Confira a lista de cobranças antes de tentar novamente.';
+    }
+  }, [clients, installmentContext, request, subscriptionMode]);
   useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => {
+    if (navigationContext?.filter === 'overdue') {
+      setClientScope(null); setSearch(''); setDueFilter('Vencidas'); setStatusFilter('Todos'); onNavigationContextConsumed(); return;
+    }
+    if (!navigationContext?.clientName) return;
+    setDueFilter('Todos'); setStatusFilter('Todos');
+    setClientScope({ clientId: navigationContext.clientId || '', clientName: navigationContext.clientName });
+    setInstallmentContext(navigationContext.installmentServiceId ? { clientId: navigationContext.clientId, serviceId: navigationContext.installmentServiceId, index: Number(navigationContext.installmentIndex) || 0, count: Number(navigationContext.installmentCount) || 0 } : null);
+    setSearch(navigationContext.clientName);
+    if (navigationContext.action === 'create') setForm((current) => ({ clientId: navigationContext.clientId || '', clientName: navigationContext.clientName, payerEmail: navigationContext.clientEmail || '', description: navigationContext.description || '', amount: navigationContext.amount != null ? String(navigationContext.amount) : '', method: current.method, identificationType: 'CPF', identificationNumber: '', frequency: navigationContext.frequency || 'months', frequencyInterval: navigationContext.frequencyInterval || 1, address: { zipCode: '', streetName: '', streetNumber: '', neighborhood: '', city: '', state: '' } }));
+    else setForm((current) => ({ ...current, clientId: navigationContext.clientId || '', clientName: navigationContext.clientName, payerEmail: navigationContext.clientEmail || current.payerEmail, description: navigationContext.description || current.description, amount: navigationContext.amount != null ? String(navigationContext.amount) : current.amount, frequency: navigationContext.frequency || current.frequency, frequencyInterval: navigationContext.frequencyInterval || current.frequencyInterval }));
+    if (navigationContext.action === 'create') setModal(true);
+    onNavigationContextConsumed();
+  }, [navigationContext?.intentId, navigationContext?.filter]);
   const submit = async (event) => {
     event.preventDefault(); setBusy(true); setError('');
     try {
       const payload = subscriptionMode
-        ? { clientId: form.clientId || undefined, clientName: form.clientName, payerEmail: form.payerEmail, description: form.description, amount: Number(form.amount), frequency: form.frequency, frequencyInterval: Number(form.frequencyInterval) }
-        : { clientId: form.clientId || undefined, clientName: form.clientName, payerEmail: form.payerEmail, description: form.description, amount: Number(form.amount), method: form.method, ...(form.method === 'boleto' ? { identificationType: form.identificationType, identificationNumber: form.identificationNumber, address: { zipCode: form.address.zipCode, streetName: form.address.streetName, streetNumber: form.address.streetNumber, neighborhood: form.address.neighborhood, city: form.address.city, state: form.address.state } } : {}) };
+        ? { clientName: form.clientName, payerEmail: form.payerEmail, description: form.description, amount: Number(form.amount), ...(form.clientId ? { workspaceClientId: form.clientId } : {}), frequency: form.frequency, frequencyInterval: Number(form.frequencyInterval) }
+        : { clientName: form.clientName, payerEmail: form.payerEmail, description: form.description, amount: Number(form.amount), ...(form.clientId ? { workspaceClientId: form.clientId } : {}), method: form.method, ...(form.method === 'boleto' ? { identificationType: form.identificationType, identificationNumber: form.identificationNumber, address: { zipCode: form.address.zipCode, streetName: form.address.streetName, streetNumber: form.address.streetNumber, neighborhood: form.address.neighborhood, city: form.address.city, state: form.address.state } } : {}) };
       const response = await request(endpoint, { method: 'POST', body: JSON.stringify(payload) });
-      setResult(response.data); setModal(false); await refresh(); notify(subscriptionMode ? 'Assinatura criada. Envie o link para o cliente autorizar.' : 'Cobrança enviada ao Mercado Pago.');
+      const followupWarning = await persistInstallmentProgress();
+      setResult({ ...response.data, followupWarning }); setModal(false); await refresh(); notify(subscriptionMode ? 'Assinatura criada. Envie o link para o cliente autorizar.' : 'Cobrança enviada ao Mercado Pago.');
     } catch (err) { setError(err.message); }
     finally { setBusy(false); }
   };
@@ -113,14 +150,15 @@ export function PaymentConsole({ kind = 'orders', notify = () => {} }) {
     try {
       const payer = cardData.payer || {};
       const response = await request(endpoint, { method: 'POST', body: JSON.stringify({
-        clientId: form.clientId || undefined, clientName: form.clientName, payerEmail: payer.email || form.payerEmail, description: form.description, amount: Number(form.amount),
+        clientName: form.clientName, payerEmail: payer.email || form.payerEmail, description: form.description, amount: Number(form.amount), ...(form.clientId ? { workspaceClientId: form.clientId } : {}),
         method: additionalData?.paymentTypeId === 'debit_card' ? 'debit_card' : 'credit_card', cardToken: cardData.token,
         paymentMethodId: cardData.payment_method_id, installments: Number(cardData.installments || 1),
         identificationType: payer.identification?.type || form.identificationType, identificationNumber: payer.identification?.number || form.identificationNumber,
       }) });
-      setResult(response.data); setModal(false); await refresh(); notify('Pagamento enviado ao Mercado Pago.');
+      const followupWarning = await persistInstallmentProgress();
+      setResult({ ...response.data, followupWarning }); setModal(false); await refresh(); notify('Pagamento enviado ao Mercado Pago.');
     } finally { setBusy(false); }
-  }, [endpoint, form, notify, refresh, request]);
+  }, [endpoint, form, notify, persistInstallmentProgress, refresh, request]);
   const cancelSubscription = async (item) => {
     if (!window.confirm(`Cancelar as cobranças futuras de ${item.clientName}?`)) return;
     try { await request(`/api/billing/subscriptions/${item.id}/status`, { method: 'PATCH', body: JSON.stringify({ status: 'canceled' }) }); await refresh(); notify('Assinatura cancelada no Mercado Pago.'); }
@@ -132,8 +170,9 @@ export function PaymentConsole({ kind = 'orders', notify = () => {} }) {
     catch (err) { setError(err.message); }
   };
   const copy = async (value) => { try { await navigator.clipboard.writeText(value); notify('Copiado para a área de transferência.'); } catch { notify('Não foi possível acessar a área de transferência.'); } };
-  const filtered = items.filter((item) => `${item.clientName} ${item.description} ${item.status}`.toLowerCase().includes(search.toLowerCase()));
-  const resetForm = () => setForm({ clientId: '', clientName: '', payerEmail: '', description: '', amount: '', method: methodChoices[0]?.value || 'pix', identificationType: 'CPF', identificationNumber: '', frequency: 'months', frequencyInterval: 1, address: { zipCode: '', streetName: '', streetNumber: '', neighborhood: '', city: '', state: '' } });
+  const scopedItems = clientScope ? filterRecordsForClient(items, clientScope) : items;
+  const filtered = filterPayments(scopedItems, { status: statusFilter, due: dueFilter }).filter((item) => `${item.clientName} ${item.description} ${item.status}`.toLocaleLowerCase('pt-BR').includes(search.toLocaleLowerCase('pt-BR')));
+  const resetForm = () => { setInstallmentContext(null); setForm({ clientId: '', clientName: '', payerEmail: '', description: '', amount: '', method: methodChoices[0]?.value || 'pix', identificationType: 'CPF', identificationNumber: '', frequency: 'months', frequencyInterval: 1, address: { zipCode: '', streetName: '', streetNumber: '', neighborhood: '', city: '', state: '' } }); };
   if (!token) return <PaymentAccess onConnected={setToken} />;
   if (result) {
     const details = result.paymentDetails || {};
@@ -142,16 +181,17 @@ export function PaymentConsole({ kind = 'orders', notify = () => {} }) {
       {!subscriptionMode && details.pixQrCodeBase64 && <div className="pay-pix"><img alt="QR Code Pix" src={`data:image/png;base64,${details.pixQrCodeBase64}`} /><span>Escaneie o QR Code ou use Pix Copia e Cola.</span><button className="ns-secondary" onClick={() => copy(details.pixCode)}><Copy size={14} />Copiar Pix Copia e Cola</button></div>}
       {!subscriptionMode && details.ticketUrl && <div className="pay-result-action"><a className="ns-primary" href={details.ticketUrl} target="_blank" rel="noreferrer">Abrir boleto <ExternalLink size={15} /></a>{details.digitableLine && <button className="ns-secondary" onClick={() => copy(details.digitableLine)}><Copy size={14} />Copiar linha digitável</button>}</div>}
       {!subscriptionMode && !details.pixQrCodeBase64 && !details.ticketUrl && <p className="pay-result-action">Resultado do cartão: {labels[result.status] || result.status}. A confirmação final virá pelo webhook.</p>}
+      {result.followupWarning && <p className="pay-error" role="alert">{result.followupWarning}</p>}
       <button className="ns-secondary" onClick={() => { setResult(null); resetForm(); }}>Fechar</button></section>;
   }
   return <div className="pay-workspace">
     <div className="pay-toolbar"><div><span className="pay-eyebrow">MERCADO PAGO · API DE ORDERS E ASSINATURAS</span><h2>{subscriptionMode ? 'Cobranças recorrentes' : 'Cobranças de clientes'}</h2><p>{subscriptionMode ? 'Crie renovações automáticas após autorização do cliente.' : 'Pix com QR Code, boleto e cartões dentro do financeiro.'}</p></div><div className="pay-toolbar-actions"><button className="ns-secondary" onClick={() => { fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }).finally(() => { setToken(false); window.dispatchEvent(new CustomEvent('nexo:session-expired')); }); }}><LockKeyhole size={14} />Sair</button><button className="ns-primary" onClick={() => { resetForm(); setError(''); setModal(true); }}><Plus size={15} />{subscriptionMode ? 'Nova assinatura' : 'Nova cobrança'}</button></div></div>
     <div className="pay-method-strip">{(subscriptionMode ? ['Cartões autorizados', 'Pix e boleto via adesão no Mercado Pago'] : ['Pix · QR Code e Copia e Cola', 'Boleto bancário', 'Crédito e débito']).map((label) => <span key={label}><CheckCircle2 size={15} />{label}</span>)}</div>
     {error && <div className="pay-error-banner"><AlertCircle size={16} />{error}<button onClick={() => setError('')} aria-label="Fechar aviso"><X size={14} /></button></div>}
-    <div className="pay-list-head"><div><b>{items.length} {subscriptionMode ? 'assinaturas' : 'cobranças'}</b><small>Dados sincronizados com o backend Nexo</small></div><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar cliente" /><button className="ns-secondary" onClick={refresh}><RefreshCw size={14} />Atualizar</button></div>
+    <div className="pay-list-head"><div><b>{filtered.length} {subscriptionMode ? 'assinaturas' : 'cobranças'}</b><small>{clientScope ? `Financeiro de ${clientScope.clientName}` : 'Dados sincronizados com o backend Nexo'}</small></div><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar cliente ou descrição" /><label className="pay-filter">Status<select aria-label="Filtrar por status" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option>Todos</option>{[...new Set(items.map((item) => item.status).filter(Boolean))].map((status) => <option key={status} value={status}>{labels[status] || status}</option>)}</select></label>{!subscriptionMode && <label className="pay-filter">Vencimento<select aria-label="Filtrar por vencimento" value={dueFilter} onChange={(event) => setDueFilter(event.target.value)}>{['Todos', 'Vencidas', 'Próximos 7 dias', 'Sem vencimento'].map((due) => <option key={due}>{due}</option>)}</select></label>}{clientScope && <button className="ns-secondary" onClick={() => { setClientScope(null); setSearch(''); }}>Todos os clientes</button>}{(statusFilter !== 'Todos' || dueFilter !== 'Todos') && <button className="ns-secondary" onClick={() => { setStatusFilter('Todos'); setDueFilter('Todos'); }}>Limpar filtros</button>}<button className="ns-secondary" onClick={refresh}><RefreshCw size={14} />Atualizar</button></div>
     <div className="pay-record-list">{filtered.map((item) => <article className="pay-record" key={item.id}><div className="pay-record-icon">{subscriptionMode ? <RefreshCw size={18} /> : <CreditCard size={18} />}</div><div className="pay-record-main"><b>{item.clientName}</b><small>{item.description} · {item.payerEmail}</small><small>{subscriptionMode ? `${item.frequencyInterval} ${item.frequency === 'months' ? 'mês(es)' : 'dia(s)'}` : `${item.method} · ${item.mpOrderId || 'Pedido em processamento'}`}</small></div><strong>{money(item.amount)}</strong><span className={`pay-status status-${item.status}`}>{labels[item.status] || item.status}</span>{subscriptionMode ? <div className="pay-record-actions">{item.checkoutUrl && item.status === 'pending' && <button className="ns-secondary" onClick={() => copy(item.checkoutUrl)}><Copy size={14} />Link</button>}{!['canceled', 'cancelled'].includes(item.status) && <><button className="ns-secondary" onClick={() => toggleSubscription(item)}><RefreshCw size={14} />{item.status === 'paused' ? 'Retomar' : 'Pausar'}</button><button className="ns-secondary" onClick={() => cancelSubscription(item)}><X size={14} />Cancelar</button></>}</div> : <div className="pay-record-actions">{item.paymentDetails?.pixCode && <button className="ns-secondary" onClick={() => copy(item.paymentDetails.pixCode)}><Copy size={14} />Pix</button>}{item.paymentDetails?.ticketUrl && <a className="ns-secondary" href={item.paymentDetails.ticketUrl} target="_blank" rel="noreferrer">Boleto <ArrowUpRight size={14} /></a>}</div>}</article>)}{!filtered.length && <div className="pay-empty"><Activity size={20} /><b>Nenhum registro encontrado</b><span>Crie uma cobrança ou assinatura para ela aparecer aqui.</span></div>}</div>
     <div className="pay-security-note"><ShieldCheck size={17} /><span>Credenciais privadas ficam no servidor. Dados de cartão são tokenizados pelo Mercado Pago e não passam pelos servidores do Nexo.</span></div>
-    {modal && <div className="ns-integration-modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) setModal(false); }}><form className="ns-integration-modal pay-create-modal" onSubmit={submit}><header><span className="ns-integration-logo mercado">{subscriptionMode ? <RefreshCw size={18} /> : <CreditCard size={18} />}</span><div><h2>{subscriptionMode ? 'Nova assinatura recorrente' : 'Nova cobrança'}</h2><p>{subscriptionMode ? 'O cliente autoriza o método no Mercado Pago.' : 'Selecione como o cliente pagará.'}</p></div><button type="button" aria-label="Fechar" disabled={busy} onClick={() => setModal(false)}><X size={17} /></button></header><div className="ns-integration-fields pay-fields"><label>Cliente cadastrado<select value={form.clientId} onChange={(event) => { const client = clients.find((item) => item.id === event.target.value); setForm((current) => ({ ...current, clientId: client?.id || '', clientName: client?.name || '', payerEmail: client?.email || current.payerEmail })); }}><option value="">Selecionar cliente (opcional)</option>{clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}</select></label><label>Nome do cliente<input required value={form.clientName} onChange={(e) => setForm({ ...form, clientId: '', clientName: e.target.value })} /></label><label>E-mail do pagador<input required type="email" value={form.payerEmail} onChange={(e) => setForm({ ...form, payerEmail: e.target.value })} /></label><label>Descrição<input required value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></label><label>Valor (R$)<input required type="number" min="0.01" step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} /></label>
+    {modal && <div className="ns-integration-modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) setModal(false); }}><form className="ns-integration-modal pay-create-modal" onSubmit={submit}><header><span className="ns-integration-logo mercado">{subscriptionMode ? <RefreshCw size={18} /> : <CreditCard size={18} />}</span><div><h2>{subscriptionMode ? 'Nova assinatura recorrente' : 'Nova cobrança'}</h2><p>{subscriptionMode ? 'O cliente autoriza o método no Mercado Pago.' : 'Selecione como o cliente pagará.'}</p></div><button type="button" aria-label="Fechar" disabled={busy} onClick={() => setModal(false)}><X size={17} /></button></header><div className="ns-integration-fields pay-fields"><label>Cliente cadastrado<select value={form.clientId} onChange={(event) => { const client = clients.find((item) => String(item.id) === String(event.target.value)); setForm((current) => ({ ...current, clientId: client?.id || '', clientName: client?.name || '', payerEmail: client?.email || current.payerEmail })); }}><option value="">Selecionar cliente (opcional)</option>{clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}</select></label><label>Nome do cliente<input required value={form.clientName} onChange={(e) => setForm({ ...form, clientId: '', clientName: e.target.value })} /></label><label>E-mail do pagador<input required type="email" value={form.payerEmail} onChange={(e) => setForm({ ...form, payerEmail: e.target.value })} /></label><label>Descrição<input required value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></label><label>Valor (R$)<input required type="number" min="0.01" step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} /></label>
       {subscriptionMode ? <><label>Frequência<select value={`${form.frequency}:${form.frequencyInterval}`} onChange={(e) => { const [frequency, frequencyInterval] = e.target.value.split(':'); setForm({ ...form, frequency, frequencyInterval: Number(frequencyInterval) }); }}><option value="months:1">Mensal</option><option value="months:3">Trimestral</option><option value="months:6">Semestral</option><option value="months:12">Anual</option><option value="days:7">Semanal</option></select></label><p className="pay-hint wide">A autorização pode oferecer os meios habilitados no Mercado Pago. A renovação automática começa após o cliente aprovar a assinatura.</p></> : <><label>Meio de pagamento<select value={form.method} onChange={(e) => { setForm({ ...form, method: e.target.value }); setError(''); }}>{methodChoices.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}</select></label>{!methodChoices.length && <p className="pay-error wide">A conta Mercado Pago não retornou meios de pagamento ativos.</p>}{form.method === 'boleto' && <><label>Documento<select value={form.identificationType} onChange={(e) => setForm({ ...form, identificationType: e.target.value })}><option>CPF</option><option>CNPJ</option></select></label><label>CPF/CNPJ<input required value={form.identificationNumber} onChange={(e) => setForm({ ...form, identificationNumber: e.target.value })} /></label><label>CEP<input required value={form.address.zipCode} onChange={(e) => setForm({ ...form, address: { ...form.address, zipCode: e.target.value } })} /></label><label>Rua<input required value={form.address.streetName} onChange={(e) => setForm({ ...form, address: { ...form.address, streetName: e.target.value } })} /></label><label>Número<input required value={form.address.streetNumber} onChange={(e) => setForm({ ...form, address: { ...form.address, streetNumber: e.target.value } })} /></label><label>Bairro<input required value={form.address.neighborhood} onChange={(e) => setForm({ ...form.address, neighborhood: e.target.value })} /></label><label>Cidade<input required value={form.address.city} onChange={(e) => setForm({ ...form.address, city: e.target.value })} /></label><label>UF<input required maxLength="2" value={form.address.state} onChange={(e) => setForm({ ...form, address: { ...form.address, state: e.target.value.toUpperCase() } })} /></label></>}
         {['credit_card', 'debit_card'].includes(form.method) && <><label>Documento<select value={form.identificationType} onChange={(e) => setForm({ ...form, identificationType: e.target.value })}><option>CPF</option><option>CNPJ</option></select></label><label>CPF/CNPJ<input required value={form.identificationNumber} onChange={(e) => setForm({ ...form, identificationNumber: e.target.value })} /></label><p className="pay-hint wide">Os dados do cartão são inseridos no formulário seguro hospedado pelo Mercado Pago.</p></>}
       </>}

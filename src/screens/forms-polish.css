@@ -14,7 +14,7 @@
 .app-shell :is(.repo-modal,.com-create-modal,.goal-modal,.team-modal,.work-compose-modal)>label,
 .app-shell :is(.goal-modal-fields,.team-modal-fields,.com-client-fields,.com-deal-edit-fields,.com-service-editor-fields,.file-detail-fields,.task-detail-fields,.project-detail-fields) label,
 .app-shell .cp-message-field,
-.cp-public-page .cp-public-message label { color: #4d596a; font-size: 11px; line-height: 1.45; font-weight: 600; }
+.cp-public-page .cp-public-message label { color: #4d596a; font-size: 12px; line-height: 1.45; font-weight: 600; }
 .app-shell :is(.repo-modal,.cp-modal,.com-create-modal,.goal-modal,.team-modal,.work-compose-modal) input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]),
 .app-shell :is(.repo-modal,.cp-modal,.com-create-modal,.goal-modal,.team-modal,.work-compose-modal) select,
 .app-shell :is(.repo-modal,.cp-modal,.com-create-modal,.goal-modal,.team-modal,.work-compose-modal) textarea,
@@ -36,14 +36,14 @@
 .cp-public-page .cp-public-message textarea:focus { outline: 0; border-color: #7195d5; box-shadow: 0 0 0 3px rgb(61 111 209 / 13%); }
 .app-shell :is(.repo-modal,.cp-modal,.com-create-modal,.goal-modal,.team-modal,.work-compose-modal)>footer button,
 .app-shell :is(.repo-modal,.cp-modal,.com-create-modal,.goal-modal,.team-modal,.work-compose-modal) footer .admin-primary,
-.app-shell :is(.repo-modal,.cp-modal,.com-create-modal,.goal-modal,.team-modal,.work-compose-modal) footer .admin-secondary { min-height: 38px; font-size: 11px; }
+.app-shell :is(.repo-modal,.cp-modal,.com-create-modal,.goal-modal,.team-modal,.work-compose-modal) footer .admin-secondary { min-height: 38px; font-size: 12px; }
 .app-shell :is(.repo-modal,.cp-modal,.com-create-modal,.goal-modal,.team-modal,.work-compose-modal)>p,
-.app-shell :is(.goal-form-error,.team-modal-note,.work-modal-note,.cp-modal-note) { font-size: 10px; line-height: 1.55; }
+.app-shell :is(.goal-form-error,.team-modal-note,.work-modal-note,.cp-modal-note) { font-size: 12px; line-height: 1.55; }
 
-.app-shell .settings-fields .settings-field { gap: 7px; font-size: 11px; }
+.app-shell .settings-fields .settings-field { gap: 7px; font-size: 12px; }
 .app-shell .settings-fields .settings-field input,
 .app-shell .settings-fields .settings-field select { height: 40px; padding: 9px 11px; border-radius: 8px; font: 400 12px/1.4 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
-.app-shell .settings-fields .settings-field>small { font-size: 10px; line-height: 1.5; }
+.app-shell .settings-fields .settings-field>small { font-size: 12px; line-height: 1.5; }
 .app-shell .com-add-contact-form input,
 .app-shell .com-client-note-form textarea { min-height: 40px; font-size: 12px; }
 .app-shell .approval-revision-form textarea { min-height: 88px; border: 1px solid #dce2e9; border-radius: 8px; padding: 10px 11px; color: #273345; font: 400 12px/1.5 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }

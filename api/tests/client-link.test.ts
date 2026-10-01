@@ -8,6 +8,12 @@ test('links workspace rows by client ID before considering display names', () =>
   assert.equal(belongsToClient({ clientId: 'client-2', client: 'FocussDev' }, client), false);
 });
 
+test('uses the workspace client link before a legacy billing client ID', () => {
+  const client = { id: 'workspace-client', name: 'Acme' };
+  assert.equal(belongsToClient({ workspaceClientId: 'workspace-client', clientId: 'billing-client', clientName: 'Other' }, client), true);
+  assert.equal(belongsToClient({ workspaceClientId: 'different-workspace-client', clientId: null, clientName: 'Acme' }, client), false);
+});
+
 test('matches legacy rows by normalized exact name, not a partial name', () => {
   const client = { id: 'client-1', name: 'Clínica São João' };
   assert.equal(belongsToClient({ client: 'clinica   sao joao' }, client), true);

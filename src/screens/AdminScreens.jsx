@@ -18,7 +18,7 @@ const team = [];
 const reportBars = [32, 45, 39, 62, 51, 72, 58, 82, 65, 90, 74, 100];
 const repositorySeed = [];
 
-export default function AdminScreen({ page }) {
+export default function AdminScreen({ page, navigationContext = null, onNavigationContextConsumed = () => {} }) {
   const [tab, setTab] = useState('Geral');
   const [notice, setNotice] = useState('');
   const { records: repos, create: createRepo, remove: deleteRepo } = useWorkspaceRecords('repositories');
@@ -61,9 +61,9 @@ export default function AdminScreen({ page }) {
 
     {page === 'Metas' && <GoalsScreen notify={notify} />}
 
-    {page === 'Configurações' && <SettingsScreen notify={notify} />}
+    {page === 'Configurações' && <SettingsScreen notify={notify} navigationContext={navigationContext} onNavigationContextConsumed={onNavigationContextConsumed} />}
 
-    {page === 'Portal do cliente' && <ClientPortalAdmin notify={notify} />}
+    {page === 'Portal do cliente' && <ClientPortalAdmin notify={notify} navigationContext={navigationContext} onNavigationContextConsumed={onNavigationContextConsumed} />}
 
     {notice && <div className="admin-toast" role="status"><Check size={15} />{notice}</div>}
   </main>;

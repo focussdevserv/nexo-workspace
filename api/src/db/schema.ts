@@ -1,5 +1,6 @@
 import { relations, sql } from 'drizzle-orm';
 import { boolean, index, integer, jsonb, numeric, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import type { WorkspacePermissions } from '../security/authorization.js';
 
 export const organizations = pgTable('organizations', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -14,7 +15,9 @@ export const users = pgTable('users', {
   email: text('email').notNull(),
   passwordHash: text('password_hash').notNull(),
   role: text('role').$type<'owner' | 'admin' | 'member'>().default('owner').notNull(),
+  permissions: jsonb('permissions').$type<WorkspacePermissions | null>().default(null),
   active: boolean('active').default(true).notNull(),
+  inviteVersion: integer('invite_version').default(0).notNull(),
   notificationsReadAt: timestamp('notifications_read_at', { withTimezone: true }).defaultNow().notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [uniqueIndex('users_email_unique').on(table.email), index('users_organization_idx').on(table.organizationId)]);
@@ -52,6 +55,7 @@ export const billingOrders = pgTable('billing_orders', {
   id: uuid('id').defaultRandom().primaryKey(),
   organizationId: uuid('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
   clientId: uuid('client_id').references(() => clients.id, { onDelete: 'set null' }),
+  workspaceClientId: uuid('workspace_client_id').references(() => workspaceRecords.id, { onDelete: 'set null' }),
   createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
   clientName: text('client_name').notNull(),
   payerEmail: text('payer_email').notNull(),
@@ -113,6 +117,7 @@ export const billingSubscriptions = pgTable('billing_subscriptions', {
   id: uuid('id').defaultRandom().primaryKey(),
   organizationId: uuid('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
   clientId: uuid('client_id').references(() => clients.id, { onDelete: 'set null' }),
+  workspaceClientId: uuid('workspace_client_id').references(() => workspaceRecords.id, { onDelete: 'set null' }),
   createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
   clientName: text('client_name').notNull(),
   payerEmail: text('payer_email').notNull(),

@@ -11,28 +11,43 @@ import argon2 from 'argon2';
 import * as Sentry from '@sentry/node';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { resolve } from 'node:path';
-import { and, asc, desc, eq, ilike, isNull, lte, notExists, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, ilike, inArray, isNull, lte, notExists, or, sql } from 'drizzle-orm';
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
+import { simpleParser } from 'mailparser';
+import { ImapFlow } from 'imapflow';
+import nodemailer from 'nodemailer';
 import { db, pool } from './db/index.js';
 import { activityEvents, billingOrders, billingOverdueEvents, billingSubscriptions, clients, n8nEventDeliveries, organizations, users, workspaceRecords } from './db/schema.js';
 import { isSafeWorkspaceData } from './security/workspace-data.js';
+import { buildWorkspaceBackup, parseWorkspaceBackup } from './workspace-backup.js';
+import { findDuplicateLead } from './crm/lead-identity.js';
+import { buildClientFromLead } from './crm/lead-conversion.js';
+import { isWorkspaceRequestAllowed, type WorkspaceRecordScope } from './security/authorization.js';
+import { billingClientIdsForWorkspaceScope, clientLinkedWorkspaceResources, recordMatchesWorkspaceScope } from './security/record-scope.js';
 import { renderProposalEmail } from './email/proposal.js';
-import { buildGoogleRawMessage, decodeGoogleDriveUpload } from './integrations/google-mail.js';
+import { buildGoogleRawMessage, decodeGoogleDriveUpload, decodeGoogleMailAttachments, googleMailAddresses, googleThreadBelongsToAllowedContacts, mapGoogleMailMessage } from './integrations/google-mail.js';
+import { validateClientServiceCharges } from './integrations/client-service-charges.js';
+import { portalApprovalRecord } from './integrations/client-approvals.js';
+import { hashPortalLoginCode, maskPortalEmail, portalIdentifierMatches, portalLoginCodeMatches } from './integrations/client-portal-auth.js';
+import { safeClientPortalBranding } from './integrations/client-portal-branding.js';
+import { normalizeHostingerCredentials, verifyHostingerMailbox, type HostingerCredentials } from './integrations/hostinger-mail.js';
 import { buildOverduePaymentEvent, overduePaymentRetryDelayMs } from './integrations/overdue-payment.js';
 import { proposalAcceptanceDisposition } from './integrations/proposal-acceptance.js';
 import { resendOperationalReadiness } from './integrations/resend-readiness.js';
 import { mapGitHubRepositoryActivity } from './integrations/github.js';
 import { googleCalendarTestDisposition } from './integrations/google-health.js';
 import { sameMercadoPagoPaymentSnapshot } from './integrations/mercadopago.js';
-import { classifyWahaQrResponse, classifyWahaSessionReadiness } from './integrations/waha.js';
+import { calculateFinanceTransferBalances } from './integrations/finance-transfers.js';
+import { buildFinanceRecurrenceDates } from './integrations/finance-recurrence.js';
+import { buildWahaSendFilePayload, classifyWahaQrResponse, classifyWahaSessionReadiness } from './integrations/waha.js';
 import { clicksignBaseUrl, createClicksignEnvelope, getClicksignEnvelope, notifyClicksignEnvelope } from './integrations/clicksign.js';
 import { mapN8nCollections, n8nAutomationTemplates, buildN8nAutomationWorkflow, n8nApiKeyFailureMessage, n8nApiValidationMessage, type N8nAutomationTemplateId } from './integrations/n8n.js';
-import { N8N_DELIVERY_MAX_ATTEMPTS, n8nDeliveryExhausted, n8nDeliveryRetryDelayMs } from './integrations/n8n-delivery.js';
+import { N8N_DELIVERY_MAX_ATTEMPTS, n8nDeliveryCanRetry, n8nDeliveryExhausted, n8nDeliveryRetryDelayMs } from './integrations/n8n-delivery.js';
 import { isUnverifiedContractTransition, requiresExternalSignature } from './contracts/status.js';
 import { checkPublicSite } from './monitoring/site-check.js';
 import { scrubSentryEvent } from './integrations/sentry-scrub.js';
-import { resolveActivityNotificationTitle } from './notifications.js';
+import { notificationAccessPath, resolveActivityNotificationTitle } from './notifications.js';
 import { mapGoogleCalendarEvents } from './integrations/google-calendar.js';
 import { buildGoogleAuthorizationUrl } from './integrations/google-oauth.js';
 import { canApplyClicksignWebhookStatus, clicksignContractStatus, clicksignWebhookEnvelopeStatus, clicksignWebhookIsReady, parseClicksignWebhookEvent, verifyClicksignWebhook } from './integrations/clicksign-webhook.js';
@@ -62,11 +77,11 @@ Sentry.init({
   beforeSend: (event) => scrubSentryEvent(event),
 });
 
-const app = Fastify({ logger: true, bodyLimit: 1024 * 1024, trustProxy: process.env.TRUST_PROXY === 'true' });
+const app = Fastify({ logger: true, bodyLimit: 1024 * 1024, maxParamLength: 4096, trustProxy: process.env.TRUST_PROXY === 'true' });
 await app.register(helmet);
 await app.register(cookie);
 await app.register(cors, { origin: env.APP_ORIGIN.split(',').map((origin) => z.string().url().parse(origin.trim())), credentials: true });
-await app.register(rateLimit, { max: 120, timeWindow: '1 minute' });
+await app.register(rateLimit, { max: 360, timeWindow: '1 minute' });
 await app.register(rawBody, { global: false, encoding: false });
 await app.register(jwt, { secret: env.JWT_SECRET, cookie: { cookieName: 'nexo_session', signed: false }, sign: { expiresIn: '8h' } });
 
@@ -82,15 +97,16 @@ app.decorate('authenticate', async (request: FastifyRequest, reply: FastifyReply
   try {
     await request.jwtVerify({ onlyCookie: true });
     if (request.user.purpose) return reply.code(401).send({ error: 'unauthorized', message: 'Sessao invalida ou expirada.' });
-    const [owner] = await db.select({ id: users.id }).from(users).where(and(
-      eq(users.id, request.user.sub), eq(users.id, ownerAccountId ?? '00000000-0000-0000-0000-000000000000'),
-      eq(users.organizationId, request.user.organizationId), eq(users.active, true),
+    const [user] = await db.select({ id: users.id, role: users.role, email: users.email, inviteVersion: users.inviteVersion, permissions: users.permissions }).from(users).where(and(
+      eq(users.id, request.user.sub), eq(users.organizationId, request.user.organizationId), eq(users.active, true),
     )).limit(1);
-    if (!owner) return reply.code(401).send({ error: 'unauthorized', message: 'Sessao invalida ou expirada.' });
+    if (!user || user.role !== request.user.role || (user.role === 'owner' && (user.id !== ownerAccountId || user.email.toLowerCase() !== env.OWNER_EMAIL)) || (user.role !== 'owner' && user.inviteVersion < 1)) return reply.code(401).send({ error: 'unauthorized', message: 'Sessao invalida ou expirada.' });
+    if (!isWorkspaceRequestAllowed(user.role, request.method, request.url, user.permissions)) return reply.code(403).send({ error: 'forbidden', message: 'Seu papel ou as permissoes deste modulo nao permitem esta acao. Solicite acesso a pessoa proprietaria do workspace.' });
   } catch { return reply.code(401).send({ error: 'unauthorized', message: 'Sessao invalida ou expirada.' }); }
 });
 
 const loginSchema = z.object({ email: z.string().trim().email().transform((value) => value.toLowerCase()), password: z.string().min(1).max(128) });
+const gmailAttachmentSchema = z.array(z.object({ filename: z.string().trim().min(1).max(255), mimeType: z.string().max(127), contentBase64: z.string().min(4).max(11_184_820) })).max(5).optional();
 const clientSchema = z.object({
   name: z.string().trim().min(2).max(180),
   legalName: z.string().trim().max(180).nullish(),
@@ -113,6 +129,7 @@ const workspaceDataSchema = z.record(z.string().trim().min(1).max(100), z.unknow
   'O registro contém uma chave privada/insegura, é profundo demais ou excede o limite permitido.');
 const paymentOrderSchema = z.object({
   clientId: z.string().uuid().optional(),
+  workspaceClientId: z.string().uuid().optional(),
   clientName: z.string().trim().min(2).max(180),
   payerEmail: z.string().trim().email().max(254).transform((value) => value.toLowerCase()),
   description: z.string().trim().min(2).max(250),
@@ -134,7 +151,7 @@ const paymentOrderSchema = z.object({
   if (['credit_card', 'debit_card', 'boleto'].includes(value.method) && (!value.identificationType || !value.identificationNumber)) ctx.addIssue({ code: 'custom', path: ['identificationNumber'], message: 'CPF ou CNPJ do pagador é obrigatório.' });
 });
 const subscriptionSchema = z.object({
-  clientId: z.string().uuid().optional(), clientName: z.string().trim().min(2).max(180),
+  clientId: z.string().uuid().optional(), workspaceClientId: z.string().uuid().optional(), clientName: z.string().trim().min(2).max(180),
   payerEmail: z.string().trim().email().max(254).transform((value) => value.toLowerCase()),
   description: z.string().trim().min(2).max(250), amount: z.coerce.number().positive().max(1000000),
   frequency: z.enum(['days', 'months']).default('months'),
@@ -182,7 +199,7 @@ async function wahaRequest<T = Record<string, unknown>>(path: string, init: Requ
   return payload as T;
 }
 
-const integrationProviders = ['mercadopago', 'evolution', 'waha', 'resend', 'google', 'clicksign', 'github', 'n8n', 'sentry'] as const;
+const integrationProviders = ['mercadopago', 'evolution', 'waha', 'resend', 'hostinger', 'google', 'clicksign', 'github', 'n8n', 'sentry'] as const;
 type IntegrationProvider = typeof integrationProviders[number];
 type IntegrationControl = { provider?: string; enabled?: boolean; lastTestStatus?: string | null; lastTestMessage?: string | null; testedAt?: string | null };
 type GoogleTokenSet = { accessToken: string; refreshToken: string; expiresAt: number; email: string };
@@ -192,6 +209,7 @@ const googleScopes = [
   'https://www.googleapis.com/auth/calendar.events',
   'https://www.googleapis.com/auth/drive.file',
   'https://www.googleapis.com/auth/gmail.send',
+  'https://www.googleapis.com/auth/gmail.modify',
 ];
 const googleRedirectUri = env.GOOGLE_REDIRECT_URI || new URL('/api/integrations/google/callback', allowedOrigins[0]).toString();
 const googleTokenEncryptionKey = createHash('sha256').update('nexo-google-token-v1\0').update(env.JWT_SECRET).digest();
@@ -209,6 +227,21 @@ function openGoogleTokens(sealed: string): GoogleTokenSet {
   const decipher = createDecipheriv('aes-256-gcm', googleTokenEncryptionKey, iv);
   decipher.setAuthTag(tag);
   return JSON.parse(Buffer.concat([decipher.update(encrypted), decipher.final()]).toString('utf8')) as GoogleTokenSet;
+}
+
+const hostingerEncryptionKey = createHash('sha256').update('nexo-hostinger-email-v1\0').update(env.JWT_SECRET).digest();
+function sealHostingerCredentials(credentials: HostingerCredentials) {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', hostingerEncryptionKey, iv);
+  const encrypted = Buffer.concat([cipher.update(JSON.stringify(credentials), 'utf8'), cipher.final()]);
+  return [iv, cipher.getAuthTag(), encrypted].map((part) => part.toString('base64url')).join('.');
+}
+function openHostingerCredentials(sealed: string): HostingerCredentials {
+  const [iv, tag, encrypted] = sealed.split('.').map((part) => Buffer.from(part, 'base64url'));
+  if (!iv || !tag || !encrypted || iv.length !== 12 || tag.length !== 16) throw new Error('hostinger_credentials_invalid');
+  const decipher = createDecipheriv('aes-256-gcm', hostingerEncryptionKey, iv);
+  decipher.setAuthTag(tag);
+  return normalizeHostingerCredentials(JSON.parse(Buffer.concat([decipher.update(encrypted), decipher.final()]).toString('utf8')));
 }
 
 async function findGoogleConnection(organizationId: string) {
@@ -235,6 +268,25 @@ async function getGoogleTokens(organizationId: string) {
   return sealed ? openGoogleTokens(sealed) : null;
 }
 
+async function findHostingerConnection(organizationId: string) {
+  const [row] = await db.select().from(workspaceRecords).where(and(
+    eq(workspaceRecords.organizationId, organizationId), eq(workspaceRecords.resource, 'integration-secrets'),
+    sql`${workspaceRecords.data}->>'provider' = 'hostinger'`, isNull(workspaceRecords.archivedAt),
+  )).limit(1);
+  return row;
+}
+async function getHostingerCredentials(organizationId: string) {
+  const row = await findHostingerConnection(organizationId);
+  const sealed = typeof row?.data.sealedCredentials === 'string' ? row.data.sealedCredentials : '';
+  return sealed ? openHostingerCredentials(sealed) : null;
+}
+async function saveHostingerCredentials(organizationId: string, userId: string, credentials: HostingerCredentials) {
+  const data = { provider: 'hostinger', sealedCredentials: sealHostingerCredentials(credentials) };
+  const current = await findHostingerConnection(organizationId);
+  if (current) await db.update(workspaceRecords).set({ data, updatedAt: new Date() }).where(eq(workspaceRecords.id, current.id));
+  else await db.insert(workspaceRecords).values({ organizationId, resource: 'integration-secrets', data, createdBy: userId });
+}
+
 async function googleAccessToken(organizationId: string, userId: string) {
   const tokens = await getGoogleTokens(organizationId);
   if (!tokens) throw Object.assign(new Error('google_authorization_required'), { statusCode: 409 });
@@ -259,6 +311,7 @@ function integrationConfigured(provider: IntegrationProvider) {
     evolution: Boolean(process.env.EVOLUTION_API_URL && process.env.EVOLUTION_API_KEY),
     waha: Boolean(env.WAHA_API_URL && env.WAHA_API_KEY),
     resend: Boolean(process.env.RESEND_API_KEY),
+    hostinger: false,
     google: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
     clicksign: Boolean(process.env.CLICKSIGN_API_TOKEN),
     github: Boolean(process.env.GITHUB_TOKEN),
@@ -434,12 +487,16 @@ app.delete('/api/integrations/waha/sessions/:id', { preHandler: app.authenticate
   return reply.code(204).send();
 });
 
-app.post('/api/integrations/waha/send', { preHandler: app.authenticate, config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request, reply) => {
+app.post('/api/integrations/waha/send', { preHandler: app.authenticate, bodyLimit: 12 * 1024 * 1024, config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request, reply) => {
   const body = parseBody(z.object({
     sessionId: z.string().uuid(), conversationId: z.string().uuid(), clientMessageId: z.string().uuid(),
     chatId: z.string().trim().min(5).max(180).regex(/^[\w.+-]+@(?:c\.us|g\.us|lid|s\.whatsapp\.net|newsletter)$/),
-    text: z.string().trim().min(1).max(4096),
-  }), request.body, reply); if (!body) return;
+    text: z.string().trim().max(4096).default(''),
+    attachment: z.object({ filename: z.string().trim().min(1).max(255).refine((value) => !/[\r\n\0]/.test(value)), mimeType: z.string().max(127), contentBase64: z.string().min(4).max(11_184_820) }).optional(),
+  }).refine((value) => Boolean(value.text || value.attachment), 'A message or attachment is required.'), request.body, reply); if (!body) return;
+  let attachmentData: Buffer | undefined;
+  try { if (body.attachment) attachmentData = decodeGoogleDriveUpload(body.attachment.contentBase64, 8 * 1024 * 1024); }
+  catch { return reply.code(400).send({ error: 'waha_file_invalid', message: 'O arquivo WhatsApp est? vazio ou excede o limite de 8 MiB.' }); }
   if (!await isIntegrationEnabled(request.user.organizationId, 'waha')) return reply.code(409).send({ error: 'integration_disconnected', message: 'WAHA está desconectada no Nexo. Reative em Integrações para enviar.' });
   const sessionRow = await findOwnedWahaSession(request.user.organizationId, body.sessionId);
   if (!sessionRow) return reply.code(404).send({ error: 'waha_session_not_found', message: 'A sessão WhatsApp selecionada não pertence a este workspace.' });
@@ -453,7 +510,7 @@ app.post('/api/integrations/waha/send', { preHandler: app.authenticate, config: 
   const duplicate = existingHistory.find((message) => message.clientMessageId === body.clientMessageId);
   if (duplicate?.status === 'sent' && duplicate.providerMessageId) return { data: { messageId: duplicate.providerMessageId, status: 'sent', duplicated: true } };
   if (duplicate?.status === 'sending' && Date.now() - Date.parse(String(duplicate.createdAt || '')) < 30_000) return reply.code(202).send({ data: { messageId: duplicate.clientMessageId, status: 'sending', duplicated: true } });
-  const pending = { id: body.clientMessageId, clientMessageId: body.clientMessageId, side: 'sent', text: body.text, time: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }), createdAt: new Date().toISOString(), status: 'sending' };
+  const pending = { id: body.clientMessageId, clientMessageId: body.clientMessageId, side: 'sent', text: body.text, ...(body.attachment ? { attachment: body.attachment.filename } : {}), time: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }), createdAt: new Date().toISOString(), status: 'sending' };
   const pendingHistory = duplicate ? existingHistory.map((message) => message.clientMessageId === body.clientMessageId ? pending : message) : [...existingHistory, pending];
   await db.update(workspaceRecords).set({ data: { ...data, whatsappSessionId: sessionRow.id, whatsappChatId: body.chatId, channel: 'WhatsApp', history: pendingHistory }, updatedAt: new Date() }).where(eq(workspaceRecords.id, conversation.id));
   try {
@@ -463,12 +520,14 @@ app.post('/api/integrations/waha/send', { preHandler: app.authenticate, config: 
       const error = Object.assign(new Error('waha_session_not_connected'), { statusCode: 409 });
       throw error;
     }
-    const result = await wahaRequest<{ id?: string }>('/api/sendText', { method: 'POST', body: JSON.stringify({ session: wahaSessionName(sessionRow), chatId: body.chatId, text: body.text }) });
+    const result = body.attachment && attachmentData
+      ? await wahaRequest<{ id?: string }>('/api/sendFile', { method: 'POST', body: JSON.stringify(buildWahaSendFilePayload({ session: wahaSessionName(sessionRow), chatId: body.chatId, filename: body.attachment.filename, mimeType: body.attachment.mimeType, data: attachmentData.toString('base64'), caption: body.text })) })
+      : await wahaRequest<{ id?: string }>('/api/sendText', { method: 'POST', body: JSON.stringify({ session: wahaSessionName(sessionRow), chatId: body.chatId, text: body.text }) });
     const [fresh] = await db.select().from(workspaceRecords).where(eq(workspaceRecords.id, conversation.id)).limit(1);
     const freshData = (fresh?.data || data) as Record<string, any>;
     const history = Array.isArray(freshData.history) ? freshData.history as Array<Record<string, any>> : pendingHistory;
     const savedMessage = { ...pending, providerMessageId: result.id || '', status: 'sent' };
-    await db.update(workspaceRecords).set({ data: { ...freshData, whatsappSessionId: sessionRow.id, whatsappChatId: body.chatId, channel: 'WhatsApp', text: body.text, time: savedMessage.time, history: history.map((message) => message.clientMessageId === body.clientMessageId ? savedMessage : message) }, updatedAt: new Date() }).where(eq(workspaceRecords.id, conversation.id));
+    await db.update(workspaceRecords).set({ data: { ...freshData, whatsappSessionId: sessionRow.id, whatsappChatId: body.chatId, channel: 'WhatsApp', text: body.text || (body.attachment ? `Arquivo: ${body.attachment.filename}` : ''), time: savedMessage.time, history: history.map((message) => message.clientMessageId === body.clientMessageId ? savedMessage : message) }, updatedAt: new Date() }).where(eq(workspaceRecords.id, conversation.id));
     return { data: { messageId: result.id || body.clientMessageId, status: 'sent' } };
   } catch (error) {
     const [fresh] = await db.select().from(workspaceRecords).where(eq(workspaceRecords.id, conversation.id)).limit(1);
@@ -525,7 +584,7 @@ app.post('/api/integrations/waha/webhook', async (request, reply) => {
   const displayName = String(payload._data?.notifyName || payload._data?.pushName || payload.pushName || matchingClient?.contactName || phone || 'WhatsApp');
   const initials = displayName.split(/\s+/).slice(0, 2).map((part) => part[0] || '').join('').toUpperCase();
   const history = [...oldHistory, { id: messageId, providerMessageId: messageId, side: 'received', text: text || 'Mensagem recebida', time: new Date(timestamp * 1000).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }), timestamp: at, status: 'received', ...(payload.media?.filename ? { attachment: String(payload.media.filename) } : {}) }];
-  const nextData = { ...currentData, name: currentData.name || displayName, company: matchingClient?.name || currentData.company || '', clientId: matchingClient?.id || currentData.clientId || '', phone, email: matchingClient?.email || currentData.email || '', initials, color: currentData.color || 'blue', channel: 'WhatsApp', whatsappSessionId: sessionRow.id, whatsappChatId: chatId, text: text || 'Mensagem recebida', time: at, unread: Number(currentData.unread || 0) + 1, history };
+  const nextData = { ...currentData, name: currentData.name || displayName, company: matchingClient?.name || currentData.company || '', clientId: matchingClient?.id || currentData.clientId || '', phone, email: matchingClient?.email || currentData.email || '', initials, color: currentData.color || 'blue', channel: 'WhatsApp', status: 'open', whatsappSessionId: sessionRow.id, whatsappChatId: chatId, text: text || 'Mensagem recebida', time: at, unread: Number(currentData.unread || 0) + 1, history };
   let inboxId = conversation?.id;
   if (conversation) await db.update(workspaceRecords).set({ data: nextData, updatedAt: new Date() }).where(eq(workspaceRecords.id, conversation.id));
   else {
@@ -729,22 +788,255 @@ app.delete('/api/integrations/google/calendar/events/:eventId', { preHandler: ap
   }
 });
 
+async function gmailScopedContactEmails(organizationId: string, scope?: WorkspaceRecordScope | null) {
+  const clientIds = await billingClientIdsForScope(organizationId, scope);
+  if (clientIds === null) return null;
+  if (!clientIds.length) return new Set<string>();
+  const [clientRows, contactRows] = await Promise.all([
+    db.select({ data: workspaceRecords.data }).from(workspaceRecords).where(and(
+      eq(workspaceRecords.organizationId, organizationId), eq(workspaceRecords.resource, 'clients'), isNull(workspaceRecords.archivedAt), inArray(workspaceRecords.id, clientIds),
+    )),
+    db.select({ data: workspaceRecords.data }).from(workspaceRecords).where(and(
+      eq(workspaceRecords.organizationId, organizationId), eq(workspaceRecords.resource, 'contacts'), isNull(workspaceRecords.archivedAt),
+      inArray(sql<string>`${workspaceRecords.data}->>'clientId'`, clientIds),
+    )),
+  ]);
+  return new Set(googleMailAddresses([...clientRows, ...contactRows].map((row) => row.data.email)));
+}
+
+async function gmailThreadParticipants(accessToken: string, threadId: string) {
+  const response = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/threads/${encodeURIComponent(threadId)}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Cc&metadataHeaders=Bcc`, {
+    headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' }, signal: AbortSignal.timeout(12_000),
+  });
+  if (!response.ok) return null;
+  const thread = await response.json() as { messages?: Array<{ payload?: { headers?: Array<{ name?: string; value?: string }> } }> };
+  const values = (thread.messages || []).flatMap((message) => (message.payload?.headers || []).filter((header) => ['from', 'to', 'cc', 'bcc'].includes(String(header.name || '').toLowerCase())).map((header) => header.value || ''));
+  return googleMailAddresses(values);
+}
+
+async function gmailThreadIsInScope(organizationId: string, scope: WorkspaceRecordScope | null | undefined, accessToken: string, threadId: string, accountEmail: string) {
+  const allowedEmails = await gmailScopedContactEmails(organizationId, scope);
+  if (allowedEmails === null) return true;
+  if (!allowedEmails.size) return false;
+  const participants = await gmailThreadParticipants(accessToken, threadId);
+  return Boolean(participants && googleThreadBelongsToAllowedContacts(participants, allowedEmails, accountEmail));
+}
+
+app.get('/api/integrations/google/gmail', { preHandler: app.authenticate }, async (request, reply) => {
+  const query = z.object({ q: z.string().trim().max(180).default('in:inbox OR in:sent'), maxResults: z.coerce.number().int().min(1).max(30).default(20) }).safeParse(request.query);
+  if (!query.success) return reply.code(400).send({ error: 'validation_error', message: 'Invalid Gmail query.' });
+  const tokens = await getGoogleTokens(request.user.organizationId);
+  if (!tokens) return reply.code(409).send({ error: 'google_authorization_required', message: 'Connect and authorize Gmail in Integrations.' });
+  try {
+    const accessToken = await googleAccessToken(request.user.organizationId, request.user.sub);
+    const allowedEmails = await gmailScopedContactEmails(request.user.organizationId, request.user.permissions?.scope);
+    if (allowedEmails && !allowedEmails.size) return { data: [] };
+    const headers = { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' };
+    const listUrl = new URL('https://gmail.googleapis.com/gmail/v1/users/me/threads');
+    listUrl.search = new URLSearchParams({ q: query.data.q, maxResults: String(query.data.maxResults) }).toString();
+    const listResponse = await fetch(listUrl, { headers, signal: AbortSignal.timeout(12_000) });
+    if (!listResponse.ok) return reply.code(listResponse.status === 403 ? 409 : 502).send({ error: listResponse.status === 403 ? 'google_gmail_scope_required' : 'google_gmail_unavailable', message: listResponse.status === 403 ? 'Reauthorize Google Workspace and grant Gmail read/modify access.' : 'Gmail could not return the requested messages.' });
+    const list = await listResponse.json() as { threads?: Array<{ id?: string }> };
+    const threads = await Promise.all((list.threads || []).flatMap((thread) => thread.id ? [fetch(`https://gmail.googleapis.com/gmail/v1/users/me/threads/${encodeURIComponent(thread.id)}?format=full`, { headers, signal: AbortSignal.timeout(12_000) }).then(async (response) => {
+      if (!response.ok) return null;
+      const raw = await response.json() as { id?: string; messages?: Array<Parameters<typeof mapGoogleMailMessage>[0]> };
+      const messages = (raw.messages || []).map((item) => mapGoogleMailMessage(item, tokens.email));
+      if (!messages.length) return null;
+      messages.sort((a, b) => Date.parse(a.date || '') - Date.parse(b.date || ''));
+      const latest = messages[messages.length - 1]!;
+      const participants = googleMailAddresses((raw.messages || []).flatMap((message) => (message.payload?.headers || []).filter((header) => ['from', 'to', 'cc', 'bcc'].includes(String(header.name || '').toLowerCase())).map((header) => header.value || '')));
+      return { id: raw.id || latest.threadId, threadId: raw.id || latest.threadId, name: latest.side === 'sent' ? latest.to : latest.from, company: latest.side === 'sent' ? latest.to : latest.from, email: (latest.side === 'sent' ? latest.to : latest.from).match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] || '', subject: latest.subject, text: latest.text || '', snippet: latest.text.slice(0, 180), time: latest.date, unread: messages.some((item) => item.unread) ? 1 : 0, channel: 'E-mail', history: messages.map((item) => ({ ...item, time: item.date })), _participants: participants };
+    }).catch(() => null)] : []));
+    const visibleThreads = threads.filter((thread): thread is NonNullable<typeof thread> => Boolean(thread))
+      .filter((thread) => !allowedEmails || googleThreadBelongsToAllowedContacts(thread._participants, allowedEmails, tokens.email))
+      .map(({ _participants, ...thread }) => thread);
+    return { data: visibleThreads };
+  } catch (error) {
+    const status = (error as { statusCode?: number }).statusCode;
+    if (status === 409 || status === 503) return reply.code(status).send({ error: 'google_authorization_required', message: 'Reconnect Google Workspace to access Gmail.' });
+    return reply.code(502).send({ error: 'google_gmail_unavailable', message: 'Gmail could not be reached. Try again in a moment.' });
+  }
+});
+
+app.post('/api/integrations/google/gmail/send', { preHandler: app.authenticate, bodyLimit: 12 * 1024 * 1024, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
+  const body = parseBody(z.object({ to: z.string().trim().email().max(254), subject: z.string().trim().min(1).max(250), text: z.string().trim().min(1).max(20_000), attachments: gmailAttachmentSchema }), request.body, reply);
+  if (!body) return;
+  let attachments;
+  try { attachments = decodeGoogleMailAttachments(body.attachments); }
+  catch { return reply.code(400).send({ error: 'gmail_attachment_invalid', message: 'Anexos invalidos ou acima do limite de 8 MiB.' }); }
+  const scopedEmails = await gmailScopedContactEmails(request.user.organizationId, request.user.permissions?.scope);
+  if (scopedEmails && !scopedEmails.has(body.to.toLocaleLowerCase('en-US'))) return reply.code(403).send({ error: 'record_scope_denied', message: 'O destinatario nao pertence aos clientes atribuidos ao seu escopo.' });
+  try {
+    const accessToken = await googleAccessToken(request.user.organizationId, request.user.sub);
+    const raw = buildGoogleRawMessage({ to: body.to, subject: body.subject, text: body.text, html: body.text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('\\n', '<br>'), attachments });
+    const response = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', { method: 'POST', headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ raw }), signal: AbortSignal.timeout(12_000) });
+    const result = await response.json().catch(() => ({})) as { id?: string; threadId?: string };
+    if (!response.ok || !result.id) return reply.code(response.status === 403 ? 409 : 502).send({ error: 'gmail_send_failed', message: 'Gmail did not accept this message.' });
+    await db.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'gmail_thread', action: 'message_sent', payload: { threadId: result.threadId || null, messageId: result.id, recipient: body.to } });
+    return reply.code(201).send({ data: { id: result.id, threadId: result.threadId, sent: true } });
+  } catch (error) {
+    const status = (error as { statusCode?: number }).statusCode;
+    if (status === 409 || status === 503) return reply.code(status).send({ error: 'google_authorization_required', message: 'Reconnect Google Workspace to send mail.' });
+    return reply.code(502).send({ error: 'gmail_send_failed', message: 'Gmail could not send this message.' });
+  }
+});
+
+app.post('/api/integrations/google/gmail/:threadId/read', { preHandler: app.authenticate, config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request, reply) => {
+  const params = z.object({ threadId: z.string().min(1).max(200).regex(/^[A-Za-z0-9_-]+$/) }).safeParse(request.params);
+  if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Invalid Gmail thread.' });
+  try {
+    const accessToken = await googleAccessToken(request.user.organizationId, request.user.sub);
+    if (!await gmailThreadIsInScope(request.user.organizationId, request.user.permissions?.scope, accessToken, params.data.threadId, (await getGoogleTokens(request.user.organizationId))?.email || '')) return reply.code(404).send({ error: 'not_found', message: 'Thread nao encontrado.' });
+    const response = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/threads/${encodeURIComponent(params.data.threadId)}/modify`, { method: 'POST', headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ removeLabelIds: ['UNREAD'] }), signal: AbortSignal.timeout(12_000) });
+    if (!response.ok) return reply.code(response.status === 403 ? 409 : 502).send({ error: 'gmail_read_update_failed', message: 'Gmail could not mark this thread as read.' });
+    return { data: { read: true } };
+  } catch { return reply.code(502).send({ error: 'gmail_unavailable', message: 'Gmail could not be reached.' }); }
+});
+
+app.post('/api/integrations/google/gmail/:threadId/reply', { preHandler: app.authenticate, bodyLimit: 12 * 1024 * 1024, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
+  const params = z.object({ threadId: z.string().min(1).max(200).regex(/^[A-Za-z0-9_-]+$/) }).safeParse(request.params);
+  const body = parseBody(z.object({ to: z.string().trim().email().max(254), subject: z.string().trim().min(1).max(250), text: z.string().trim().min(1).max(20_000), attachments: gmailAttachmentSchema, inReplyTo: z.string().trim().max(998).optional(), references: z.string().trim().max(998).optional() }), request.body, reply);
+  if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Invalid Gmail thread.' });
+  if (!body) return;
+  let attachments;
+  try { attachments = decodeGoogleMailAttachments(body.attachments); }
+  catch { return reply.code(400).send({ error: 'gmail_attachment_invalid', message: 'Anexos invalidos ou acima do limite de 8 MiB.' }); }
+  const scopedEmails = await gmailScopedContactEmails(request.user.organizationId, request.user.permissions?.scope);
+  if (scopedEmails && !scopedEmails.has(body.to.toLocaleLowerCase('en-US'))) return reply.code(403).send({ error: 'record_scope_denied', message: 'O destinatario nao pertence aos clientes atribuidos ao seu escopo.' });
+  try {
+    const accessToken = await googleAccessToken(request.user.organizationId, request.user.sub);
+    if (!await gmailThreadIsInScope(request.user.organizationId, request.user.permissions?.scope, accessToken, params.data.threadId, (await getGoogleTokens(request.user.organizationId))?.email || '')) return reply.code(404).send({ error: 'not_found', message: 'Thread nao encontrado.' });
+    const raw = buildGoogleRawMessage({ to: body.to, subject: body.subject, text: body.text, html: body.text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('\n', '<br>'), inReplyTo: body.inReplyTo, references: body.references, attachments });
+    const response = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', { method: 'POST', headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ threadId: params.data.threadId, raw }), signal: AbortSignal.timeout(12_000) });
+    const result = await response.json().catch(() => ({})) as { id?: string; threadId?: string };
+    if (!response.ok || !result.id) return reply.code(response.status === 403 ? 409 : 502).send({ error: 'gmail_send_failed', message: 'Gmail did not accept this reply.' });
+    await db.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'gmail_thread', action: 'reply_sent', payload: { threadId: params.data.threadId, messageId: result.id } });
+    return reply.code(201).send({ data: { id: result.id, threadId: result.threadId || params.data.threadId, sent: true } });
+  } catch (error) {
+    const status = (error as { statusCode?: number }).statusCode;
+    if (status === 409 || status === 503) return reply.code(status).send({ error: 'google_authorization_required', message: 'Reconnect Google Workspace to send mail.' });
+    return reply.code(502).send({ error: 'gmail_send_failed', message: 'Gmail could not send this reply.' });
+  }
+});
+
+app.get('/api/integrations/hostinger/inbox', { preHandler: app.authenticate }, async (request, reply) => {
+  const credentials = await getHostingerCredentials(request.user.organizationId);
+  if (!credentials) return reply.code(409).send({ error: 'hostinger_not_configured', message: 'Conecte uma caixa Hostinger em Integrações.' });
+  const query = z.object({ limit: z.coerce.number().int().min(1).max(30).default(20) }).safeParse(request.query);
+  if (!query.success) return reply.code(400).send({ error: 'validation_error', message: 'Limite de mensagens inválido.' });
+  const imap = new ImapFlow({ host: 'imap.hostinger.com', port: 993, secure: true, auth: { user: credentials.email, pass: credentials.password }, logger: false, connectionTimeout: 8_000, greetingTimeout: 8_000, socketTimeout: 12_000 });
+  try {
+    await imap.connect();
+    const lock = await imap.getMailboxLock('INBOX');
+    try {
+      const mailbox = imap.mailbox;
+      if (!mailbox) return { data: [] };
+      const start = Math.max(1, Number(mailbox.exists || 0) - query.data.limit + 1);
+      const rows = [];
+      if (mailbox.exists) for await (const item of imap.fetch(`${start}:*`, { uid: true, source: true, flags: true }, { uid: false })) {
+        if (!item.source) continue;
+        const parsed = await simpleParser(item.source);
+        const from = parsed.from?.text || '';
+        const email = parsed.from?.value?.[0]?.address || '';
+        const text = (parsed.text || '').slice(0, 20_000);
+        const date = (parsed.date || new Date()).toISOString();
+        rows.push({ id: `hostinger:${item.uid}`, threadId: `hostinger:${item.uid}`, provider: 'hostinger', name: from || email || '(remetente desconhecido)', company: from || email, email, subject: parsed.subject || '(sem assunto)', text, snippet: text.slice(0, 180), time: date, unread: item.flags?.has('\\Seen') ? 0 : 1, channel: 'E-mail', history: [{ id: String(item.uid), messageId: parsed.messageId || '', references: Array.isArray(parsed.references) ? parsed.references.join(' ') : parsed.references || '', from, to: credentials.email, subject: parsed.subject || '', text, date, time: date, side: email.toLowerCase() === credentials.email.toLowerCase() ? 'sent' : 'received' }] });
+      }
+      rows.sort((a, b) => Date.parse(b.time) - Date.parse(a.time));
+      const scopedEmails = await gmailScopedContactEmails(request.user.organizationId, request.user.permissions?.scope);
+      return { data: scopedEmails === null ? rows : rows.filter((row) => scopedEmails.has(row.email.toLowerCase())) };
+    } finally { lock.release(); }
+  } catch { return reply.code(502).send({ error: 'hostinger_inbox_unavailable', message: 'Não foi possível acessar a caixa Hostinger. Confira a conexão em Integrações.' }); }
+  finally { if (imap.usable) await imap.logout().catch(() => {}); else imap.close(); }
+});
+
+app.post('/api/integrations/hostinger/:uid/read', { preHandler: app.authenticate, config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request, reply) => {
+  const params = z.object({ uid: z.string().regex(/^[1-9]\d{0,11}$/) }).safeParse(request.params);
+  if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Mensagem Hostinger inválida.' });
+  const credentials = await getHostingerCredentials(request.user.organizationId);
+  if (!credentials) return reply.code(409).send({ error: 'hostinger_not_configured', message: 'Conecte uma caixa Hostinger em Integrações.' });
+  const imap = new ImapFlow({ host: 'imap.hostinger.com', port: 993, secure: true, auth: { user: credentials.email, pass: credentials.password }, logger: false, connectionTimeout: 8_000, greetingTimeout: 8_000, socketTimeout: 12_000 });
+  try {
+    await imap.connect();
+    const lock = await imap.getMailboxLock('INBOX');
+    try {
+      const message = await imap.fetchOne(Number(params.data.uid), { source: true }, { uid: true });
+      if (!message || !message.source) return reply.code(404).send({ error: 'not_found', message: 'Mensagem não encontrada.' });
+      const parsed = await simpleParser(message.source);
+      const scopedEmails = await gmailScopedContactEmails(request.user.organizationId, request.user.permissions?.scope);
+      const sender = parsed.from?.value?.[0]?.address?.toLowerCase() || '';
+      if (scopedEmails && !scopedEmails.has(sender)) return reply.code(404).send({ error: 'not_found', message: 'Mensagem não encontrada.' });
+      await imap.messageFlagsAdd(Number(params.data.uid), ['\\Seen'], { uid: true });
+    }
+    finally { lock.release(); }
+    return { data: { read: true } };
+  } catch { return reply.code(502).send({ error: 'hostinger_read_failed', message: 'Não foi possível atualizar a mensagem Hostinger.' }); }
+  finally { if (imap.usable) await imap.logout().catch(() => {}); else imap.close(); }
+});
+
+app.post('/api/integrations/hostinger/send', { preHandler: app.authenticate, bodyLimit: 12 * 1024 * 1024, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
+  const body = parseBody(z.object({ to: z.string().trim().email().max(254), subject: z.string().trim().min(1).max(250).refine((v) => !/[\\r\\n]/.test(v)), text: z.string().trim().min(1).max(20_000), inReplyTo: z.string().trim().max(998).optional().refine((v) => !v || !/[\\r\\n]/.test(v)), references: z.string().trim().max(998).optional().refine((v) => !v || !/[\\r\\n]/.test(v)), attachments: gmailAttachmentSchema }), request.body, reply);
+  if (!body) return;
+  let attachments;
+  try { attachments = decodeGoogleMailAttachments(body.attachments); }
+  catch { return reply.code(400).send({ error: 'mail_attachment_invalid', message: 'Anexos inválidos ou acima do limite de 8 MiB.' }); }
+  const credentials = await getHostingerCredentials(request.user.organizationId);
+  if (!credentials) return reply.code(409).send({ error: 'hostinger_not_configured', message: 'Conecte uma caixa Hostinger em Integrações.' });
+  const scopedEmails = await gmailScopedContactEmails(request.user.organizationId, request.user.permissions?.scope);
+  if (scopedEmails && !scopedEmails.has(body.to.toLowerCase())) return reply.code(403).send({ error: 'record_scope_denied', message: 'O destinatário não pertence aos clientes atribuídos ao seu escopo.' });
+  const smtp = nodemailer.createTransport({ host: 'smtp.hostinger.com', port: 465, secure: true, auth: { user: credentials.email, pass: credentials.password }, connectionTimeout: 8_000, greetingTimeout: 8_000, socketTimeout: 12_000 });
+  try {
+    const result = await smtp.sendMail({ from: credentials.email, to: body.to, subject: body.subject, text: body.text, inReplyTo: body.inReplyTo, references: body.references, attachments: attachments.map((item) => ({ filename: item.filename, contentType: item.mimeType, content: item.data })) });
+    await db.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'hostinger_email', action: 'message_sent', payload: { messageId: result.messageId, recipient: body.to } });
+    return reply.code(201).send({ data: { messageId: result.messageId, sent: true } });
+  } catch { return reply.code(502).send({ error: 'hostinger_send_failed', message: 'A Hostinger não aceitou o envio. Verifique a caixa em Integrações.' }); }
+  finally { smtp.close(); }
+});
+
 app.get('/api/integrations/status', { preHandler: app.authenticate }, async (request) => {
   const controls = await db.select().from(workspaceRecords).where(and(
     eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'integration-controls'), isNull(workspaceRecords.archivedAt),
   ));
   const controlByProvider = new Map(controls.map((row) => [String(row.data.provider), row.data as IntegrationControl]));
   const googleConnection = await findGoogleConnection(request.user.organizationId);
+  const hostingerConnection = await findHostingerConnection(request.user.organizationId);
   let googleEmail = '';
+  let hostingerEmail = '';
   if (typeof googleConnection?.data.sealedTokens === 'string') {
     try { googleEmail = openGoogleTokens(googleConnection.data.sealedTokens).email; } catch { /* corrupted credentials are shown as disconnected */ }
   }
-  const names: Record<IntegrationProvider, string> = { mercadopago: 'Mercado Pago', evolution: 'Evolution API', waha: 'WAHA', resend: 'Resend', google: 'Google Workspace', clicksign: 'Clicksign', github: 'GitHub', n8n: 'n8n', sentry: 'Sentry' };
+  if (typeof hostingerConnection?.data.sealedCredentials === 'string') {
+    try { hostingerEmail = openHostingerCredentials(hostingerConnection.data.sealedCredentials).email; } catch { /* corrupted credentials are shown as disconnected */ }
+  }
+  const names: Record<IntegrationProvider, string> = { mercadopago: 'Mercado Pago', evolution: 'Evolution API', waha: 'WAHA', resend: 'Resend', hostinger: 'Hostinger E-mail', google: 'Google Workspace', clicksign: 'Clicksign', github: 'GitHub', n8n: 'n8n', sentry: 'Sentry' };
   return { data: integrationProviders.map((provider) => {
     const control = controlByProvider.get(provider);
-    const configured = integrationConfigured(provider);
-    return { name: names[provider], provider, configured, enabled: configured && control?.enabled !== false, ...(provider === 'google' && googleEmail ? { accountEmail: googleEmail } : {}), lastTestStatus: control?.lastTestStatus || null, lastTestMessage: control?.lastTestMessage || null, testedAt: control?.testedAt || null };
+    const configured = provider === 'hostinger' ? Boolean(hostingerEmail) : integrationConfigured(provider);
+    const accountEmail = provider === 'google' ? googleEmail : provider === 'hostinger' ? hostingerEmail : '';
+    return { name: names[provider], provider, configured, enabled: configured && control?.enabled !== false, ...(accountEmail ? { accountEmail } : {}), lastTestStatus: control?.lastTestStatus || null, lastTestMessage: control?.lastTestMessage || null, testedAt: control?.testedAt || null };
   }) };
+});
+
+app.post('/api/integrations/hostinger/configure', { preHandler: app.authenticate, config: { rateLimit: { max: 5, timeWindow: '15 minutes' } } }, async (request, reply) => {
+  const body = parseBody(z.object({ email: z.string().trim().min(3).max(254), password: z.string().min(1).max(256) }), request.body, reply);
+  if (!body) return;
+  let credentials: HostingerCredentials;
+  try { credentials = normalizeHostingerCredentials(body); }
+  catch { return reply.code(400).send({ error: 'hostinger_credentials_invalid', message: 'Informe um e-mail válido e a senha da caixa postal.' }); }
+  try { await verifyHostingerMailbox(credentials); }
+  catch { return reply.code(502).send({ error: 'hostinger_auth_failed', message: 'Não foi possível autenticar no IMAP e SMTP da Hostinger. Confira o e-mail e a senha da caixa postal.' }); }
+  await saveHostingerCredentials(request.user.organizationId, request.user.sub, credentials);
+  await saveIntegrationControl(request.user.organizationId, request.user.sub, 'hostinger', { enabled: true, lastTestStatus: 'connected', lastTestMessage: `Conta Hostinger conectada: ${credentials.email}.`, testedAt: new Date().toISOString() });
+  await db.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'integration', action: 'hostinger_connected', payload: { provider: 'hostinger', accountEmail: credentials.email } });
+  return { data: { provider: 'hostinger', accountEmail: credentials.email, connected: true } };
+});
+
+app.delete('/api/integrations/hostinger/connection', { preHandler: app.authenticate }, async (request) => {
+  const current = await findHostingerConnection(request.user.organizationId);
+  if (current) await db.update(workspaceRecords).set({ archivedAt: new Date(), updatedAt: new Date() }).where(eq(workspaceRecords.id, current.id));
+  await saveIntegrationControl(request.user.organizationId, request.user.sub, 'hostinger', { enabled: false, lastTestStatus: null, lastTestMessage: null, testedAt: null });
+  await db.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'integration', action: 'hostinger_credentials_removed', payload: { provider: 'hostinger' } });
+  return { data: { provider: 'hostinger', removed: true } };
 });
 
 app.post('/api/integrations/:provider/connection', { preHandler: app.authenticate }, async (request, reply) => {
@@ -752,7 +1044,7 @@ app.post('/api/integrations/:provider/connection', { preHandler: app.authenticat
   if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Integração inválida.' });
   const body = parseBody(z.object({ enabled: z.boolean() }), request.body, reply); if (!body) return;
   const provider = params.data.provider;
-  if (body.enabled && !integrationConfigured(provider)) return reply.code(409).send({ error: 'integration_not_configured', message: 'Configure as credenciais no Coolify antes de reativar esta integração.' });
+  if (body.enabled && !(provider === 'hostinger' ? Boolean(await getHostingerCredentials(request.user.organizationId)) : integrationConfigured(provider))) return reply.code(409).send({ error: 'integration_not_configured', message: 'Configure as credenciais no Coolify antes de reativar esta integração.' });
   if (!body.enabled && provider === 'waha' && await isIntegrationEnabled(request.user.organizationId, 'waha')) {
     const sessions = await db.select().from(workspaceRecords).where(and(eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'whatsapp-sessions'), isNull(workspaceRecords.archivedAt)));
     const remote = await wahaRequest<Array<Record<string, any>>>('/api/sessions');
@@ -820,6 +1112,13 @@ app.post('/api/integrations/:provider/test', { preHandler: app.authenticate, con
     return { data: { status, message } };
   };
   try {
+    if (provider === 'hostinger') {
+      const credentials = await getHostingerCredentials(request.user.organizationId);
+      if (!credentials) return unavailable('Conecte a caixa de e-mail Hostinger neste workspace.');
+      try { await verifyHostingerMailbox(credentials); }
+      catch { return failed('Hostinger recusou a autenticação IMAP/SMTP. Confira se a senha da caixa postal ainda é válida.'); }
+      return tested('connected', `Caixa Hostinger autenticada em IMAP e SMTP: ${credentials.email}. Nenhuma mensagem foi enviada.`);
+    }
     if (provider === 'mercadopago') {
       if (!env.MERCADOPAGO_ACCESS_TOKEN) return unavailable('Configure MERCADOPAGO_ACCESS_TOKEN nas variáveis do serviço API no Coolify.');
       const methods = await mercadoPago<Array<{ id: string }>>('/v1/payment_methods');
@@ -1075,7 +1374,7 @@ async function processN8nEventDeliveries() {
         continue;
       }
       if (terminalError || n8nDeliveryExhausted(delivery.attempts)) {
-        await db.update(n8nEventDeliveries).set({ discardedAt: updatedAt, record: {}, lastError: terminalError || 'delivery_attempts_exhausted', updatedAt })
+        await db.update(n8nEventDeliveries).set({ discardedAt: updatedAt, lastError: terminalError || 'delivery_attempts_exhausted', updatedAt })
           .where(eq(n8nEventDeliveries.id, delivery.id));
         app.log.warn({ eventKey: delivery.eventKey, reason: terminalError || 'delivery_attempts_exhausted' }, 'n8n event delivery discarded');
         continue;
@@ -1220,6 +1519,56 @@ app.post('/api/workspace/automations/:id/n8n-workflow', { preHandler: app.authen
     const message = statusCode === 403 ? 'A chave de API precisa de permissões credential:list, credential:create, credential:update e workflow:create.' : providerMessage ?? `Falha ao ${stage}. Verifique os logs da API no Coolify para o diagnóstico.`;
     return reply.code(statusCode).send({ error: 'n8n_workflow_create_failed', message });
   }
+});
+
+app.get('/api/integrations/n8n/deliveries', { preHandler: app.authenticate, config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request) => {
+  const rows = await db.select({
+    id: n8nEventDeliveries.id, automationId: n8nEventDeliveries.automationId, eventKey: n8nEventDeliveries.eventKey,
+    attempts: n8nEventDeliveries.attempts, nextAttemptAt: n8nEventDeliveries.nextAttemptAt,
+    deliveredAt: n8nEventDeliveries.deliveredAt, discardedAt: n8nEventDeliveries.discardedAt,
+    lastError: n8nEventDeliveries.lastError, createdAt: n8nEventDeliveries.createdAt, record: n8nEventDeliveries.record,
+  }).from(n8nEventDeliveries).where(eq(n8nEventDeliveries.organizationId, request.user.organizationId))
+    .orderBy(desc(n8nEventDeliveries.createdAt)).limit(50);
+  const automationIds = [...new Set(rows.map((row) => row.automationId))];
+  const automations = automationIds.length ? await db.select({ id: workspaceRecords.id, name: sql<string>`coalesce(${workspaceRecords.data}->>'name', 'Automação removida')` })
+    .from(workspaceRecords).where(and(eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'automations'), inArray(workspaceRecords.id, automationIds))) : [];
+  const names = new Map(automations.map((item) => [item.id, item.name]));
+  return { data: rows.map((row) => ({ id: row.id, automationId: row.automationId, eventKey: row.eventKey, attempts: row.attempts, nextAttemptAt: row.nextAttemptAt, deliveredAt: row.deliveredAt, discardedAt: row.discardedAt, lastError: row.lastError, createdAt: row.createdAt, automationName: names.get(row.automationId) || 'Automação removida', status: row.deliveredAt ? 'delivered' : row.discardedAt ? 'discarded' : 'pending', retryable: n8nDeliveryCanRetry(row) })) };
+});
+
+app.post('/api/integrations/n8n/deliveries/:id/retry', { preHandler: app.authenticate, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
+  const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
+  if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Identificador de entrega inválido.' });
+  const now = new Date();
+  const result = await db.transaction(async (tx) => {
+    const [row] = await tx.select().from(n8nEventDeliveries).where(and(eq(n8nEventDeliveries.id, params.data.id), eq(n8nEventDeliveries.organizationId, request.user.organizationId))).limit(1).for('update', { skipLocked: true });
+    if (!row) return 'not_found' as const;
+    if (!n8nDeliveryCanRetry(row)) return 'not_retryable' as const;
+    await tx.update(n8nEventDeliveries).set({ attempts: 0, discardedAt: null, lastError: null, nextAttemptAt: now, updatedAt: now }).where(eq(n8nEventDeliveries.id, row.id));
+    await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'n8n_delivery', entityId: row.id, action: 'manual_retry', payload: { eventKey: row.eventKey } });
+    return 'queued' as const;
+  });
+  if (result === 'not_found') return reply.code(404).send({ error: 'delivery_not_found', message: 'Entrega não encontrada neste workspace.' });
+  if (result === 'not_retryable') return reply.code(409).send({ error: 'delivery_not_retryable', message: 'Esta entrega não pode ser reprocessada: o evento ainda está ativo, já foi entregue ou os dados foram descartados.' });
+  void processN8nEventDeliveries();
+  return { data: { id: params.data.id, status: 'pending' } };
+});
+
+app.post('/api/integrations/n8n/deliveries/:id/discard', { preHandler: app.authenticate, config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {
+  const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
+  if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Identificador de entrega inválido.' });
+  const result = await db.transaction(async (tx) => {
+    const [row] = await tx.select().from(n8nEventDeliveries).where(and(eq(n8nEventDeliveries.id, params.data.id), eq(n8nEventDeliveries.organizationId, request.user.organizationId))).limit(1).for('update', { skipLocked: true });
+    if (!row) return 'not_found' as const;
+    if (row.deliveredAt || row.discardedAt) return 'not_pending' as const;
+    const now = new Date();
+    await tx.update(n8nEventDeliveries).set({ discardedAt: now, record: {}, lastError: row.lastError || 'manually_discarded', updatedAt: now }).where(eq(n8nEventDeliveries.id, row.id));
+    await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'n8n_delivery', entityId: row.id, action: 'manual_discard', payload: { eventKey: row.eventKey } });
+    return 'discarded' as const;
+  });
+  if (result === 'not_found') return reply.code(404).send({ error: 'delivery_not_found', message: 'Entrega não encontrada neste workspace.' });
+  if (result === 'not_pending') return reply.code(409).send({ error: 'delivery_not_pending', message: 'Somente entregas pendentes podem ser descartadas.' });
+  return { data: { id: params.data.id, status: 'discarded' } };
 });
 
 app.get('/api/integrations/n8n/workflows', { preHandler: app.authenticate, config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {
@@ -1372,16 +1721,161 @@ app.post('/api/integrations/google/drive/upload', { bodyLimit: 12 * 1024 * 1024,
   }
 });
 
+app.post('/api/integrations/google/drive/:fileId/share-for-portal', { preHandler: app.authenticate, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
+  const params = z.object({ fileId: z.string().min(5).max(200).regex(/^[A-Za-z0-9_-]+$/) }).safeParse(request.params);
+  const body = parseBody(z.object({ confirmPublicAccess: z.literal(true) }), request.body, reply);
+  if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Invalid Drive file ID.' });
+  if (!body) return;
+  if (!await isIntegrationEnabled(request.user.organizationId, 'google')) return reply.code(409).send({ error: 'integration_disconnected', message: 'Reconnect Google Workspace before sharing this file.' });
+  let createdPermissionId = '';
+  try {
+    const accessToken = await googleAccessToken(request.user.organizationId, request.user.sub);
+    const base = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(params.data.fileId)}/permissions`;
+    const headers = { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' };
+    const listResponse = await fetch(`${base}?fields=permissions(id,type,role)&supportsAllDrives=true`, { headers, signal: AbortSignal.timeout(12_000) });
+    const permissions = await listResponse.json().catch(() => ({})) as { permissions?: Array<{ id?: string; type?: string; role?: string }> };
+    if (!listResponse.ok) return reply.code(listResponse.status === 404 ? 404 : listResponse.status === 403 ? 409 : 502).send({ error: 'drive_permissions_unavailable', message: listResponse.status === 403 ? 'The Google account or Workspace policy does not allow sharing this file.' : 'Drive could not verify file permissions.' });
+    let permission = permissions.permissions?.find((item) => item.type === 'anyone' && item.role === 'reader');
+    if (!permission) {
+      const created = await fetch(`${base}?fields=id,type,role&supportsAllDrives=true&sendNotificationEmail=false`, { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'anyone', role: 'reader', allowFileDiscovery: false }), signal: AbortSignal.timeout(12_000) });
+      permission = await created.json().catch(() => ({})) as { id?: string; type?: string; role?: string };
+      if (!created.ok || permission.type !== 'anyone' || permission.role !== 'reader') return reply.code(created.status === 403 ? 409 : 502).send({ error: 'drive_public_share_failed', message: 'Google Drive did not confirm view-only access for the portal.' });
+      createdPermissionId = permission.id || '';
+    }
+    await db.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'drive_file', action: 'shared_for_client_portal', payload: { fileId: params.data.fileId, permissionType: permission.type, role: permission.role, permissionId: createdPermissionId || null } });
+    return { data: { shared: true, created: Boolean(createdPermissionId), permissionId: createdPermissionId || null, url: `https://drive.google.com/file/d/${encodeURIComponent(params.data.fileId)}/view` } };
+  } catch (error) {
+    if (createdPermissionId) {
+      try { const token = await googleAccessToken(request.user.organizationId, request.user.sub); await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(params.data.fileId)}/permissions/${encodeURIComponent(createdPermissionId)}?supportsAllDrives=true`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(12_000) }); } catch { /* keep the original safe error */ }
+    }
+    const status = (error as { statusCode?: number }).statusCode;
+    if (status === 409 || status === 503) return reply.code(status).send({ error: 'google_authorization_required', message: 'Authorize Google Drive in Integrations to share portal files.' });
+    return reply.code(502).send({ error: 'drive_permissions_unavailable', message: 'Google Drive could not update this file permission.' });
+  }
+});
+
+app.delete('/api/integrations/google/drive/:fileId/share-for-portal', { preHandler: app.authenticate, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
+  const params = z.object({ fileId: z.string().min(5).max(200).regex(/^[A-Za-z0-9_-]+$/) }).safeParse(request.params);
+  const body = parseBody(z.object({ permissionId: z.string().min(1).max(200).regex(/^[A-Za-z0-9_-]+$/) }), request.body, reply);
+  if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Invalid Drive file ID.' });
+  if (!body) return;
+  const [grant] = await db.select({ id: activityEvents.id }).from(activityEvents).where(and(
+    eq(activityEvents.organizationId, request.user.organizationId), eq(activityEvents.entityType, 'drive_file'), eq(activityEvents.action, 'shared_for_client_portal'),
+    sql`${activityEvents.payload}->>'fileId' = ${params.data.fileId}`, sql`${activityEvents.payload}->>'permissionId' = ${body.permissionId}`,
+  )).limit(1);
+  if (!grant) return reply.code(404).send({ error: 'permission_not_owned', message: 'This public permission was not created by Nexo for this workspace.' });
+  try {
+    const accessToken = await googleAccessToken(request.user.organizationId, request.user.sub);
+    const response = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(params.data.fileId)}/permissions/${encodeURIComponent(body.permissionId)}?supportsAllDrives=true`, { method: 'DELETE', headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(12_000) });
+    if (!response.ok && response.status !== 404) return reply.code(response.status === 403 ? 409 : 502).send({ error: 'drive_permission_revoke_failed', message: 'Google Drive could not revoke public access.' });
+    await db.update(activityEvents).set({ action: 'portal_share_revoked', payload: { fileId: params.data.fileId, permissionId: body.permissionId } }).where(eq(activityEvents.id, grant.id));
+    return { data: { revoked: true } };
+  } catch {
+    return reply.code(502).send({ error: 'drive_permission_revoke_failed', message: 'Google Drive could not revoke public access.' });
+  }
+});
+
+app.get('/api/team/users', { preHandler: app.authenticate }, async (request, reply) => {
+  if (request.user.role !== 'owner') return reply.code(403).send({ error: 'owner_required', message: 'Somente a pessoa proprietaria pode administrar os acessos.' });
+  const rows = await db.select({ id: users.id, name: users.name, email: users.email, role: users.role, active: users.active, permissions: users.permissions, createdAt: users.createdAt }).from(users).where(eq(users.organizationId, request.user.organizationId)).orderBy(asc(users.createdAt));
+  return { data: rows };
+});
+
+app.patch('/api/team/users/:id/permissions', { preHandler: app.authenticate }, async (request, reply) => {
+  if (request.user.role !== 'owner') return reply.code(403).send({ error: 'owner_required', message: 'Somente a pessoa proprietaria pode alterar permissoes.' });
+  const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
+  const permission = z.object({ read: z.boolean(), write: z.boolean(), delete: z.boolean().optional() }).strict();
+  const permissionsSchema = z.object({ permissions: z.object({
+    crm: permission.optional(), delivery: permission.optional(), support: permission.optional(), finance: permission.optional(), sites: permission.optional(),
+    automations: permission.optional(), integrations: permission.optional(), settings: permission.optional(), reports: permission.optional(),
+    scope: z.object({ mode: z.enum(['all', 'selected']), clientIds: z.array(z.string().uuid()).max(500), projectIds: z.array(z.string().uuid()).max(500) }).strict().optional(),
+  }).strict().superRefine((value, context) => {
+    for (const [module, access] of Object.entries(value)) {
+      if (module === 'scope' || !access || typeof access !== 'object' || !('read' in access)) continue;
+      if (access?.write && !access.read) context.addIssue({ code: 'custom', path: [module, 'write'], message: 'Edicao exige acesso de leitura.' });
+      if (access?.delete && !access.read) context.addIssue({ code: 'custom', path: [module, 'delete'], message: 'Exclusao exige acesso de leitura.' });
+    }
+  }) }).strict();
+  const body = parseBody(permissionsSchema, request.body, reply);
+  if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Usuario invalido.' });
+  if (!body) return;
+  if (params.data.id === request.user.sub) return reply.code(409).send({ error: 'cannot_change_owner_permissions', message: 'As permissoes da conta proprietaria nao podem ser reduzidas.' });
+  const [updated] = await db.update(users).set({ permissions: body.permissions }).where(and(
+    eq(users.id, params.data.id), eq(users.organizationId, request.user.organizationId), sql`${users.role} <> 'owner'`,
+  )).returning({ id: users.id, permissions: users.permissions });
+  if (!updated) return reply.code(404).send({ error: 'team_user_not_found', message: 'Usuario nao encontrado neste workspace.' });
+  await db.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'team-user', entityId: updated.id, action: 'permissions_updated', payload: { permissions: updated.permissions } });
+  return { data: updated };
+});
+
+app.post('/api/team/invites', { preHandler: app.authenticate, config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (request, reply) => {
+  if (request.user.role !== 'owner') return reply.code(403).send({ error: 'owner_required', message: 'Somente a pessoa proprietaria pode convidar usuarios.' });
+  const body = parseBody(z.object({ name: z.string().trim().min(2).max(120), email: z.string().trim().email().max(254).transform((value) => value.toLowerCase()), role: z.enum(['admin', 'member']) }).strict(), request.body, reply);
+  if (!body) return;
+  const existing = await db.select().from(users).where(sql`lower(${users.email}) = ${body.email}`).limit(1);
+  const existingUser = existing[0];
+  if (existingUser && (existingUser.organizationId !== request.user.organizationId || existingUser.role === 'owner' || existingUser.active)) return reply.code(409).send({ error: 'team_user_exists', message: 'Este e-mail ja tem uma conta ativa, pertence a outro workspace ou esta reservado a uma conta proprietaria.' });
+  const inviteVersion = (existingUser?.inviteVersion ?? 0) + 1;
+  const invite = await db.transaction(async (tx) => {
+    const passwordHash = await argon2.hash(randomBytes(32).toString('base64url'));
+    const [user] = existingUser
+      ? await tx.update(users).set({ name: body.name, role: body.role, permissions: null, active: false, inviteVersion, passwordHash }).where(and(eq(users.id, existingUser.id), eq(users.organizationId, request.user.organizationId), eq(users.active, false), eq(users.inviteVersion, existingUser.inviteVersion))).returning({ id: users.id, name: users.name, email: users.email, role: users.role, active: users.active, createdAt: users.createdAt })
+      : await tx.insert(users).values({ organizationId: request.user.organizationId, name: body.name, email: body.email, role: body.role, active: false, inviteVersion, passwordHash }).returning({ id: users.id, name: users.name, email: users.email, role: users.role, active: users.active, createdAt: users.createdAt });
+    if (!user) return undefined;
+    await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'team-user', entityId: user.id, action: existingUser ? 'invite_renewed' : 'invited', payload: { role: body.role, email: user.email } });
+    return user;
+  });
+  if (!invite) return reply.code(409).send({ error: 'team_user_changed', message: 'A conta mudou enquanto o convite era criado. Atualize a lista e tente novamente.' });
+  const token = app.jwt.sign({ sub: invite.id, organizationId: request.user.organizationId, role: body.role, purpose: 'team-invite', inviteVersion }, { expiresIn: '48h' });
+  const appOrigin = env.APP_ORIGIN.split(',')[0]!.trim().replace(/\/+$/, '');
+  return reply.code(201).send({ data: invite, inviteUrl: `${appOrigin}/#invite=${encodeURIComponent(token)}`, expiresInHours: 48 });
+});
+
+app.post('/api/team/users/:id/deactivate', { preHandler: app.authenticate }, async (request, reply) => {
+  if (request.user.role !== 'owner') return reply.code(403).send({ error: 'owner_required', message: 'Somente a pessoa proprietaria pode suspender acessos.' });
+  const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
+  if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Usuario invalido.' });
+  if (params.data.id === request.user.sub) return reply.code(409).send({ error: 'cannot_deactivate_self', message: 'A conta proprietaria atual nao pode suspender o proprio acesso.' });
+  const [updated] = await db.update(users).set({ active: false, inviteVersion: sql`${users.inviteVersion} + 1` }).where(and(eq(users.id, params.data.id), eq(users.organizationId, request.user.organizationId), sql`${users.role} <> 'owner'`)).returning({ id: users.id, name: users.name, email: users.email, role: users.role, active: users.active });
+  if (!updated) return reply.code(404).send({ error: 'team_user_not_found', message: 'Usuario nao encontrado neste workspace.' });
+  await db.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'team-user', entityId: updated.id, action: 'deactivated', payload: { email: updated.email } });
+  return { data: updated };
+});
+
+app.post('/api/auth/accept-invite', { config: { rateLimit: { max: 5, timeWindow: '15 minutes' } } }, async (request, reply) => {
+  const body = parseBody(z.object({ token: z.string().min(30).max(4096), password: z.string().min(12).max(128) }).strict(), request.body, reply);
+  if (!body) return;
+  let claims: typeof request.user;
+  try { claims = app.jwt.verify(body.token); }
+  catch { return reply.code(400).send({ error: 'invite_invalid', message: 'O convite expirou ou nao e valido. Peça um novo convite a pessoa proprietaria.' }); }
+  if (claims.purpose !== 'team-invite' || typeof claims.inviteVersion !== 'number' || claims.inviteVersion < 1 || !['admin', 'member'].includes(claims.role)) return reply.code(400).send({ error: 'invite_invalid', message: 'Este link nao e um convite de equipe valido.' });
+  const inviteVersion = claims.inviteVersion;
+  const passwordHash = await argon2.hash(body.password);
+  const activated = await db.transaction(async (tx) => {
+    const [user] = await tx.select().from(users).where(and(eq(users.id, claims.sub), eq(users.organizationId, claims.organizationId), eq(users.active, false), eq(users.role, claims.role), eq(users.inviteVersion, inviteVersion))).limit(1);
+    if (!user) return undefined;
+    const [updated] = await tx.update(users).set({ passwordHash, active: true }).where(and(eq(users.id, user.id), eq(users.active, false), eq(users.inviteVersion, inviteVersion))).returning({ id: users.id, name: users.name, email: users.email, role: users.role, organizationId: users.organizationId, permissions: users.permissions });
+    if (updated) await tx.insert(activityEvents).values({ organizationId: user.organizationId, actorUserId: user.id, entityType: 'team-user', entityId: user.id, action: 'invite_accepted', payload: { role: user.role } });
+    return updated;
+  });
+  if (!activated) return reply.code(409).send({ error: 'invite_already_used', message: 'Este convite ja foi usado, revogado ou substituido.' });
+  const token = app.jwt.sign({ sub: activated.id, organizationId: activated.organizationId, role: activated.role });
+  reply.setCookie('nexo_session', token, { path: '/', httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict', maxAge: 8 * 60 * 60 });
+  const [organization] = await db.select({ id: organizations.id, name: organizations.name }).from(organizations).where(eq(organizations.id, activated.organizationId)).limit(1);
+  return { user: activated, organization };
+});
+
 app.post('/api/auth/login', { config: { rateLimit: { max: 5, timeWindow: '15 minutes' } } }, async (request, reply) => {
   const body = parseBody(loginSchema, request.body, reply); if (!body) return;
   const [user] = await db.select().from(users).where(and(
-    eq(users.email, body.email), eq(users.active, true), sql`lower(${users.email}) = ${env.OWNER_EMAIL}`,
+    eq(users.email, body.email), eq(users.active, true), or(sql`lower(${users.email}) = ${env.OWNER_EMAIL}`, and(sql`${users.role} IN ('admin', 'member')`, sql`${users.inviteVersion} > 0`)),
   )).limit(1);
   if (!user || !(await argon2.verify(user.passwordHash, body.password))) return reply.code(401).send({ error: 'invalid_credentials', message: 'E-mail ou senha incorretos.' });
-  const token = app.jwt.sign({ sub: user.id, organizationId: user.organizationId, role: 'owner' });
+  if ((user.role === 'owner' && (user.id !== ownerAccountId || user.email.toLowerCase() !== env.OWNER_EMAIL)) || (user.role !== 'owner' && user.inviteVersion < 1)) return reply.code(401).send({ error: 'invalid_credentials', message: 'E-mail ou senha incorretos.' });
+  const token = app.jwt.sign({ sub: user.id, organizationId: user.organizationId, role: user.role });
   reply.setCookie('nexo_session', token, { path: '/', httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict', maxAge: 8 * 60 * 60 });
   const [organization] = await db.select({ id: organizations.id, name: organizations.name }).from(organizations).where(eq(organizations.id, user.organizationId)).limit(1);
-  return { user: { id: user.id, name: user.name, email: user.email, role: 'owner', organizationId: user.organizationId }, organization };
+  return { user: { id: user.id, name: user.name, email: user.email, role: user.role, organizationId: user.organizationId, permissions: user.permissions }, organization };
 });
 
 app.post('/api/auth/logout', async (_request, reply) => {
@@ -1390,7 +1884,7 @@ app.post('/api/auth/logout', async (_request, reply) => {
 });
 
 app.get('/api/auth/me', { preHandler: app.authenticate }, async (request, reply) => {
-  const [user] = await db.select({ id: users.id, name: users.name, email: users.email, role: users.role, organizationId: users.organizationId }).from(users).where(and(eq(users.id, request.user.sub), eq(users.active, true), sql`lower(${users.email}) = ${env.OWNER_EMAIL}`)).limit(1);
+  const [user] = await db.select({ id: users.id, name: users.name, email: users.email, role: users.role, organizationId: users.organizationId, permissions: users.permissions }).from(users).where(and(eq(users.id, request.user.sub), eq(users.organizationId, request.user.organizationId), eq(users.active, true))).limit(1);
   if (!user) return reply.code(401).send({ error: 'unauthorized', message: 'Conta indisponível.' });
   const [organization] = await db.select({ id: organizations.id, name: organizations.name }).from(organizations).where(eq(organizations.id, user.organizationId)).limit(1);
   return { user, organization };
@@ -1428,7 +1922,50 @@ app.get('/api/notifications', { preHandler: app.authenticate }, async (request) 
   }).from(activityEvents).where(eq(activityEvents.organizationId, request.user.organizationId))
     .orderBy(desc(activityEvents.createdAt)).limit(200);
   const readAt = owner?.readAt ?? new Date(0);
-  const data = rows.flatMap((event) => {
+  let visibleRows = rows.filter((event) => {
+    const path = notificationAccessPath(event.entityType);
+    return Boolean(path && isWorkspaceRequestAllowed(request.user.role, 'GET', path, request.user.permissions));
+  });
+  const scope = request.user.permissions?.scope;
+  if (scope?.mode === 'selected') {
+    const billingClientIds = await billingClientIdsForScope(request.user.organizationId, scope) || [];
+    const workspaceGroups = new Map<string, Set<string>>();
+    for (const event of visibleRows) {
+      if (!event.entityId) continue;
+      const resource = event.entityType === 'client' ? '' : event.entityType;
+      if (resource === 'clients' || resource === 'projects' || clientLinkedWorkspaceResources.includes(resource as typeof clientLinkedWorkspaceResources[number])) {
+        if (!workspaceGroups.has(resource)) workspaceGroups.set(resource, new Set());
+        workspaceGroups.get(resource)!.add(event.entityId);
+      }
+    }
+    const workspaceRows = await Promise.all([...workspaceGroups].map(async ([resource, ids]) => {
+      const records = await db.select().from(workspaceRecords).where(and(
+        eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, resource),
+        inArray(workspaceRecords.id, [...ids]),
+      ));
+      return [resource, new Map(records.map((record) => [record.id, record]))] as const;
+    }));
+    const scopedRecords = new Map(workspaceRows);
+    const orderIds = visibleRows.filter((event) => event.entityType === 'billing_order').map((event) => event.entityId).filter((id): id is string => Boolean(id));
+    const subscriptionIds = visibleRows.filter((event) => event.entityType === 'billing_subscription').map((event) => event.entityId).filter((id): id is string => Boolean(id));
+    const [orders, subscriptions] = await Promise.all([
+      orderIds.length ? db.select({ id: billingOrders.id, workspaceClientId: billingOrders.workspaceClientId }).from(billingOrders).where(and(eq(billingOrders.organizationId, request.user.organizationId), inArray(billingOrders.id, orderIds))) : Promise.resolve([]),
+      subscriptionIds.length ? db.select({ id: billingSubscriptions.id, workspaceClientId: billingSubscriptions.workspaceClientId }).from(billingSubscriptions).where(and(eq(billingSubscriptions.organizationId, request.user.organizationId), inArray(billingSubscriptions.id, subscriptionIds))) : Promise.resolve([]),
+    ]);
+    const billingClients = new Map([...orders, ...subscriptions].map((record) => [record.id, record.workspaceClientId]));
+    visibleRows = visibleRows.filter((event) => {
+      if (!event.entityId) return false;
+      if (event.entityType === 'client') return false;
+      if (event.entityType === 'billing_order' || event.entityType === 'billing_subscription') return billingClientIds.includes(String(billingClients.get(event.entityId) || ''));
+      const resource = event.entityType;
+      if (resource === 'clients' || resource === 'projects' || clientLinkedWorkspaceResources.includes(resource as typeof clientLinkedWorkspaceResources[number])) {
+        const record = scopedRecords.get(resource)?.get(event.entityId);
+        return Boolean(record && recordMatchesWorkspaceScope(resource, record.id, record.data, scope));
+      }
+      return true;
+    });
+  }
+  const data = visibleRows.flatMap((event) => {
     const label = notificationLabels[event.entityType];
     const route = notificationRoutes[event.entityType];
     const title = resolveActivityNotificationTitle(event.entityType, event.action);
@@ -1464,10 +2001,28 @@ app.post('/api/notifications/read', { preHandler: app.authenticate }, async (req
   return { data: { readAt: owner?.readAt ?? readThrough } };
 });
 
+async function billingClientIdsForScope(organizationId: string, scope?: WorkspaceRecordScope | null) {
+  if (!scope || scope.mode !== 'selected') return null;
+  let projects: Array<{ id: string; data: Record<string, unknown> }> = [];
+  if (scope.projectIds.length) {
+    projects = await db.select({ id: workspaceRecords.id, data: workspaceRecords.data }).from(workspaceRecords).where(and(
+      eq(workspaceRecords.organizationId, organizationId), eq(workspaceRecords.resource, 'projects'), isNull(workspaceRecords.archivedAt),
+      inArray(workspaceRecords.id, scope.projectIds),
+    ));
+  }
+  return billingClientIdsForWorkspaceScope(scope, projects);
+}
+
+function billingClientScopeWhere(clientColumn: typeof billingOrders.workspaceClientId | typeof billingSubscriptions.workspaceClientId, clientIds: string[] | null) {
+  if (clientIds === null) return undefined;
+  return clientIds.length ? inArray(clientColumn, clientIds) : sql`false`;
+}
+
 app.get('/api/billing/orders', { preHandler: app.authenticate }, async (request, reply) => {
   const query = z.object({ limit: z.coerce.number().int().min(1).max(200).default(100), offset: z.coerce.number().int().min(0).default(0) }).safeParse(request.query);
   if (!query.success) return reply.code(400).send({ error: 'validation_error', message: 'Invalid billing pagination.' });
-  const where = eq(billingOrders.organizationId, request.user.organizationId);
+  const clientIds = await billingClientIdsForScope(request.user.organizationId, request.user.permissions?.scope);
+  const where = and(eq(billingOrders.organizationId, request.user.organizationId), billingClientScopeWhere(billingOrders.workspaceClientId, clientIds));
   const [rows, count] = await Promise.all([
     db.select().from(billingOrders).where(where).orderBy(desc(billingOrders.createdAt)).limit(query.data.limit).offset(query.data.offset),
     db.select({ count: sql<number>`count(*)::int` }).from(billingOrders).where(where),
@@ -1477,14 +2032,20 @@ app.get('/api/billing/orders', { preHandler: app.authenticate }, async (request,
 
 app.post('/api/billing/orders', { preHandler: app.authenticate, config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {
   const body = parseBody(paymentOrderSchema, request.body, reply); if (!body) return;
+  const scopedClientIds = await billingClientIdsForScope(request.user.organizationId, request.user.permissions?.scope);
+  if (scopedClientIds && (!body.workspaceClientId || !scopedClientIds.includes(body.workspaceClientId))) return reply.code(403).send({ error: 'record_scope_denied', message: 'Selecione um cliente atribuido ao seu escopo antes de criar a cobranca.' });
   if (!await isIntegrationEnabled(request.user.organizationId, 'mercadopago')) return reply.code(409).send({ error: 'integration_disconnected', message: 'Mercado Pago está desconectado no Nexo. Reative em Integrações para usar pagamentos.' });
   if (!env.MERCADOPAGO_ACCESS_TOKEN) return reply.code(503).send({ error: 'payment_provider_unavailable', message: 'Mercado Pago ainda não está configurado no servidor.' });
   if (body.clientId) {
     const [client] = await db.select({ id: clients.id }).from(clients).where(and(eq(clients.id, body.clientId), eq(clients.organizationId, request.user.organizationId))).limit(1);
     if (!client) return reply.code(404).send({ error: 'client_not_found', message: 'Cliente não encontrado nesta empresa.' });
   }
+  if (body.workspaceClientId) {
+    const [client] = await db.select({ id: workspaceRecords.id }).from(workspaceRecords).where(and(eq(workspaceRecords.id, body.workspaceClientId), eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'clients'), isNull(workspaceRecords.archivedAt))).limit(1);
+    if (!client) return reply.code(404).send({ error: 'workspace_client_not_found', message: 'O cliente selecionado não existe nesta agência.' });
+  }
   const [invoice] = await db.insert(billingOrders).values({
-    organizationId: request.user.organizationId, clientId: body.clientId, createdBy: request.user.sub,
+    organizationId: request.user.organizationId, clientId: body.clientId, workspaceClientId: body.workspaceClientId, createdBy: request.user.sub,
     clientName: body.clientName, payerEmail: body.payerEmail, description: body.description,
     amount: body.amount, method: body.method, status: 'creating',
   }).returning();
@@ -1523,7 +2084,8 @@ app.post('/api/billing/orders', { preHandler: app.authenticate, config: { rateLi
 app.get('/api/billing/subscriptions', { preHandler: app.authenticate }, async (request, reply) => {
   const query = z.object({ limit: z.coerce.number().int().min(1).max(200).default(100), offset: z.coerce.number().int().min(0).default(0) }).safeParse(request.query);
   if (!query.success) return reply.code(400).send({ error: 'validation_error', message: 'Invalid subscription pagination.' });
-  const where = eq(billingSubscriptions.organizationId, request.user.organizationId);
+  const clientIds = await billingClientIdsForScope(request.user.organizationId, request.user.permissions?.scope);
+  const where = and(eq(billingSubscriptions.organizationId, request.user.organizationId), billingClientScopeWhere(billingSubscriptions.workspaceClientId, clientIds));
   const [rows, count] = await Promise.all([
     db.select().from(billingSubscriptions).where(where).orderBy(desc(billingSubscriptions.createdAt)).limit(query.data.limit).offset(query.data.offset),
     db.select({ count: sql<number>`count(*)::int` }).from(billingSubscriptions).where(where),
@@ -1533,14 +2095,20 @@ app.get('/api/billing/subscriptions', { preHandler: app.authenticate }, async (r
 
 app.post('/api/billing/subscriptions', { preHandler: app.authenticate, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
   const body = parseBody(subscriptionSchema, request.body, reply); if (!body) return;
+  const scopedClientIds = await billingClientIdsForScope(request.user.organizationId, request.user.permissions?.scope);
+  if (scopedClientIds && (!body.workspaceClientId || !scopedClientIds.includes(body.workspaceClientId))) return reply.code(403).send({ error: 'record_scope_denied', message: 'Selecione um cliente atribuido ao seu escopo antes de criar a assinatura.' });
   if (!await isIntegrationEnabled(request.user.organizationId, 'mercadopago')) return reply.code(409).send({ error: 'integration_disconnected', message: 'Mercado Pago está desconectado no Nexo. Reative em Integrações para usar assinaturas.' });
   if (!env.MERCADOPAGO_ACCESS_TOKEN) return reply.code(503).send({ error: 'payment_provider_unavailable', message: 'Mercado Pago ainda não está configurado no servidor.' });
   if (body.clientId) {
     const [client] = await db.select({ id: clients.id }).from(clients).where(and(eq(clients.id, body.clientId), eq(clients.organizationId, request.user.organizationId))).limit(1);
     if (!client) return reply.code(404).send({ error: 'client_not_found', message: 'Cliente não encontrado nesta empresa.' });
   }
+  if (body.workspaceClientId) {
+    const [client] = await db.select({ id: workspaceRecords.id }).from(workspaceRecords).where(and(eq(workspaceRecords.id, body.workspaceClientId), eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'clients'), isNull(workspaceRecords.archivedAt))).limit(1);
+    if (!client) return reply.code(404).send({ error: 'workspace_client_not_found', message: 'O cliente selecionado não existe nesta agência.' });
+  }
   const [subscription] = await db.insert(billingSubscriptions).values({
-    organizationId: request.user.organizationId, clientId: body.clientId, createdBy: request.user.sub,
+    organizationId: request.user.organizationId, clientId: body.clientId, workspaceClientId: body.workspaceClientId, createdBy: request.user.sub,
     clientName: body.clientName, payerEmail: body.payerEmail, description: body.description,
     amount: body.amount, frequency: body.frequency, frequencyInterval: body.frequencyInterval, status: 'creating',
   }).returning();
@@ -1577,6 +2145,8 @@ app.patch('/api/billing/subscriptions/:id/status', { preHandler: app.authenticat
   if (!await isIntegrationEnabled(request.user.organizationId, 'mercadopago')) return reply.code(409).send({ error: 'integration_disconnected', message: 'Mercado Pago está desconectado no Nexo.' });
   const [subscription] = await db.select().from(billingSubscriptions).where(and(eq(billingSubscriptions.id, params.data.id), eq(billingSubscriptions.organizationId, request.user.organizationId))).limit(1);
   if (!subscription) return reply.code(404).send({ error: 'not_found', message: 'Assinatura não encontrada.' });
+  const scopedClientIds = await billingClientIdsForScope(request.user.organizationId, request.user.permissions?.scope);
+  if (scopedClientIds && (!subscription.workspaceClientId || !scopedClientIds.includes(subscription.workspaceClientId))) return reply.code(404).send({ error: 'not_found', message: 'Assinatura não encontrada.' });
   if (!subscription.mpSubscriptionId) return reply.code(409).send({ error: 'subscription_not_started', message: 'A assinatura ainda não foi criada no Mercado Pago.' });
   try {
     await mercadoPago(`/preapproval/${encodeURIComponent(subscription.mpSubscriptionId)}`, { method: 'PUT', body: JSON.stringify({ status: body.status }) });
@@ -1682,11 +2252,123 @@ app.delete('/api/clients/:id', { preHandler: app.authenticate }, async (request,
   return reply.code(204).send();
 });
 
+app.get('/api/workspace/backup', { preHandler: app.authenticate, config: { rateLimit: { max: 4, timeWindow: '1 minute' } } }, async (request, reply) => {
+  if (request.user.role !== 'owner') return reply.code(403).send({ error: 'forbidden', message: 'Somente a conta proprietaria pode exportar o backup do workspace.' });
+  const [recordRows, clientRows, orderRows, subscriptionRows] = await Promise.all([
+    db.select().from(workspaceRecords).where(eq(workspaceRecords.organizationId, request.user.organizationId)).orderBy(asc(workspaceRecords.createdAt)),
+    db.select().from(clients).where(eq(clients.organizationId, request.user.organizationId)).orderBy(asc(clients.createdAt)),
+    db.select().from(billingOrders).where(eq(billingOrders.organizationId, request.user.organizationId)).orderBy(asc(billingOrders.createdAt)),
+    db.select().from(billingSubscriptions).where(eq(billingSubscriptions.organizationId, request.user.organizationId)).orderBy(asc(billingSubscriptions.createdAt)),
+  ]);
+  const backup = buildWorkspaceBackup({ organizationId: request.user.organizationId, records: recordRows, clients: clientRows, billingOrders: orderRows, billingSubscriptions: subscriptionRows });
+  const serialized = JSON.stringify(backup);
+  if (Buffer.byteLength(serialized, 'utf8') > 25 * 1024 * 1024) return reply.code(413).send({ error: 'backup_too_large', message: 'O backup excede 25 MB; solicite uma exportacao administrativa do banco.' });
+  const date = new Date().toISOString().slice(0, 10);
+  return reply.header('Content-Type', 'application/json; charset=utf-8')
+    .header('Content-Disposition', `attachment; filename="nexo-workspace-${date}.json"`)
+    .send(backup);
+});
+
+app.post('/api/workspace/backup/restore', { preHandler: app.authenticate, bodyLimit: 26 * 1024 * 1024, config: { rateLimit: { max: 2, timeWindow: '1 minute' } } }, async (request, reply) => {
+  if (request.user.role !== 'owner') return reply.code(403).send({ error: 'forbidden', message: 'Somente a conta proprietaria pode restaurar o workspace.' });
+  let backup;
+  try { backup = parseWorkspaceBackup(request.body, request.user.organizationId); }
+  catch (error) { return reply.code(400).send({ error: 'invalid_backup', message: error instanceof Error ? error.message : 'O arquivo de backup e invalido.' }); }
+
+  try {
+    const result = await db.transaction(async (tx) => {
+      const counts = { recordsCreated: 0, recordsUpdated: 0, clientsCreated: 0, clientsUpdated: 0, ordersCreated: 0, ordersUpdated: 0, overdueRemindersSuppressed: 0, subscriptionsCreated: 0, subscriptionsUpdated: 0 };
+      for (const row of backup.records) {
+        const [existing] = await tx.select({ id: workspaceRecords.id, resource: workspaceRecords.resource }).from(workspaceRecords).where(and(eq(workspaceRecords.id, row.id), eq(workspaceRecords.organizationId, request.user.organizationId))).limit(1);
+        if (existing && existing.resource !== row.resource) throw new Error('O backup conflita com o tipo de um registro existente.');
+        const values = { data: row.data, updatedAt: new Date(row.updatedAt), archivedAt: row.archivedAt ? new Date(row.archivedAt) : null };
+        if (existing) {
+          await tx.update(workspaceRecords).set(values).where(and(eq(workspaceRecords.id, row.id), eq(workspaceRecords.organizationId, request.user.organizationId)));
+          counts.recordsUpdated += 1;
+        } else {
+          await tx.insert(workspaceRecords).values({ id: row.id, organizationId: request.user.organizationId, resource: row.resource, data: row.data, createdBy: request.user.sub, createdAt: new Date(row.createdAt), updatedAt: new Date(row.updatedAt), archivedAt: row.archivedAt ? new Date(row.archivedAt) : null });
+          counts.recordsCreated += 1;
+        }
+      }
+      for (const row of backup.clients) {
+        const [existing] = await tx.select({ id: clients.id }).from(clients).where(and(eq(clients.id, row.id), eq(clients.organizationId, request.user.organizationId))).limit(1);
+        const values = { name: row.name, legalName: row.legalName, contactName: row.contactName, email: row.email, phone: row.phone, document: row.document, status: row.status as 'active' | 'inactive' | 'archived', source: row.source, notes: row.notes, tags: row.tags, updatedAt: new Date(row.updatedAt), archivedAt: row.archivedAt ? new Date(row.archivedAt) : null };
+        if (existing) { await tx.update(clients).set(values).where(and(eq(clients.id, row.id), eq(clients.organizationId, request.user.organizationId))); counts.clientsUpdated += 1; }
+        else { await tx.insert(clients).values({ id: row.id, organizationId: request.user.organizationId, ...values, createdAt: new Date(row.createdAt) }); counts.clientsCreated += 1; }
+      }
+      for (const row of backup.billingOrders) {
+        const [existing] = await tx.select({ id: billingOrders.id }).from(billingOrders).where(and(eq(billingOrders.id, row.id), eq(billingOrders.organizationId, request.user.organizationId))).limit(1);
+        const values = { clientId: row.clientId, workspaceClientId: row.workspaceClientId, clientName: row.clientName, payerEmail: row.payerEmail, description: row.description, amount: row.amount, method: row.method, status: row.status, statusDetail: row.statusDetail, mpOrderId: row.mpOrderId, mpPaymentId: row.mpPaymentId, paymentDetails: row.paymentDetails, dueAt: row.dueAt ? new Date(row.dueAt) : null, updatedAt: new Date(row.updatedAt) };
+        if (existing) { await tx.update(billingOrders).set(values).where(and(eq(billingOrders.id, row.id), eq(billingOrders.organizationId, request.user.organizationId))); counts.ordersUpdated += 1; }
+        else { await tx.insert(billingOrders).values({ id: row.id, organizationId: request.user.organizationId, createdBy: request.user.sub, ...values, createdAt: new Date(row.createdAt) }); counts.ordersCreated += 1; }
+      }
+      const restoreTime = new Date();
+      for (const row of backup.billingOrders.filter((item) => item.status === 'pending' && item.dueAt && new Date(item.dueAt) <= restoreTime)) {
+        const [event] = await tx.select({ id: billingOverdueEvents.id, deliveredAt: billingOverdueEvents.deliveredAt, discardedAt: billingOverdueEvents.discardedAt }).from(billingOverdueEvents).where(eq(billingOverdueEvents.billingOrderId, row.id)).limit(1);
+        if (event?.deliveredAt || event?.discardedAt) continue;
+        if (event) await tx.update(billingOverdueEvents).set({ discardedAt: restoreTime, lastError: 'backup_restore_suppressed_overdue_replay', updatedAt: restoreTime }).where(eq(billingOverdueEvents.id, event.id));
+        else await tx.insert(billingOverdueEvents).values({ organizationId: request.user.organizationId, billingOrderId: row.id, discardedAt: restoreTime, lastError: 'backup_restore_suppressed_overdue_replay', updatedAt: restoreTime });
+        counts.overdueRemindersSuppressed += 1;
+      }
+      for (const row of backup.billingSubscriptions) {
+        const [existing] = await tx.select({ id: billingSubscriptions.id }).from(billingSubscriptions).where(and(eq(billingSubscriptions.id, row.id), eq(billingSubscriptions.organizationId, request.user.organizationId))).limit(1);
+        const values = { clientId: row.clientId, workspaceClientId: row.workspaceClientId, clientName: row.clientName, payerEmail: row.payerEmail, description: row.description, amount: row.amount, frequency: row.frequency, frequencyInterval: row.frequencyInterval, status: row.status, mpSubscriptionId: row.mpSubscriptionId, checkoutUrl: row.checkoutUrl, nextPaymentAt: row.nextPaymentAt ? new Date(row.nextPaymentAt) : null, updatedAt: new Date(row.updatedAt) };
+        if (existing) { await tx.update(billingSubscriptions).set(values).where(and(eq(billingSubscriptions.id, row.id), eq(billingSubscriptions.organizationId, request.user.organizationId))); counts.subscriptionsUpdated += 1; }
+        else { await tx.insert(billingSubscriptions).values({ id: row.id, organizationId: request.user.organizationId, createdBy: request.user.sub, ...values, createdAt: new Date(row.createdAt) }); counts.subscriptionsCreated += 1; }
+      }
+      await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'workspace', action: 'backup_restored', payload: counts });
+      return counts;
+    });
+    return reply.send({ data: { ...result, excludedRecords: backup.excludedRecords } });
+  } catch (error) {
+    request.log.warn({ error: error instanceof Error ? error.name : 'unknown' }, 'Workspace backup restore failed');
+    return reply.code(409).send({ error: 'backup_restore_conflict', message: 'A restauracao foi cancelada sem salvar alteracoes. Verifique os IDs e vinculos do backup ou use o suporte.' });
+  }
+});
+
+app.get('/api/workspace/assignees', { preHandler: app.authenticate }, async (request) => {
+  const rows = await db.select({ id: users.id, name: users.name, email: users.email, role: users.role }).from(users)
+    .where(and(eq(users.organizationId, request.user.organizationId), eq(users.active, true)))
+    .orderBy(asc(users.name));
+  return { data: rows };
+});
+
+app.get('/api/workspace/preferences', { preHandler: app.authenticate }, async (request) => {
+  const [row] = await db.select({ data: workspaceRecords.data }).from(workspaceRecords).where(and(
+    eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'settings'), isNull(workspaceRecords.archivedAt),
+    sql`${workspaceRecords.data}->>'key' = 'workspace-preferences'`,
+  )).limit(1);
+  const record = row?.data as Record<string, unknown> | undefined;
+  const settings = record?.settings && typeof record.settings === 'object' ? record.settings as Record<string, unknown> : {};
+  const preferences = settings.preferences && typeof settings.preferences === 'object' ? settings.preferences as Record<string, unknown> : {};
+  return { data: {
+    compact: typeof preferences.compact === 'boolean' ? preferences.compact : undefined,
+    darkMode: typeof preferences.darkMode === 'boolean' ? preferences.darkMode : undefined,
+    showCompleted: typeof preferences.showCompleted === 'boolean' ? preferences.showCompleted : undefined,
+    confirmDelete: typeof preferences.confirmDelete === 'boolean' ? preferences.confirmDelete : undefined,
+    startPage: typeof preferences.startPage === 'string' ? preferences.startPage : undefined,
+  } };
+});
+
+function workspaceRecordScopeWhere(resource: string, scope?: WorkspaceRecordScope | null) {
+  if (!scope || scope.mode !== 'selected') return undefined;
+  const clientIds = scope.clientIds.map(String);
+  const projectIds = scope.projectIds.map(String);
+  const clientFields = ['clientId', 'workspaceClientId', 'clientRecordId'];
+  const projectFields = ['projectId', 'sourceProjectId'];
+  const clientConditions = clientIds.flatMap((id) => clientFields.map((field) => sql`${workspaceRecords.data}->>${field} = ${id}`));
+  const projectConditions = projectIds.flatMap((id) => projectFields.map((field) => sql`${workspaceRecords.data}->>${field} = ${id}`));
+  if (resource === 'clients') return clientIds.length ? inArray(workspaceRecords.id, clientIds) : sql`false`;
+  if (resource === 'projects') return or(...(projectIds.length ? [inArray(workspaceRecords.id, projectIds)] : []), ...clientConditions) || sql`false`;
+  if (clientLinkedWorkspaceResources.includes(resource as typeof clientLinkedWorkspaceResources[number])) return or(...clientConditions, ...projectConditions) || sql`false`;
+  return undefined;
+}
+
 app.get('/api/workspace/:resource', { preHandler: app.authenticate }, async (request, reply) => {
   const params = z.object({ resource: workspaceResource }).safeParse(request.params);
   const query = z.object({ limit: z.coerce.number().int().min(1).max(200).default(100), offset: z.coerce.number().int().min(0).default(0) }).safeParse(request.query);
   if (!params.success || !query.success) return reply.code(400).send({ error: 'validation_error', message: 'Recurso ou paginação inválidos.' });
-  const where = and(eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, params.data.resource), isNull(workspaceRecords.archivedAt));
+  const where = and(eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, params.data.resource), isNull(workspaceRecords.archivedAt), workspaceRecordScopeWhere(params.data.resource, request.user.permissions?.scope));
   const [rows, count] = await Promise.all([
     db.select().from(workspaceRecords).where(where).orderBy(desc(workspaceRecords.updatedAt)).limit(query.data.limit).offset(query.data.offset),
     db.select({ count: sql<number>`count(*)::int` }).from(workspaceRecords).where(where),
@@ -1714,6 +2396,7 @@ app.post('/api/workspace/proposals/:id/accept', { preHandler: app.authenticate, 
       eq(workspaceRecords.resource, 'proposals'), isNull(workspaceRecords.archivedAt),
     )).for('update').limit(1);
     if (!proposal) return { kind: 'missing' as const };
+    if (!recordMatchesWorkspaceScope('proposals', proposal.id, proposal.data, request.user.permissions?.scope)) return { kind: 'missing' as const };
 
     const disposition = proposalAcceptanceDisposition(proposal.data.status);
     if (disposition === 'return_existing') {
@@ -1741,6 +2424,7 @@ app.post('/api/workspace/proposals/:id/accept', { preHandler: app.authenticate, 
       eq(workspaceRecords.resource, 'clients'), isNull(workspaceRecords.archivedAt),
     )).limit(1);
     if (!client) return { kind: 'client_missing' as const };
+    if (!recordMatchesWorkspaceScope('clients', client.id, client.data, request.user.permissions?.scope)) return { kind: 'client_missing' as const };
 
     const removeRecordMetadata = (data: Record<string, unknown>) => Object.fromEntries(Object.entries(data).filter(([field]) => !['id', 'createdAt', 'updatedAt'].includes(field)));
     const contractData = {
@@ -1992,14 +2676,207 @@ app.post('/api/workspace/finance-accounts/:id/transactions', { preHandler: app.a
   return reply.code(201).send({ data: { ...result.transaction!.data, id: result.transaction!.id, createdAt: result.transaction!.createdAt, updatedAt: result.transaction!.updatedAt }, account: { ...result.account!.data, id: result.account!.id, updatedAt: result.account!.updatedAt } });
 });
 
+app.post('/api/workspace/finance-transfers', { preHandler: app.authenticate, config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request, reply) => {
+  const body = z.object({
+    sourceAccountId: z.string().uuid(), destinationAccountId: z.string().uuid(),
+    description: z.string().trim().min(2).max(240), amount: z.number().finite().positive().max(1_000_000_000_000),
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
+      const [year, month, day] = value.split('-').map(Number);
+      const date = new Date(Date.UTC(year!, month! - 1, day!));
+      return date.getUTCFullYear() === year && date.getUTCMonth() === month! - 1 && date.getUTCDate() === day;
+    }),
+  }).safeParse(request.body);
+  if (!body.success) return reply.code(400).send({ error: 'validation_error', message: 'Informe duas contas, uma descricao, uma data e um valor validos.' });
+  if (body.data.sourceAccountId === body.data.destinationAccountId) return reply.code(400).send({ error: 'finance_transfer_same_account', message: 'Escolha duas contas diferentes.' });
+  let balanceError = '';
+  const result = await db.transaction(async (tx) => {
+    const { sourceAccountId, destinationAccountId } = body.data;
+    // Lock both accounts in a stable order so concurrent transfers cannot overspend or deadlock.
+    await tx.execute(sql`SELECT id FROM workspace_records WHERE organization_id = ${request.user.organizationId} AND resource = 'finance-accounts' AND archived_at IS NULL AND id IN (${sourceAccountId}::uuid, ${destinationAccountId}::uuid) ORDER BY id FOR UPDATE`);
+    const rows = await tx.select().from(workspaceRecords).where(and(
+      eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'finance-accounts'),
+      isNull(workspaceRecords.archivedAt), sql`${workspaceRecords.id} IN (${sourceAccountId}::uuid, ${destinationAccountId}::uuid)`,
+    ));
+    const source = rows.find((row) => row.id === sourceAccountId);
+    const destination = rows.find((row) => row.id === destinationAccountId);
+    if (!source || !destination) return { error: 'finance_account_not_found' as const };
+    const sourceData = source.data as Record<string, unknown>;
+    const destinationData = destination.data as Record<string, unknown>;
+    let balances: ReturnType<typeof calculateFinanceTransferBalances>;
+    try { balances = calculateFinanceTransferBalances(sourceData.balance ?? 0, destinationData.balance ?? 0, body.data.amount); }
+    catch (error) { balanceError = error instanceof Error ? error.message : 'finance_transfer_invalid_amount'; return { error: balanceError }; }
+    await tx.update(workspaceRecords).set({ data: { ...sourceData, balance: balances.sourceBalance }, updatedAt: new Date() }).where(eq(workspaceRecords.id, source.id));
+    await tx.update(workspaceRecords).set({ data: { ...destinationData, balance: balances.destinationBalance }, updatedAt: new Date() }).where(eq(workspaceRecords.id, destination.id));
+    const transferId = randomUUID();
+    const transactions = await tx.insert(workspaceRecords).values([
+      { organizationId: request.user.organizationId, createdBy: request.user.sub, resource: 'finance-transactions', data: { description: body.data.description, direction: 'Sa\u00edda', amount: balances.amount, date: body.data.date, accountId: source.id, accountName: String(sourceData.name ?? ''), status: 'Registrada', transferId, transferSide: 'debit', relatedAccountId: destination.id, relatedAccountName: String(destinationData.name ?? '') } },
+      { organizationId: request.user.organizationId, createdBy: request.user.sub, resource: 'finance-transactions', data: { description: body.data.description, direction: 'Entrada', amount: balances.amount, date: body.data.date, accountId: destination.id, accountName: String(destinationData.name ?? ''), status: 'Registrada', transferId, transferSide: 'credit', relatedAccountId: source.id, relatedAccountName: String(sourceData.name ?? '') } },
+    ]).returning();
+    await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'finance-transfer', entityId: transferId, action: 'created', payload: { sourceAccountId: source.id, destinationAccountId: destination.id, amount: balances.amount, transactionIds: transactions.map((item) => item.id) } });
+    return { transferId, transactions, sourceBalance: balances.sourceBalance, destinationBalance: balances.destinationBalance };
+  });
+  if ('error' in result) {
+    if (result.error === 'finance_account_not_found') return reply.code(404).send({ error: result.error, message: 'Uma das contas nao existe neste workspace.' });
+    if (result.error === 'finance_transfer_insufficient_funds') return reply.code(409).send({ error: result.error, message: 'Saldo insuficiente na conta de origem para esta transferencia.' });
+    return reply.code(400).send({ error: result.error, message: 'O valor da transferencia deve ter no maximo duas casas decimais.' });
+  }
+  return reply.code(201).send({ data: { transferId: result.transferId, transactions: result.transactions, balances: { source: result.sourceBalance, destination: result.destinationBalance } } });
+});
+
+app.post('/api/workspace/leads/:id/convert', { preHandler: app.authenticate }, async (request, reply) => {
+  const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
+  const body = parseBody(z.object({ data: z.object({
+    value: z.unknown().optional(), chance: z.number().min(0).max(100).optional(), source: z.string().max(500).optional(),
+    service: z.string().max(500).optional(), owner: z.string().max(500).optional(), nextAction: z.string().max(2000).optional(),
+    closeDate: z.string().max(40).optional(), notes: z.string().max(8000).optional(),
+  }).strict().optional() }).strict(), request.body, reply);
+  if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Identificador do lead invalido.' });
+  if (!body) return;
+  const result = await db.transaction(async (tx) => {
+    const [lead] = await tx.select().from(workspaceRecords).where(and(
+      eq(workspaceRecords.id, params.data.id), eq(workspaceRecords.organizationId, request.user.organizationId),
+      eq(workspaceRecords.resource, 'leads'), isNull(workspaceRecords.archivedAt),
+    )).for('update').limit(1);
+    if (!lead || !recordMatchesWorkspaceScope('leads', lead.id, lead.data, request.user.permissions?.scope)) return { kind: 'missing' as const };
+    const leadData: Record<string, unknown> = { ...lead.data, ...(body.data || {}), stage: 'Fechado' };
+    if (leadData.convertedClientId) {
+      const [linkedClient] = await tx.select().from(workspaceRecords).where(and(
+        eq(workspaceRecords.id, String(leadData.convertedClientId)), eq(workspaceRecords.organizationId, request.user.organizationId),
+        eq(workspaceRecords.resource, 'clients'), isNull(workspaceRecords.archivedAt),
+      )).limit(1);
+      if (!linkedClient) return { kind: 'review' as const };
+      if (!recordMatchesWorkspaceScope('clients', linkedClient.id, linkedClient.data, request.user.permissions?.scope)) return { kind: 'missing' as const };
+      const [savedLead] = await tx.update(workspaceRecords).set({ data: { ...leadData, convertedClientId: linkedClient.id }, updatedAt: new Date() }).where(eq(workspaceRecords.id, lead.id)).returning();
+      return { kind: 'existing' as const, lead: savedLead!, client: linkedClient };
+    }
+    const clientsInWorkspace = await tx.select().from(workspaceRecords).where(and(
+      eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'clients'), isNull(workspaceRecords.archivedAt),
+    ));
+    const duplicate = findDuplicateLead(clientsInWorkspace.map((client) => ({ ...client.data, id: client.id, row: client })), { email: leadData.email, phone: leadData.phone });
+    let client = duplicate?.row;
+    if (client && !recordMatchesWorkspaceScope('clients', String(client.id), client.data, request.user.permissions?.scope)) return { kind: 'missing' as const };
+    if (!client) {
+      if (request.user.permissions?.scope?.mode === 'selected') return { kind: 'scope_denied' as const };
+      const clientData = buildClientFromLead({ ...leadData, id: lead.id });
+      if (!clientData.name) return { kind: 'invalid' as const };
+      const [createdClient] = await tx.insert(workspaceRecords).values({ organizationId: request.user.organizationId, createdBy: request.user.sub, resource: 'clients', data: clientData }).returning();
+      client = createdClient!;
+    }
+    const [savedLead] = await tx.update(workspaceRecords).set({ data: { ...leadData, convertedClientId: client.id }, updatedAt: new Date() }).where(eq(workspaceRecords.id, lead.id)).returning();
+    await tx.insert(activityEvents).values([
+      { organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'leads', entityId: lead.id, action: 'converted_to_client', payload: { clientId: client.id } },
+      ...(duplicate ? [] : [{ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'clients', entityId: client.id, action: 'created_from_lead', payload: { leadId: lead.id } }]),
+    ]);
+    return { kind: duplicate ? 'existing' as const : 'converted' as const, lead: savedLead!, client };
+  });
+  if (result.kind === 'missing') return reply.code(404).send({ error: 'not_found', message: 'Lead ou cliente fora do escopo.' });
+  if (result.kind === 'scope_denied') return reply.code(403).send({ error: 'record_scope_denied', message: 'A conversao criaria um cliente fora do escopo atribuido.' });
+  if (result.kind === 'review') return reply.code(409).send({ error: 'lead_conversion_review', message: 'O cliente vinculado nao esta mais ativo; revise a ficha antes de tentar novamente.' });
+  if (result.kind === 'invalid') return reply.code(400).send({ error: 'lead_conversion_invalid', message: 'Informe o nome do contato ou da empresa antes de converter.' });
+  return { data: { lead: { ...result.lead.data, id: result.lead.id, createdAt: result.lead.createdAt, updatedAt: result.lead.updatedAt }, client: { ...result.client.data, id: result.client.id, createdAt: result.client.createdAt, updatedAt: result.client.updatedAt }, existing: result.kind === 'existing' } };
+});
+
+app.post('/api/workspace/:resource/recurring', { preHandler: app.authenticate }, async (request, reply) => {
+  const params = z.object({ resource: z.enum(['revenues', 'expenses']) }).safeParse(request.params);
+  const body = parseBody(z.object({
+    seriesId: z.string().uuid(),
+    frequency: z.enum(['weekly', 'monthly', 'quarterly', 'yearly']),
+    count: z.coerce.number().int().min(2).max(60),
+    data: workspaceDataSchema,
+  }), request.body, reply);
+  if (!params.success) return reply.code(400).send({ error: 'finance_recurrence_resource_invalid', message: 'Selecione receitas ou despesas para criar uma recorrência.' });
+  if (!body) return;
+
+  const data = body.data;
+  const amount = Number(data.amount);
+  const description = typeof data.description === 'string' ? data.description.trim() : '';
+  if (!description || description.length > 240 || !Number.isFinite(amount) || amount <= 0 || amount > 100_000_000 || Math.abs(amount * 100 - Math.round(amount * 100)) > 0.00001) {
+    return reply.code(400).send({ error: 'finance_recurrence_data_invalid', message: 'Informe uma descrição e um valor válido para os lançamentos.' });
+  }
+
+  const recordScope = request.user.permissions?.scope;
+  const parsedClientId = data.clientId == null || data.clientId === '' ? null : z.string().uuid().safeParse(data.clientId);
+  if (parsedClientId && !parsedClientId.success) return reply.code(400).send({ error: 'finance_client_invalid', message: 'O cliente vinculado não é válido.' });
+  if (parsedClientId?.success) {
+    const [client] = await db.select({ id: workspaceRecords.id, data: workspaceRecords.data }).from(workspaceRecords).where(and(
+      eq(workspaceRecords.id, parsedClientId.data), eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'clients'), isNull(workspaceRecords.archivedAt),
+    )).limit(1);
+    if (!client || !recordMatchesWorkspaceScope('clients', client.id, client.data, recordScope)) return reply.code(403).send({ error: 'record_scope_denied', message: 'O cliente vinculado não pertence ao seu escopo.' });
+  }
+
+  let dates: ReturnType<typeof buildFinanceRecurrenceDates>;
+  try {
+    dates = buildFinanceRecurrenceDates(String(data.date ?? ''), data.dueDate == null || data.dueDate === '' ? null : String(data.dueDate), body.frequency, body.count);
+  } catch {
+    return reply.code(400).send({ error: 'finance_recurrence_date_invalid', message: 'Confira a data do lançamento e o vencimento.' });
+  }
+
+  const baseData = Object.fromEntries(Object.entries(data).filter(([key]) => !['id', 'createdAt', 'updatedAt', 'recurrenceSeriesId', 'recurrenceSequence', 'recurrenceCount'].includes(key)));
+  const outcome = await db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`${request.user.organizationId}:${body.seriesId}`}))`);
+    const existing = await tx.select().from(workspaceRecords).where(and(
+      eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, params.data.resource),
+      isNull(workspaceRecords.archivedAt), sql`${workspaceRecords.data}->>'recurrenceSeriesId' = ${body.seriesId}`,
+    )).orderBy(asc(workspaceRecords.createdAt));
+    if (existing.length) return existing;
+
+    const rows = await tx.insert(workspaceRecords).values(dates.map((occurrence, index) => ({
+      organizationId: request.user.organizationId,
+      createdBy: request.user.sub,
+      resource: params.data.resource,
+      data: {
+        ...baseData,
+        code: `${params.data.resource === 'revenues' ? 'REC' : 'DES'}-${randomUUID().slice(0, 8).toUpperCase()}`,
+        description,
+        amount: Math.round(amount * 100) / 100,
+        clientId: parsedClientId?.success ? parsedClientId.data : null,
+        dueDate: occurrence.dueDate,
+        date: occurrence.date,
+        status: 'Pendente',
+        recurrenceSeriesId: body.seriesId,
+        recurrenceFrequency: body.frequency,
+        recurrenceSequence: index + 1,
+        recurrenceCount: body.count,
+      },
+    }))).returning();
+    await tx.insert(activityEvents).values({
+      organizationId: request.user.organizationId, actorUserId: request.user.sub,
+      entityType: params.data.resource, entityId: rows[0]!.id, action: 'recurrence_created',
+      payload: { seriesId: body.seriesId, frequency: body.frequency, count: rows.length },
+    });
+    return rows;
+  });
+  return reply.code(201).send({ data: {
+    seriesId: body.seriesId,
+    records: outcome.map((row) => ({ ...row.data, id: row.id, createdAt: row.createdAt, updatedAt: row.updatedAt })),
+  } });
+});
+
 app.post('/api/workspace/:resource', { preHandler: app.authenticate }, async (request, reply) => {
   const params = z.object({ resource: workspaceResource }).safeParse(request.params);
   const body = parseBody(z.object({ data: workspaceDataSchema }), request.body, reply);
   if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Recurso inválido.' });
   if (!body) return;
+  const recordScope = request.user.permissions?.scope;
+  if (recordScope?.mode === 'selected' && (params.data.resource === 'clients' || (clientLinkedWorkspaceResources.includes(params.data.resource as typeof clientLinkedWorkspaceResources[number]) && !recordMatchesWorkspaceScope(params.data.resource, '', body.data, recordScope)))) return reply.code(403).send({ error: 'record_scope_denied', message: 'Este registro nao pertence ao escopo atribuido.' });
+  if (params.data.resource === 'clients') { const validationError = validateClientServiceCharges(body.data.serviceCharges); if (validationError) return reply.code(400).send({ error: 'client_billing_invalid', message: validationError }); }
+  if (params.data.resource === 'approvals') {
+    const clientId = z.string().uuid().safeParse(body.data.clientId);
+    if (!clientId.success) return reply.code(400).send({ error: 'approval_client_required', message: 'Selecione um cliente valido para esta aprovacao.' });
+    const [client] = await db.select({ id: workspaceRecords.id }).from(workspaceRecords).where(and(eq(workspaceRecords.id, clientId.data), eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'clients'), isNull(workspaceRecords.archivedAt))).limit(1);
+    if (!client) return reply.code(400).send({ error: 'approval_client_invalid', message: 'O cliente selecionado nao existe neste workspace.' });
+  }
   if (params.data.resource === 'proposals' && proposalAcceptanceDisposition(body.data.status) === 'return_existing') return reply.code(409).send({ error: 'proposal_acceptance_required', message: 'Use a aprovacao para criar contrato, projeto e tarefas de forma atomica.' });
   if (params.data.resource === 'contracts' && requiresExternalSignature(body.data.status)) return reply.code(409).send({ error: 'contract_signature_required', message: 'Contrato so muda para Aguardando assinatura, Assinado ou Ativo apos confirmacao do provedor.' });
-  const [saved] = await db.transaction(async (tx) => {
+  const outcome = await db.transaction(async (tx) => {
+    if (params.data.resource === 'leads') {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${request.user.organizationId}))`);
+      const existingLeads = await tx.select({ id: workspaceRecords.id, data: workspaceRecords.data }).from(workspaceRecords).where(and(
+        eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'leads'), isNull(workspaceRecords.archivedAt),
+      ));
+      const duplicate = findDuplicateLead(existingLeads.map((lead) => ({ ...lead.data, id: lead.id })), body.data);
+      if (duplicate) return { created: [], duplicateId: duplicate.id };
+    }
     const created = await tx.insert(workspaceRecords).values({ organizationId: request.user.organizationId, createdBy: request.user.sub, resource: params.data.resource, data: body.data }).returning();
     await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: params.data.resource, entityId: created[0]!.id, action: 'created', payload: { label: body.data.name ?? body.data.title ?? body.data.clientName ?? '' } });
     if (params.data.resource === 'leads') {
@@ -2017,8 +2894,10 @@ app.post('/api/workspace/:resource', { preHandler: app.authenticate }, async (re
         await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'tasks', entityId: task!.id, action: 'created', payload: { automation: 'lead-first-contact', leadId: created[0]!.id } });
       }
     }
-    return created;
+    return { created };
   });
+  if ('duplicateId' in outcome) return reply.code(409).send({ error: 'duplicate_lead', message: 'Ja existe uma oportunidade com este e-mail ou telefone.', duplicateId: outcome.duplicateId });
+  const saved = outcome.created[0]!;
   if (params.data.resource === 'leads') await enqueueN8nEvent(request.user.organizationId, 'lead.created', { ...saved!.data, id: saved!.id });
   if (params.data.resource === 'tickets') await enqueueN8nEvent(request.user.organizationId, 'ticket.created', { ...saved!.data, id: saved!.id });
   return reply.code(201).send({ data: { ...saved!.data, id: saved!.id, createdAt: saved!.createdAt, updatedAt: saved!.updatedAt } });
@@ -2029,13 +2908,26 @@ app.patch('/api/workspace/:resource/:id', { preHandler: app.authenticate }, asyn
   const body = parseBody(z.object({ data: workspaceDataSchema }).refine((value) => Object.keys(value.data).length > 0), request.body, reply);
   if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Recurso ou identificador inválidos.' });
   if (!body) return;
+  let invalidClientBilling = '';
   let previousData: Record<string, unknown> | undefined;
   let rejectedContractTransition = false;
   let rejectedManagedSignatureMutation = false;
   let rejectedProposalTransition = false;
+  let invalidApprovalClient = false;
+  let linkedTransferMutationBlocked = false;
   const updated = await db.transaction(async (tx) => {
     const [current] = await tx.select().from(workspaceRecords).where(and(eq(workspaceRecords.id, params.data.id), eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, params.data.resource), isNull(workspaceRecords.archivedAt))).limit(1);
     if (!current) return undefined;
+    if (!recordMatchesWorkspaceScope(params.data.resource, current.id, current.data, request.user.permissions?.scope)) return undefined;
+    if (!recordMatchesWorkspaceScope(params.data.resource, current.id, { ...current.data, ...body.data }, request.user.permissions?.scope)) return undefined;
+    if (params.data.resource === 'finance-transactions' && current.data.transferId) { linkedTransferMutationBlocked = true; return undefined; }
+    if (params.data.resource === 'clients') { invalidClientBilling = validateClientServiceCharges({ ...current.data, ...body.data }.serviceCharges) || ''; if (invalidClientBilling) return undefined; }
+    if (params.data.resource === 'approvals') {
+      const merged = { ...current.data, ...body.data };
+      const clientId = z.string().uuid().safeParse(merged.clientId);
+      const [client] = clientId.success ? await tx.select({ id: workspaceRecords.id }).from(workspaceRecords).where(and(eq(workspaceRecords.id, clientId.data), eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'clients'), isNull(workspaceRecords.archivedAt))).limit(1) : [];
+      if (!client) { invalidApprovalClient = true; return undefined; }
+    }
     if (params.data.resource === 'proposals' && Object.hasOwn(body.data, 'status') && proposalAcceptanceDisposition(body.data.status) !== proposalAcceptanceDisposition(current.data.status) && (proposalAcceptanceDisposition(body.data.status) === 'return_existing' || proposalAcceptanceDisposition(current.data.status) === 'return_existing')) { rejectedProposalTransition = true; return undefined; }
     if (params.data.resource === 'contracts' && current.data.clicksign && (
       (Object.hasOwn(body.data, 'status') && body.data.status !== current.data.status)
@@ -2068,9 +2960,12 @@ app.patch('/api/workspace/:resource/:id', { preHandler: app.authenticate }, asyn
     }
     return saved;
   });
+  if (invalidClientBilling) return reply.code(400).send({ error: 'client_billing_invalid', message: invalidClientBilling });
   if (rejectedContractTransition) return reply.code(409).send({ error: 'contract_signature_required', message: 'Contrato so muda para Aguardando assinatura, Assinado ou Ativo apos confirmacao do provedor.' });
   if (rejectedManagedSignatureMutation) return reply.code(409).send({ error: 'clicksign_contract_managed', message: 'Este contrato possui envelope Clicksign. Sincronize o status no provedor; documento, metadados e estado de assinatura ficam bloqueados para edicao manual.' });
   if (rejectedProposalTransition) return reply.code(409).send({ error: 'proposal_acceptance_required', message: 'Use a aprovacao para criar contrato, projeto e tarefas de forma atomica.' });
+  if (invalidApprovalClient) return reply.code(400).send({ error: 'approval_client_invalid', message: 'A aprovacao precisa estar vinculada a um cliente ativo deste workspace.' });
+  if (linkedTransferMutationBlocked) return reply.code(409).send({ error: 'finance_transfer_managed', message: 'A movimentacao faz parte de uma transferencia pareada e nao pode ser alterada separadamente.' });
   if (!updated) return reply.code(404).send({ error: 'not_found', message: 'Registro não encontrado.' });
   const normalizeStatus = (value: unknown) => String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
   const priorStatus = normalizeStatus(previousData?.status);
@@ -2092,7 +2987,7 @@ app.delete('/api/workspace/finance-accounts/:id', { preHandler: app.authenticate
     if (!account) return undefined;
     const transactions = await tx.update(workspaceRecords).set({ archivedAt: new Date(), updatedAt: new Date() }).where(and(
       eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'finance-transactions'),
-      isNull(workspaceRecords.archivedAt), sql`${workspaceRecords.data}->>'accountId' = ${params.data.id}`,
+      isNull(workspaceRecords.archivedAt), or(sql`${workspaceRecords.data}->>'accountId' = ${params.data.id}`, sql`${workspaceRecords.data}->>'relatedAccountId' = ${params.data.id}`),
     )).returning({ id: workspaceRecords.id });
     await tx.insert(activityEvents).values([
       { organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'finance-accounts', entityId: account.id, action: 'archived', payload: { archivedTransactions: transactions.length } },
@@ -2107,6 +3002,12 @@ app.delete('/api/workspace/finance-accounts/:id', { preHandler: app.authenticate
 app.delete('/api/workspace/:resource/:id', { preHandler: app.authenticate }, async (request, reply) => {
   const params = z.object({ resource: workspaceResource, id: z.string().uuid() }).safeParse(request.params);
   if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Recurso ou identificador inválidos.' });
+  if (params.data.resource === 'finance-transactions') {
+    const [transaction] = await db.select({ transferId: sql<string | null>`${workspaceRecords.data}->>'transferId'` }).from(workspaceRecords).where(and(
+      eq(workspaceRecords.id, params.data.id), eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'finance-transactions'), isNull(workspaceRecords.archivedAt),
+    )).limit(1);
+    if (transaction?.transferId) return reply.code(409).send({ error: 'finance_transfer_managed', message: 'A movimentacao faz parte de uma transferencia pareada e nao pode ser removida separadamente.' });
+  }
   if (params.data.resource === 'automations') {
     const [automation] = await db.select().from(workspaceRecords).where(and(eq(workspaceRecords.id, params.data.id), eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'automations'), isNull(workspaceRecords.archivedAt))).limit(1);
     if (automation?.data.active === true && automation.data.n8nWorkflowId) {
@@ -2120,12 +3021,32 @@ app.delete('/api/workspace/:resource/:id', { preHandler: app.authenticate }, asy
     }
   }
   const [archived] = await db.transaction(async (tx) => {
-    const rows = await tx.update(workspaceRecords).set({ archivedAt: new Date(), updatedAt: new Date() }).where(and(eq(workspaceRecords.id, params.data.id), eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, params.data.resource), isNull(workspaceRecords.archivedAt))).returning({ id: workspaceRecords.id });
+    const rows = await tx.update(workspaceRecords).set({ archivedAt: new Date(), updatedAt: new Date() }).where(and(eq(workspaceRecords.id, params.data.id), eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, params.data.resource), isNull(workspaceRecords.archivedAt), workspaceRecordScopeWhere(params.data.resource, request.user.permissions?.scope))).returning({ id: workspaceRecords.id });
     if (rows[0]) await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: params.data.resource, entityId: rows[0].id, action: 'archived', payload: {} });
     return rows;
   });
   if (!archived) return reply.code(404).send({ error: 'not_found', message: 'Registro não encontrado.' });
   return reply.code(204).send();
+});
+
+app.delete('/api/workspace/clients/:id/portal-link', { preHandler: app.authenticate }, async (request, reply) => {
+  try {
+  const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
+  if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Cliente invãlido.' });
+  const [client] = await db.select({ id: workspaceRecords.id, data: workspaceRecords.data }).from(workspaceRecords).where(and(
+    eq(workspaceRecords.id, params.data.id), eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'clients'), isNull(workspaceRecords.archivedAt),
+  )).limit(1);
+  if (!client) return reply.code(404).send({ error: 'not_found', message: 'Cliente não encontrado.' });
+  const data = client.data as Record<string, unknown>;
+  const version = Number(data.portalTokenVersion ?? 0) + 1;
+  await db.update(workspaceRecords).set({ data: { ...data, portalTokenVersion: version, portalTokenActive: false, portalTokenExpiresAt: null, portalTokenRevokedAt: new Date().toISOString() }, updatedAt: new Date() }).where(and(eq(workspaceRecords.id, client.id), eq(workspaceRecords.organizationId, request.user.organizationId)));
+  await db.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'client', entityId: client.id, action: 'portal_link_revoked', payload: {} });
+  return { data: { revoked: true } };
+  } catch (error) {
+    request.log.error({ error }, 'Client portal link revocation failed');
+    if (process.env.NODE_ENV === 'development' && error instanceof Error) return reply.code(500).send({ error: 'portal_revocation_failed', message: error.message });
+    return reply.code(500).send({ error: 'internal_error', message: 'Não foi possível revogar o acesso ao portal.' });
+  }
 });
 
 app.post('/api/workspace/clients/:id/portal-link', { preHandler: app.authenticate }, async (request, reply) => {
@@ -2137,7 +3058,8 @@ app.post('/api/workspace/clients/:id/portal-link', { preHandler: app.authenticat
   if (!client) return reply.code(404).send({ error: 'not_found', message: 'Cliente não encontrado.' });
   const clientData = client.data as Record<string, unknown>;
   const version = Number(clientData.portalTokenVersion ?? 0) + 1;
-  await db.update(workspaceRecords).set({ data: { ...clientData, portalTokenVersion: version }, updatedAt: new Date() }).where(eq(workspaceRecords.id, client.id));
+  if (!z.string().email().safeParse(clientData.email).success) return reply.code(409).send({ error: 'portal_email_required', message: 'Cadastre um e-mail válido para o cliente antes de ativar o login verificado do portal.' });
+  await db.update(workspaceRecords).set({ data: { ...clientData, portalTokenVersion: version, portalTokenActive: true, portalAuthRequired: true, portalTokenCreatedAt: new Date().toISOString(), portalTokenRevokedAt: null, portalTokenExpiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString() }, updatedAt: new Date() }).where(eq(workspaceRecords.id, client.id));
   const portalPayload = { sub: client.id, role: 'member' as const, purpose: 'client_portal', clientRecordId: client.id, organizationId: request.user.organizationId, version };
   const token = app.jwt.sign(portalPayload, { expiresIn: '90d' });
   await db.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'client', entityId: client.id, action: 'portal_link_created', payload: {} });
@@ -2152,6 +3074,74 @@ function verifyPortalClaims(token: string) {
   } catch { return null; }
 }
 
+function portalSessionIsValid(request: FastifyRequest, client: Record<string, unknown>, linkClaims: { clientRecordId: string; organizationId: string; version: number }) {
+  if (client.portalAuthRequired !== true) return true;
+  const bearer = String(request.headers.authorization || '').match(/^Bearer\s+(.+)$/i)?.[1];
+  if (!bearer) return false;
+  try {
+    const session = app.jwt.verify<{ purpose?: string; clientRecordId?: string; organizationId?: string; version?: number }>(bearer);
+    return session.purpose === 'client_portal_session' && session.clientRecordId === linkClaims.clientRecordId && session.organizationId === linkClaims.organizationId && session.version === linkClaims.version;
+  } catch { return false; }
+}
+
+app.post('/api/public/client-portal/:token/request-code', { config: { rateLimit: { max: 3, timeWindow: '15 minutes' } } }, async (request, reply) => {
+  const params = z.object({ token: z.string().min(20).max(4096) }).safeParse(request.params);
+  const body = parseBody(z.object({ identifier: z.string().trim().min(3).max(254) }), request.body, reply);
+  if (!params.success) return reply.code(404).send({ error: 'portal_not_found' });
+  if (!body) return;
+  const claims = verifyPortalClaims(params.data.token);
+  if (!claims) return reply.code(404).send({ error: 'portal_not_found' });
+  const [client] = await db.select().from(workspaceRecords).where(and(eq(workspaceRecords.id, claims.clientRecordId), eq(workspaceRecords.organizationId, claims.organizationId), eq(workspaceRecords.resource, 'clients'), isNull(workspaceRecords.archivedAt))).limit(1);
+  if (!client) return reply.code(404).send({ error: 'portal_not_found' });
+  const clientData = client.data as Record<string, unknown>;
+  if (clientData.portalAuthRequired !== true || Number(clientData.portalTokenVersion ?? 0) !== claims.version) return reply.code(404).send({ error: 'portal_not_found' });
+  const apiKey = process.env.RESEND_API_KEY;
+  const from = process.env.RESEND_FROM_EMAIL?.trim() || '';
+  if (!apiKey || !z.string().email().safeParse(from).success || !await isIntegrationEnabled(claims.organizationId, 'resend')) {
+    return reply.code(503).send({ error: 'portal_email_unavailable', message: 'O acesso verificado do portal está temporariamente indisponível. A equipe precisa configurar o envio seguro de e-mail.' });
+  }
+  await db.update(workspaceRecords).set({ archivedAt: new Date(), updatedAt: new Date() }).where(and(eq(workspaceRecords.organizationId, claims.organizationId), eq(workspaceRecords.resource, 'portal-auth-challenges'), isNull(workspaceRecords.archivedAt), sql`(${workspaceRecords.data}->>'expiresAt')::timestamptz < now()`));
+  const challengeId = randomUUID();
+  const rawCode = String(100000 + (randomBytes(4).readUInt32BE(0) % 900000));
+  const matched = portalIdentifierMatches(clientData, body.identifier) && z.string().email().safeParse(clientData.email).success;
+  const challengeData = { purpose: 'portal_login', clientId: client.id, tokenVersion: claims.version, codeHash: matched ? hashPortalLoginCode(challengeId, rawCode, env.JWT_SECRET) : randomBytes(32).toString('hex'), expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(), attempts: 0, consumedAt: null, dummy: !matched };
+  await db.insert(workspaceRecords).values({ id: challengeId, organizationId: claims.organizationId, createdBy: null, resource: 'portal-auth-challenges', data: challengeData });
+  if (matched) {
+    try {
+      const response = await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json', 'Idempotency-Key': `nexo-portal-${challengeId}` }, body: JSON.stringify({ from, to: [String(clientData.email)], subject: 'Seu código de acesso ao portal Nexo', text: `Seu código de acesso é ${rawCode}. Ele expira em 10 minutos. Se você não solicitou, ignore este e-mail.`, html: `<p>Seu código de acesso ao portal Nexo é:</p><p style="font-size:28px;font-weight:700;letter-spacing:6px">${rawCode}</p><p>Ele expira em 10 minutos. Se você não solicitou, ignore este e-mail.</p>` }), signal: AbortSignal.timeout(12_000) });
+      if (!response.ok) throw new Error('resend_send_failed');
+    } catch {
+      await db.update(workspaceRecords).set({ archivedAt: new Date(), updatedAt: new Date() }).where(and(eq(workspaceRecords.id, challengeId), eq(workspaceRecords.organizationId, claims.organizationId), eq(workspaceRecords.resource, 'portal-auth-challenges')));
+      return reply.code(202).send({ data: { challengeId, message: 'Se os dados conferirem, enviaremos um codigo para o e-mail cadastrado.' } });
+    }
+  }
+  const maskedEmail = matched ? maskPortalEmail(String(clientData.email)) : '';
+  return reply.code(202).send({ data: { challengeId, message: 'Se os dados conferirem, enviaremos um codigo para o e-mail cadastrado.', ...(maskedEmail ? { destination: maskedEmail } : {}) } });
+});
+
+app.post('/api/public/client-portal/:token/verify-code', { config: { rateLimit: { max: 6, timeWindow: '10 minutes' } } }, async (request, reply) => {
+  const params = z.object({ token: z.string().min(20).max(4096) }).safeParse(request.params);
+  const body = parseBody(z.object({ challengeId: z.string().uuid(), code: z.string().trim().regex(/^\d{6}$/) }), request.body, reply);
+  if (!params.success) return reply.code(404).send({ error: 'portal_not_found' });
+  if (!body) return;
+  const claims = verifyPortalClaims(params.data.token);
+  if (!claims) return reply.code(404).send({ error: 'portal_not_found' });
+  const verified = await db.transaction(async (tx) => {
+    const [challenge] = await tx.select().from(workspaceRecords).where(and(eq(workspaceRecords.id, body.challengeId), eq(workspaceRecords.organizationId, claims.organizationId), eq(workspaceRecords.resource, 'portal-auth-challenges'), isNull(workspaceRecords.archivedAt))).for('update').limit(1);
+    if (!challenge) return false;
+    const data = challenge.data as Record<string, unknown>;
+    const now = new Date();
+    const expiry = new Date(String(data.expiresAt || ''));
+    if (data.purpose !== 'portal_login' || data.clientId !== claims.clientRecordId || Number(data.tokenVersion) !== claims.version || data.dummy === true || data.consumedAt || !Number.isFinite(expiry.valueOf()) || expiry <= now || Number(data.attempts || 0) >= 5) return false;
+    const matched = portalLoginCodeMatches(challenge.id, body.code, env.JWT_SECRET, String(data.codeHash || ''));
+    await tx.update(workspaceRecords).set({ data: { ...data, attempts: Number(data.attempts || 0) + 1, ...(matched ? { consumedAt: now.toISOString() } : {}) }, updatedAt: now }).where(eq(workspaceRecords.id, challenge.id));
+    return matched;
+  });
+  if (!verified) return reply.code(400).send({ error: 'portal_code_invalid', message: 'Código inválido ou expirado. Solicite um novo código e tente novamente.' });
+  const accessToken = app.jwt.sign({ sub: claims.clientRecordId, role: 'member' as const, purpose: 'client_portal_session', clientRecordId: claims.clientRecordId, organizationId: claims.organizationId, version: claims.version }, { expiresIn: '8h' });
+  return { data: { accessToken, expiresIn: '8h' } };
+});
+
 app.get('/api/public/client-portal/:token', async (request, reply) => {
   const params = z.object({ token: z.string().min(20).max(4096) }).safeParse(request.params);
   if (!params.success) return reply.code(404).send({ error: 'portal_not_found' });
@@ -2163,7 +3153,14 @@ app.get('/api/public/client-portal/:token', async (request, reply) => {
   if (!record) return reply.code(404).send({ error: 'portal_not_found' });
   const client = record.data as Record<string, unknown>;
   if (Number(client.portalTokenVersion ?? 0) !== claims.version) return reply.code(404).send({ error: 'portal_not_found' });
-  const clientName = String(client.name ?? client.title ?? '');
+  if (!portalSessionIsValid(request, client, claims)) return reply.code(401).send({ error: 'portal_verification_required', message: 'Confirme sua identidade com o código enviado ao e-mail cadastrado.' });
+  const [preferences] = await db.select().from(workspaceRecords).where(and(
+    eq(workspaceRecords.organizationId, claims.organizationId), eq(workspaceRecords.resource, 'settings'), isNull(workspaceRecords.archivedAt),
+    sql`${workspaceRecords.data}->>'key' = 'workspace-preferences'`,
+  )).limit(1);
+  const preferenceSettings = (preferences?.data as Record<string, any> | undefined)?.settings;
+  const branding = safeClientPortalBranding(preferenceSettings?.workspace?.brandLogo);
+  const clientName = String(client.name ?? client.title ?? 'Cliente');
   const visibility = { project: true, tasks: true, contracts: true, payments: true, approvals: true, ...((client.portalVisibility && typeof client.portalVisibility === 'object') ? client.portalVisibility as Record<string, boolean> : {}) };
   const resources = ['projects', 'tasks', 'contracts', 'approvals'];
   const relatedRows = await Promise.all(resources.map((resource) => db.select().from(workspaceRecords).where(and(
@@ -2171,23 +3168,33 @@ app.get('/api/public/client-portal/:token', async (request, reply) => {
   )).orderBy(desc(workspaceRecords.updatedAt)).limit(300)));
   const related = Object.fromEntries(resources.map((resource, index) => [resource, relatedRows[index]!.filter((row) => {
     const data = row.data as Record<string, unknown>;
-    return data.clientId === record.id;
+    return data.clientId === record.id || data.workspaceClientId === record.id;
   }).map((row) => {
     const data = row.data as Record<string, unknown>;
     const common = { id: row.id, status: data.status };
     if (resource === 'projects') return { ...common, name: data.name ?? data.title ?? '', due: data.due ?? data.dueDate ?? '', progress: data.progress ?? 0 };
     if (resource === 'tasks') return { ...common, title: data.title ?? data.name ?? '', due: data.due ?? data.dueDate ?? '' };
     if (resource === 'contracts') return { ...common, title: data.title ?? data.name ?? '', code: data.code ?? '', renewal: data.renewal ?? '' };
+    if (resource === 'approvals') return portalApprovalRecord(row.id, data);
     return { ...common, title: data.title ?? data.name ?? '' };
   })]));
-  const [payments] = await Promise.all([db.select({ id: billingOrders.id, description: billingOrders.description, amount: billingOrders.amount, status: billingOrders.status, dueAt: billingOrders.dueAt, paymentDetails: billingOrders.paymentDetails, createdAt: billingOrders.createdAt }).from(billingOrders).where(and(
-    eq(billingOrders.organizationId, claims.organizationId), eq(billingOrders.clientId, record.id),
-  )).orderBy(desc(billingOrders.createdAt)).limit(100)]);
-  const publicPayments = payments.map((item) => {
-    const details = item.paymentDetails && typeof item.paymentDetails === 'object' ? item.paymentDetails as Record<string, unknown> : {};
-    return { id: item.id, description: item.description, amount: item.amount, status: item.status, dueAt: item.dueAt, paymentDetails: { pixCode: details.pixCode ?? null, ticketUrl: details.ticketUrl ?? null } };
-  });
-  return { data: { client: { name: clientName, person: client.person ?? '' }, projects: visibility.project ? related.projects : [], tasks: visibility.tasks ? related.tasks : [], contracts: visibility.contracts ? related.contracts : [], approvals: visibility.approvals ? related.approvals : [], payments: visibility.payments ? publicPayments : [] } };
+  const [payments, subscriptions] = await Promise.all([
+    db.select({ id: billingOrders.id, description: billingOrders.description, amount: billingOrders.amount, status: billingOrders.status, dueAt: billingOrders.dueAt, paymentDetails: billingOrders.paymentDetails, createdAt: billingOrders.createdAt }).from(billingOrders).where(and(
+      eq(billingOrders.organizationId, claims.organizationId), eq(billingOrders.workspaceClientId, record.id),
+    )).orderBy(desc(billingOrders.createdAt)).limit(100),
+    db.select({ id: billingSubscriptions.id, description: billingSubscriptions.description, amount: billingSubscriptions.amount, status: billingSubscriptions.status, dueAt: billingSubscriptions.nextPaymentAt, createdAt: billingSubscriptions.createdAt }).from(billingSubscriptions).where(and(
+      eq(billingSubscriptions.organizationId, claims.organizationId), eq(billingSubscriptions.workspaceClientId, record.id),
+    )).orderBy(desc(billingSubscriptions.createdAt)).limit(100),
+  ]);
+  const publicPayments = [
+    ...payments.map((item) => {
+      const details = item.paymentDetails && typeof item.paymentDetails === 'object' ? item.paymentDetails as Record<string, unknown> : {};
+      return { id: item.id, description: item.description, amount: item.amount, status: item.status, dueAt: item.dueAt, paymentDetails: { pixCode: details.pixCode ?? null, ticketUrl: details.ticketUrl ?? null } };
+    }),
+    ...subscriptions.map((item) => ({ id: item.id, description: item.description, amount: item.amount, status: item.status, dueAt: item.dueAt, paymentDetails: {} })),
+  ].sort((a, b) => new Date(b.dueAt || 0).valueOf() - new Date(a.dueAt || 0).valueOf()).slice(0, 100);
+  const publicApprovals = visibility.approvals ? (related.approvals ?? []) : [];
+  return { data: { client: { name: clientName, person: client.person ?? '' }, branding, projects: visibility.project ? related.projects : [], tasks: visibility.tasks ? related.tasks : [], contracts: visibility.contracts ? related.contracts : [], approvals: publicApprovals, payments: visibility.payments ? publicPayments : [] } };
 });
 
 app.post('/api/public/client-portal/:token/messages', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
@@ -2199,8 +3206,10 @@ app.post('/api/public/client-portal/:token/messages', { config: { rateLimit: { m
   if (!claims) return reply.code(404).send({ error: 'portal_not_found' });
   const [client] = await db.select().from(workspaceRecords).where(and(eq(workspaceRecords.id, claims.clientRecordId), eq(workspaceRecords.organizationId, claims.organizationId), eq(workspaceRecords.resource, 'clients'), isNull(workspaceRecords.archivedAt))).limit(1);
   if (!client) return reply.code(404).send({ error: 'portal_not_found' });
-  if (Number((client.data as Record<string, unknown>).portalTokenVersion ?? 0) !== claims.version) return reply.code(404).send({ error: 'portal_not_found' });
-  const name = String((client.data as Record<string, unknown>).name ?? 'Cliente');
+  const clientData = client.data as Record<string, unknown>;
+  if (Number(clientData.portalTokenVersion ?? 0) !== claims.version) return reply.code(404).send({ error: 'portal_not_found' });
+  if (!portalSessionIsValid(request, clientData, claims)) return reply.code(401).send({ error: 'portal_verification_required', message: 'Confirme sua identidade antes de enviar mensagens.' });
+  const name = String(clientData.name ?? 'Cliente');
   const [saved] = await db.transaction(async (tx) => {
     const row = await tx.insert(workspaceRecords).values({ organizationId: claims.organizationId, createdBy: null, resource: 'inbox', data: {
       clientId: client.id, client: name, channel: 'portal', direction: 'inbound', message: body.message, status: 'unread', source: 'client-portal',
@@ -2221,7 +3230,9 @@ app.post('/api/public/client-portal/:token/approvals/:id', { config: { rateLimit
   const [client] = await db.select().from(workspaceRecords).where(and(eq(workspaceRecords.id, claims.clientRecordId), eq(workspaceRecords.organizationId, claims.organizationId), eq(workspaceRecords.resource, 'clients'), isNull(workspaceRecords.archivedAt))).limit(1);
   const [approval] = await db.select().from(workspaceRecords).where(and(eq(workspaceRecords.id, params.data.id), eq(workspaceRecords.organizationId, claims.organizationId), eq(workspaceRecords.resource, 'approvals'), isNull(workspaceRecords.archivedAt))).limit(1);
   if (!client || !approval) return reply.code(404).send({ error: 'approval_not_found' });
-  if (Number((client.data as Record<string, unknown>).portalTokenVersion ?? 0) !== claims.version) return reply.code(404).send({ error: 'approval_not_found' });
+  const clientData = client.data as Record<string, unknown>;
+  if (Number(clientData.portalTokenVersion ?? 0) !== claims.version) return reply.code(404).send({ error: 'approval_not_found' });
+  if (!portalSessionIsValid(request, clientData, claims)) return reply.code(401).send({ error: 'portal_verification_required', message: 'Confirme sua identidade antes de responder à aprovação.' });
   const approvalData = approval.data as Record<string, unknown>;
   if (approvalData.clientId !== client.id) return reply.code(404).send({ error: 'approval_not_found' });
   const status = body.decision === 'approved' ? 'Aprovada' : 'Alterações solicitadas';
@@ -2299,8 +3310,12 @@ async function processOverdueBillingEvents() {
 }
 
 app.setErrorHandler((error, request, reply) => {
-  app.log.error(error);
   if (reply.sent) return;
+  if (error && typeof error === 'object' && 'statusCode' in error && error.statusCode === 429) {
+    app.log.warn({ route: request.routeOptions.url || 'unmatched' }, 'Rate limit reached');
+    return reply.code(429).send({ error: 'rate_limited', message: 'Muitas solicitações em pouco tempo. Aguarde alguns segundos e tente novamente.' });
+  }
+  app.log.error(error);
   if (reply.statusCode >= 500 && process.env.SENTRY_DSN) {
     Sentry.captureException(error, { extra: { method: request.method, route: request.routeOptions.url || 'unmatched', statusCode: reply.statusCode } });
   }
@@ -2315,15 +3330,17 @@ app.addHook('onClose', async () => {
 });
 try {
   if (process.env.RUN_MIGRATIONS !== 'false') await migrate(db, { migrationsFolder: resolve(process.cwd(), 'drizzle') });
-  const removedAccounts = await db.transaction(async (tx) => {
+  const ownerId = await db.transaction(async (tx) => {
     const [owner] = await tx.select({ id: users.id }).from(users).where(sql`lower(${users.email}) = ${env.OWNER_EMAIL}`).limit(1);
     if (!owner) return null;
-    const removed = await tx.delete(users).where(sql`${users.id} <> ${owner.id}`).returning({ id: users.id });
     await tx.update(users).set({ active: true, role: 'owner' }).where(eq(users.id, owner.id));
-    return { ownerId: owner.id, removedCount: removed.length };
+    return owner.id;
   });
-  if (removedAccounts === null) app.log.error('Owner account is missing; no user accounts were removed.');
-  else { ownerAccountId = removedAccounts.ownerId; if (removedAccounts.removedCount > 0) app.log.info({ removedAccounts: removedAccounts.removedCount }, 'Removed non-owner accounts.'); }
+  if (ownerId === null) app.log.error('Owner account is missing; authenticated startup is unavailable.');
+  else {
+    ownerAccountId = ownerId;
+    app.log.info('Owner account configured. Other accounts require an explicit team invitation before sign-in.');
+  }
   await app.listen({ port: env.PORT, host: env.HOST });
   overdueWorkerTimer = setInterval(() => { void processOverdueBillingEvents(); }, 60_000);
   overdueWorkerTimer.unref();

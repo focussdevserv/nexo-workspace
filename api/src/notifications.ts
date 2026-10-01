@@ -19,6 +19,14 @@ const titlePairs: Record<string, [string, string]> = {
   billing_subscription: ['Assinatura criada', 'Assinatura atualizada'],
 };
 
+export function notificationAccessPath(entityType: string) {
+  if (entityType === 'billing_order') return '/api/billing/orders';
+  if (entityType === 'billing_subscription') return '/api/billing/subscriptions';
+  if (entityType === 'client') return '/api/clients';
+  if (titlePairs[entityType]) return `/api/workspace/${entityType}`;
+  return null;
+}
+
 export function resolveActivityNotificationTitle(entityType: string, action: string): string | null {
   if (!supportedActions.has(action)) return null;
   if (entityType === 'proposals' && action === 'accepted') return 'Proposta aceita';

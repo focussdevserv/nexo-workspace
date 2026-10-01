@@ -1,0 +1,26 @@
+.settings-brand-preview > .settings-brand-logo {
+  width: 56px;
+  height: 56px;
+  flex: none;
+  object-fit: contain;
+  padding: 4px;
+  border: 1px solid #e3e8ef;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.settings-brand-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 700px) {
+  .settings-brand-actions {
+    width: 100%;
+    padding-left: 68px;
+  }
+}
+
+.cp-brand img { width: 28px; height: 28px; object-fit: contain; border-radius: 5px; background: #fff; }

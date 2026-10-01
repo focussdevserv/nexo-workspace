@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { classifyWahaQrResponse, classifyWahaSessionReadiness } from '../src/integrations/waha.ts';
+import { buildWahaSendFilePayload, classifyWahaQrResponse, classifyWahaSessionReadiness } from '../src/integrations/waha.ts';
 
 test('treats an expired or unavailable QR challenge as a pending session state', () => {
   assert.equal(classifyWahaQrResponse(204), 'pending');
@@ -27,4 +27,17 @@ test('distinguishes QR pairing and paused sessions from a connected WhatsApp num
   assert.match(qr.message, /aguardam leitura do QR/);
   assert.equal(classifyWahaSessionReadiness([{ status: 'STOPPED' }]).status, 'setup_required');
   assert.equal(classifyWahaSessionReadiness([]).status, 'setup_required');
+});
+
+test('builds WAHA base64 file requests with captions and safe MIME types', () => {
+  assert.deepEqual(buildWahaSendFilePayload({ session: 'sales', chatId: '5511999999999@c.us', filename: 'brief.pdf', mimeType: 'application/pdf', data: 'JVBERiQ=', caption: 'Proposta revisada' }), {
+    session: 'sales', chatId: '5511999999999@c.us', file: { mimetype: 'application/pdf', filename: 'brief.pdf', data: 'JVBERiQ=' }, caption: 'Proposta revisada',
+  });
+  assert.equal(buildWahaSendFilePayload({ session: 'sales', chatId: '5511999999999@c.us', filename: 'file.bin', mimeType: 'bad\r\nContent-Type: text/html', data: 'AA==' }).file.mimetype, 'application/octet-stream');
+});
+
+test('rejects WAHA file payloads with invalid destinations or header injection', () => {
+  const base = { session: 'sales', chatId: '5511999999999@c.us', filename: 'brief.pdf', mimeType: 'application/pdf', data: 'AA==' };
+  assert.throws(() => buildWahaSendFilePayload({ ...base, filename: 'brief.pdf\r\nX-Api-Key: leaked' }), /waha_file_invalid/);
+  assert.throws(() => buildWahaSendFilePayload({ ...base, chatId: 'https://attacker.example/file' }), /waha_file_invalid/);
 });
