@@ -36,6 +36,7 @@ import { isApprovalAwaitingDecision, isApprovalPending } from '../lib/approval-s
 import { canCreateWorkRecord } from '../lib/work-screen-actions.js';
 import { nextAgendaEventTime, upcomingAgendaEvents } from '../lib/agenda-upcoming.js';
 import { googleCalendarErrorAction } from '../lib/google-calendar-error.js';
+import { matchesWorkSearch } from '../lib/work-search.js';
 
 function projectIsCompleted(project) {
   const status = String(project?.status || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
@@ -156,8 +157,7 @@ function AgendaCalendar({ events, selectedDate, setSelectedDate, agendaView, set
   const monthStart = (monthDate.getDay() - firstWeekday + 7) % 7;
   const weekStart = startOfCalendarWeek(selectedDate, weekStartPreference);
   const selectedKey = toLocalDateInput(selectedDate);
-  const query = agendaQuery.trim().toLocaleLowerCase(locale);
-  const filteredEvents = events.filter((event) => `${event.title || ''} ${event.detail || ''} ${event.client || ''} ${event.people || ''}`.toLocaleLowerCase(locale).includes(query));
+  const filteredEvents = events.filter((event) => matchesWorkSearch([event.title, event.detail, event.client, event.people], agendaQuery, locale));
   const sameDay = (a, b) => toLocalDateInput(a) === toLocalDateInput(b);
   const sortEvents = (items) => [...items].sort((a, b) => {
     const dateOrder = String(a.date || '').localeCompare(String(b.date || ''));
@@ -487,7 +487,7 @@ function WorkScreen({ page, navigationContext = null, onNavigationContextConsume
     return !entryDate || (entryDate >= hoursFrom && entryDate <= hoursTo);
   });
   const visibleHours = completedHours.filter((item) => `${item.project || ''} ${item.client || ''} ${item.title || ''}`.toLocaleLowerCase('pt-BR').includes(hoursQuery.toLocaleLowerCase('pt-BR')));
-  const visibleApprovals = approvals.filter((item) => `${item.title || ''} ${item.project || ''} ${item.client || ''} ${item.reviewer || ''} ${item.status || ''}`.toLocaleLowerCase('pt-BR').includes(approvalQuery.toLocaleLowerCase('pt-BR')));
+  const visibleApprovals = approvals.filter((item) => matchesWorkSearch([item.title, item.project, item.client, item.reviewer, item.status], approvalQuery));
   const activeProjects = projects.filter((item) => item.status === 'Em andamento' && !projectIsArchived(item)).length;
   const waitingProjects = projects.filter((item) => item.status === 'Aguardando cliente').length;
   const doneProjects = projects.filter(projectIsCompleted).length;

@@ -78,3 +78,5 @@ html[data-theme='dark'] .ns-screen .ns-integration-method{color:#b8d8ae}
 .ns-integration-google-state p,.ns-integration-google-state button{grid-column:2;margin:0}
 .ns-integration-google-state button{justify-self:start}
 @media(max-width:600px){.ns-screen .ns-integration-actions>*{flex:1 1 auto}.ns-screen .ns-integration-actions>button{min-width:calc(50% - 5px)}}
+.ns-oauth-owner-required{padding:10px 12px;border:1px solid #f0dfb4;border-radius:9px;background:#fff9e9;color:#805b17;font-size:12px;line-height:1.45}
+html[data-theme='dark'] .ns-oauth-owner-required{border-color:#63532d;background:#302a1b;color:#f0d795}

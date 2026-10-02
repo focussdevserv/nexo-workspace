@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { googleReauthorizationButtonState, integrationStatusTone, mercadoPagoAuthorizationButtonState } from './integration-auth-state.js';
+import { canAuthorizeOAuthIntegrations, googleReauthorizationButtonState, integrationStatusTone, mercadoPagoAuthorizationButtonState } from './integration-auth-state.js';
+
+test('only the workspace owner can start provider OAuth consent', () => {
+  assert.equal(canAuthorizeOAuthIntegrations('owner'), true);
+  for (const role of ['admin', 'member', 'viewer', '', undefined, null]) {
+    assert.equal(canAuthorizeOAuthIntegrations(role), false);
+  }
+});
 
 test('offers OAuth setup when server client credentials are missing', () => {
   assert.deepEqual(mercadoPagoAuthorizationButtonState({ configured: false, oauthAvailable: false }), {

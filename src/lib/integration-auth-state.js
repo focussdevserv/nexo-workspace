@@ -37,3 +37,8 @@ export function integrationStatusTone(state, { loading = false, error = false } 
     ? 'connected'
     : !state?.configured || state?.enabled === false ? 'disconnected' : 'pending';
 }
+
+/** OAuth consent routes are restricted by the API to the workspace owner. */
+export function canAuthorizeOAuthIntegrations(role) {
+  return role === 'owner';
+}

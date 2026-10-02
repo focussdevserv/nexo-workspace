@@ -3,7 +3,7 @@ import { fetchAllRecords, useWorkspaceRecords } from '../lib/workspace-api.js';
 import { Check, Copy, MoreHorizontal, Pencil, Plus, Search, ShieldCheck, Trash2, UserMinus, UserRound, Users, X } from 'lucide-react';
 import { apiRequest } from '../lib/workspace-api.js';
 import { isLocalDemoActive } from '../lib/local-demo.js';
-import { permissionDraftForAccount, permissionsPayload, setModulePermissionMode, validatePermissionDraft } from '../lib/team-permissions.js';
+import { effectiveModulePermissionDraft, permissionDraftForAccount, permissionsPayload, setModulePermissionMode, setModulePermissionValue, validatePermissionDraft } from '../lib/team-permissions.js';
 import './team.css';
 
 const accessModules = [
@@ -167,6 +167,13 @@ function TeamAccessPanel({ notify, onAccountCountChange }) {
     setEditingPermissions(account.id);
     setPermissionDraft(permissionDraftForAccount(account, accessModules.map(([key]) => key)));
   };
+  const changeModulePermission = (account, moduleKey, permission, value) => {
+    if (permissionDraft?.[moduleKey] === null && !window.confirm('Esta permissÃ£o Ã© herdada e pode variar entre telas do mÃ³dulo. Personalizar vai substituir o padrÃ£o por permissÃµes uniformes neste mÃ³dulo. Continuar?')) {
+      setPermissionDraft({ ...permissionDraft });
+      return;
+    }
+    setPermissionDraft((current) => setModulePermissionValue(current, account.role, moduleKey, permission, value));
+  };
   const savePermissions = async (account) => {
     if (!permissionDraft || busy) return;
     if (scopeError && permissionDraft.scope?.mode === 'selected') { setError('Atualize os clientes e projetos antes de salvar um escopo selecionado.'); return; }
@@ -194,7 +201,17 @@ function TeamAccessPanel({ notify, onAccountCountChange }) {
         <label className="team-record-scope">Escopo dos registros<select disabled={busy} value={permissionDraft.scope?.mode || 'all'} onChange={(event) => setPermissionDraft((current) => ({ ...current, scope: { ...(current.scope || { clientIds: [], projectIds: [] }), mode: event.target.value } }))}><option value="all">Todos os registros permitidos pelos modulos</option><option value="selected">Somente clientes e projetos selecionados</option></select></label>
         {permissionDraft.scope?.mode === 'selected' && <><p className="team-scope-hint">Registros vinculados por ID ficam visiveis; registros sem vinculo nao aparecem.</p><div className="team-scope-selects"><label>Clientes<select multiple size="6" disabled={busy || Boolean(scopeError)} value={permissionDraft.scope.clientIds || []} onChange={(event) => setPermissionDraft((current) => ({ ...current, scope: { ...current.scope, clientIds: [...event.target.selectedOptions].map((option) => option.value) } }))}>{scopeSources.clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}</select></label><label>Projetos<select multiple size="6" disabled={busy || Boolean(scopeError)} value={permissionDraft.scope.projectIds || []} onChange={(event) => setPermissionDraft((current) => ({ ...current, scope: { ...current.scope, projectIds: [...event.target.selectedOptions].map((option) => option.value) } }))}>{scopeSources.projects.map((project) => <option key={project.id} value={project.id}>{project.name || project.title}</option>)}</select></label></div></>}
         {scopeError && permissionDraft.scope?.mode === 'selected' && <p className="team-scope-empty-warning" role="status">Atualize clientes e projetos antes de escolher registros.</p>}
-        <div className="team-permission-grid">{accessModules.map(([key, label]) => { const access = permissionDraft[key] || { read: false, write: false, delete: false }; return <div className="team-permission-module" key={key}><b>{label}</b><label><input type="checkbox" disabled={busy} checked={Boolean(access.read)} onChange={(event) => setPermissionDraft((current) => ({ ...current, [key]: { ...(current[key] || {}), read: event.target.checked, write: event.target.checked ? Boolean(current[key]?.write) : false, delete: event.target.checked ? Boolean(current[key]?.delete) : false } }))} />Ler</label><label><input type="checkbox" disabled={busy || !access.read} checked={Boolean(access.write)} onChange={(event) => setPermissionDraft((current) => ({ ...current, [key]: { ...(current[key] || {}), read: true, write: event.target.checked } }))} />Editar</label><label><input type="checkbox" disabled={busy || !access.read} checked={Boolean(access.delete)} onChange={(event) => setPermissionDraft((current) => ({ ...current, [key]: { ...(current[key] || {}), read: true, delete: event.target.checked } }))} />Excluir</label>{permissionDraft[key] === null ? <><small>Padrão do papel ativo; as caixas marcam substituições.</small><button type="button" className="team-permission-reset" disabled={busy} onClick={() => setPermissionDraft((current) => setModulePermissionMode(current, key, "blocked"))}>Bloquear acesso herdado</button></> : <button type="button" className="team-permission-reset" disabled={busy} onClick={() => setPermissionDraft((current) => setModulePermissionMode(current, key, "inherited"))}>Usar padrão do papel</button>}</div>; })}</div>
+        <div className="team-permission-grid">{accessModules.map(([key, label]) => {
+          const inherited = permissionDraft[key] === null;
+          const access = effectiveModulePermissionDraft(permissionDraft, account.role, key);
+          return <div className="team-permission-module" key={key}>
+            <b>{label}</b>
+            <label><input type="checkbox" ref={(element) => { if (element) element.indeterminate = access.read === null; }} aria-checked={access.read === null ? 'mixed' : access.read} disabled={busy} checked={access.read === true} onChange={(event) => changeModulePermission(account, key, 'read', event.target.checked)} />Ler</label>
+            <label><input type="checkbox" ref={(element) => { if (element) element.indeterminate = access.write === null; }} aria-checked={access.write === null ? 'mixed' : access.write} disabled={busy || access.read === false} checked={access.write === true} onChange={(event) => changeModulePermission(account, key, 'write', event.target.checked)} />Editar</label>
+            <label><input type="checkbox" ref={(element) => { if (element) element.indeterminate = access.delete === null; }} aria-checked={access.delete === null ? 'mixed' : access.delete} disabled={busy || access.read === false} checked={access.delete === true} onChange={(event) => changeModulePermission(account, key, 'delete', event.target.checked)} />Excluir</label>
+            {inherited ? <><small>Padrão herdado de {account.role === 'admin' ? 'administrador' : 'membro'}. Acesso que varia por tela aparece parcialmente marcado.</small><button type="button" className="team-permission-reset" disabled={busy} onClick={() => setPermissionDraft((current) => setModulePermissionMode(current, key, 'blocked'))}>Bloquear acesso herdado</button></> : <button type="button" className="team-permission-reset" disabled={busy} onClick={() => setPermissionDraft((current) => setModulePermissionMode(current, key, 'inherited'))}>Usar padrão do papel</button>}
+          </div>;
+        })}</div>
         <div className="team-permission-actions"><button type="button" className="admin-secondary" disabled={busy} onClick={() => { setEditingPermissions(null); setPermissionDraft(null); }}>Cancelar</button><button type="button" className="admin-primary" disabled={busy || Boolean(scopeError && permissionDraft.scope?.mode === 'selected')} onClick={() => savePermissions(account)}>{busy ? 'Salvando...' : 'Salvar permissoes'}</button></div>
       </div>}
     </React.Fragment>)}{!accounts.length && <p className="team-empty">Nenhuma conta encontrada.</p>}</div>}
