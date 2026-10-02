@@ -5,7 +5,7 @@ import {
   CalendarDays, Check, CheckSquare, ChevronDown, ChevronRight, CircleDollarSign,
   Clock3, FileText, FolderKanban, House, Inbox, Instagram, LayoutDashboard,
   Mail, MessageCircle, Menu, MoreVertical, Paperclip, Phone, Plus, Search, Send,
-  Settings, Sparkles, Users, Video, X,
+  Settings, Sparkles, Sun, Moon, Users, Video, X,
 } from 'lucide-react';
 const CommercialScreen = lazy(() => import('./screens/CommercialScreens.jsx'));
 const WorkScreen = lazy(() => import('./screens/WorkScreens.jsx'));
@@ -406,6 +406,26 @@ function WorkspaceShell() {
     window.setTimeout(() => setToast(''), 2600);
   };
 
+  const toggleTheme = async () => {
+    const nextPreferences = publishWorkspacePreferences({ ...preferences, darkMode: !preferences.darkMode });
+    try {
+      const records = await fetchAllRecords('/api/workspace/settings');
+      const existing = records.find((record) => record.key === 'workspace-preferences');
+      const data = {
+        key: 'workspace-preferences',
+        settings: {
+          ...(existing?.settings || {}),
+          preferences: { ...(existing?.settings?.preferences || {}), ...nextPreferences },
+        },
+      };
+      if (existing?.id) {
+        await apiRequest(`/api/workspace/settings/${existing.id}`, { method: 'PATCH', body: JSON.stringify({ data }) });
+      } else {
+        await apiRequest('/api/workspace/settings', { method: 'POST', body: JSON.stringify({ data }) });
+      }
+    } catch { /* Keep the selected theme locally if the server is temporarily unavailable. */ }
+  };
+
   const toggleTask = async (id) => {
     const task = tasks.find((item) => item.id === id);
     if (!task) return;
@@ -440,7 +460,7 @@ function WorkspaceShell() {
             <div className={`strip-event ${todayEvents.length ? 'strip-current' : 'strip-idle'}`}><span className="time-pin">{now}</span><strong>{todayEvents[0]?.title || todayEvents[0]?.name || "Agenda livre"}</strong><span className="strip-empty">{todayEvents[0]?.time || (todayEvents[0]?.startsAt ? new Date(todayEvents[0].startsAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : "Sem compromissos marcados.")}</span></div>
           </div>
           {mobileMenuOpen && <button className="mobile-nav-backdrop" type="button" aria-label="Fechar menu" onClick={() => setMobileMenuOpen(false)} />}
-          <div className="top-actions"><button className="icon-button mobile-menu-toggle" aria-label="Abrir menu" aria-expanded={mobileMenuOpen} aria-controls="workspace-mobile-navigation" onClick={() => setMobileMenuOpen((open) => !open)}><Menu size={19} /></button><button className="icon-button" aria-label="Buscar" aria-expanded={searchOpen} onClick={() => { setSearchOpen((open) => !open); setSearchQuery(''); }}><Search size={19} /></button><button className="icon-button notification-button" aria-label={`Notificações${notificationUnread ? `, ${notificationUnread} não lidas` : ''}`} aria-expanded={notificationOpen} aria-haspopup="dialog" onClick={() => { setNotificationOpen((open) => !open); refreshNotifications(); }}><Bell size={19} />{notificationUnread > 0 && <span className="notification-count">{notificationUnread > 99 ? '99+' : notificationUnread}</span>}</button><Avatar initials={initials || "—"} color="teal" online />{notificationOpen && <section className="notification-panel" role="dialog" aria-label="Central de notificações"><header><div><b>Notificações</b><span>{notificationUnread ? `${notificationUnread} não lidas` : 'Atualizadas com os dados do workspace'}</span></div><button type="button" className="notification-mark-read" onClick={markNotificationsRead} disabled={!notificationUnread}>Marcar como lidas</button></header>{notificationError ? <div className="notification-state error" role="alert"><span>{notificationError}</span><button type="button" onClick={refreshNotifications}>Tentar novamente</button></div> : notificationLoading ? <div className="notification-state">Carregando notificações...</div> : notificationItems.length === 0 ? <div className="notification-state"><Bell size={21} /><b>Tudo em dia</b><span>Quando houver atualizações em clientes, projetos, tarefas ou cobranças, elas aparecerão aqui.</span></div> : <div className="notification-list">{notificationItems.map((item) => <button type="button" className={`notification-item ${item.unread ? 'unread' : ''}`} key={item.id} onClick={() => openNotification(item)}><span className="notification-item-dot" /><span className="notification-item-copy"><b>{item.title}</b><span>{item.detail}</span><small>{new Date(item.createdAt).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}</small></span><ArrowRight size={15} /></button>)}</div>}</section>}{searchOpen && <div className="quick-search-panel"><label><Search size={15} /><input autoFocus value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Buscar uma área do Nexo" /></label>{navGroups.flatMap((group) => group.items).filter((item) => !searchQuery || item.label.toLocaleLowerCase('pt-BR').includes(searchQuery.toLocaleLowerCase('pt-BR'))).slice(0, 8).map((item) => <button type="button" key={item.label} onClick={() => { setActiveNav(item.label); setMobileMenuOpen(false); setSearchOpen(false); }}>{item.label}<ArrowRight size={14} /></button>)}</div>}</div>
+          <div className="top-actions"><button className="icon-button mobile-menu-toggle" aria-label="Abrir menu" aria-expanded={mobileMenuOpen} aria-controls="workspace-mobile-navigation" onClick={() => setMobileMenuOpen((open) => !open)}><Menu size={19} /></button><button className="icon-button" aria-label="Buscar" aria-expanded={searchOpen} onClick={() => { setSearchOpen((open) => !open); setSearchQuery(''); }}><Search size={19} /></button><button className="icon-button theme-toggle-button" type="button" aria-label={preferences.darkMode ? 'Ativar modo claro' : 'Ativar modo escuro'} title={preferences.darkMode ? 'Ativar modo claro' : 'Ativar modo escuro'} onClick={toggleTheme}>{preferences.darkMode ? <Sun size={19} /> : <Moon size={19} />}</button><button className="icon-button notification-button" aria-label={`Notificações${notificationUnread ? `, ${notificationUnread} não lidas` : ''}`} aria-expanded={notificationOpen} aria-haspopup="dialog" onClick={() => { setNotificationOpen((open) => !open); refreshNotifications(); }}><Bell size={19} />{notificationUnread > 0 && <span className="notification-count">{notificationUnread > 99 ? '99+' : notificationUnread}</span>}</button><Avatar initials={initials || "—"} color="teal" online />{notificationOpen && <section className="notification-panel" role="dialog" aria-label="Central de notificações"><header><div><b>Notificações</b><span>{notificationUnread ? `${notificationUnread} não lidas` : 'Atualizadas com os dados do workspace'}</span></div><button type="button" className="notification-mark-read" onClick={markNotificationsRead} disabled={!notificationUnread}>Marcar como lidas</button></header>{notificationError ? <div className="notification-state error" role="alert"><span>{notificationError}</span><button type="button" onClick={refreshNotifications}>Tentar novamente</button></div> : notificationLoading ? <div className="notification-state">Carregando notificações...</div> : notificationItems.length === 0 ? <div className="notification-state"><Bell size={21} /><b>Tudo em dia</b><span>Quando houver atualizações em clientes, projetos, tarefas ou cobranças, elas aparecerão aqui.</span></div> : <div className="notification-list">{notificationItems.map((item) => <button type="button" className={`notification-item ${item.unread ? 'unread' : ''}`} key={item.id} onClick={() => openNotification(item)}><span className="notification-item-dot" /><span className="notification-item-copy"><b>{item.title}</b><span>{item.detail}</span><small>{new Date(item.createdAt).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}</small></span><ArrowRight size={15} /></button>)}</div>}</section>}{searchOpen && <div className="quick-search-panel"><label><Search size={15} /><input autoFocus value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Buscar uma área do Nexo" /></label>{navGroups.flatMap((group) => group.items).filter((item) => !searchQuery || item.label.toLocaleLowerCase('pt-BR').includes(searchQuery.toLocaleLowerCase('pt-BR'))).slice(0, 8).map((item) => <button type="button" key={item.label} onClick={() => { setActiveNav(item.label); setMobileMenuOpen(false); setSearchOpen(false); }}>{item.label}<ArrowRight size={14} /></button>)}</div>}</div>
         </header>
 
         <div className="page-content">

@@ -28,3 +28,6 @@
 
 /* Keep compact workspace copy and controls readable at normal zoom. */
 .app-shell main :is(p,label,button,small,td,th,input,select,textarea){font-size:max(13px,.8125em)}
+
+.app-shell .theme-toggle-button:hover{color:#16815e;background:#e8f5ef}
+html[data-theme='dark'] .app-shell .theme-toggle-button:hover{color:#a8edcc;background:#18372f}
