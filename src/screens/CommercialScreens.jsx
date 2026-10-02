@@ -29,7 +29,7 @@ import { clientContactActions } from "../lib/client-contact-actions.js";
 import { removeClientContact } from "../lib/client-contact-records.js";
 import { clientFileRecordForUpload } from "../lib/client-file-link.js";
 import { buildClientRelationshipHistory, clientRelationshipHistoryDateLabel } from "../lib/client-relationship-history.js";
-import { buildCommercialRecordEditorPatch, commercialRecordEditorDraft, commercialRecordEditorFields, commercialRecordEditorIsDirty } from "../lib/commercial-record-editor.js";
+import { buildCommercialRecordEditorPatch, companyContactCount, commercialRecordEditorDraft, commercialRecordEditorFields, commercialRecordEditorIsDirty } from "../lib/commercial-record-editor.js";
 import { filterCommercialRecords } from "../lib/commercial-record-filter.js";
 const datasets = {
   leads: [],
@@ -366,6 +366,7 @@ export default function CommercialScreen({
     title: "",
     client: "",
     clientId: "",
+    companyId: "",
     email: "",
     phone: "",
     value: "",
@@ -694,6 +695,7 @@ export default function CommercialScreen({
       ...common,
       role: draft.detail || "Contato",
       company: draft.client || "Empresa nao informada",
+      companyId: draft.companyId || "",
       email: draft.email,
       phone: draft.phone,
       status: "Contato",
@@ -985,7 +987,7 @@ export default function CommercialScreen({
         projects: [project, ...(records.projects || [])],
         tasks: [...tasks, ...(records.tasks || [])]
       });
-    }} onAction={notify} onUpdate={updateServiceRecord} onDelete={deleteServiceRecord} onImportCatalog={importCatalog} catalogImporting={catalogSeedState === "loading" || servicesLoading} catalogSeedState={catalogSeedState} search={search} setSearch={setSearch} /> : <ListView page={key} items={visible} relatedProjects={records.projects || []} relatedSubscriptions={relatedSubscriptions} relatedContracts={records.contracts || []} onArchive={archiveClient} openClientId={key === "clientes" ? navigationContext?.clientId : ""} onClientOpened={onNavigationContextConsumed} search={search} setSearch={setSearch} filter={filter} setFilter={setFilter} extraFilterFields={extraFilterFields} extraFilters={extraFilters} setExtraFilters={setExtraFilters} onAction={notify} onAccept={acceptProposal} onSendProposal={sendProposal} localDemo={localDemo} onRefreshRecords={refreshRecords} onUpdate={updateCommercialRecord} onDelete={deleteCommercialRecord} clients={records.clients || []} services={records.services || []} totalItems={data.length} />}{composer && <div className="com-modal-backdrop" onMouseDown={event => {
+    }} onAction={notify} onUpdate={updateServiceRecord} onDelete={deleteServiceRecord} onImportCatalog={importCatalog} catalogImporting={catalogSeedState === "loading" || servicesLoading} catalogSeedState={catalogSeedState} search={search} setSearch={setSearch} /> : <ListView page={key} items={visible} relatedProjects={records.projects || []} relatedSubscriptions={relatedSubscriptions} relatedContracts={records.contracts || []} onArchive={archiveClient} openClientId={key === "clientes" ? navigationContext?.clientId : ""} onClientOpened={onNavigationContextConsumed} search={search} setSearch={setSearch} filter={filter} setFilter={setFilter} extraFilterFields={extraFilterFields} extraFilters={extraFilters} setExtraFilters={setExtraFilters} onAction={notify} onAccept={acceptProposal} onSendProposal={sendProposal} localDemo={localDemo} onRefreshRecords={refreshRecords} onUpdate={updateCommercialRecord} onDelete={deleteCommercialRecord} clients={records.clients || []} companies={records.companies || []} contacts={records.contacts || []} services={records.services || []} totalItems={data.length} />}{composer && <div className="com-modal-backdrop" onMouseDown={event => {
       if (event.target === event.currentTarget) setComposer(false);
     }}><form className="com-create-modal" onSubmit={createRecord}><header><div><small>{current.eyebrow}</small><h2>{createLabel}</h2></div><button type="button" aria-label="Fechar" onClick={() => setComposer(false)}><X size={15} /></button></header>{key === "clientes" && <label>Tipo de cadastro<select value={draft.clientType} onChange={e => setDraft({
             ...draft,
@@ -1037,8 +1039,9 @@ export default function CommercialScreen({
           }}><option value="">Selecione um cliente</option>{(records.clients || []).map(client => <option value={client.id}>{client.name}</option>)}</select></label>}{key !== "clientes" && ["leads", "contatos"].includes(key) && <label>{key === "contatos" ? "Empresa" : "Cliente / empresa"}<input value={draft.client} onChange={e => setDraft({
             ...draft,
             clientId: "",
+            ...(key === "contatos" ? { companyId: "" } : {}),
             client: e.target.value
-          })} /></label>}{key !== "clientes" && ["leads", "clientes", "contatos"].includes(key) && <label>E-mail<input type="email" value={draft.email} onChange={e => setDraft({
+          })} /></label>}{key === "contatos" && <label>Vincular empresa (opcional)<select value={draft.companyId || ""} onChange={e => { const company = (records.companies || []).find(item => String(item.id) === e.target.value); setDraft(current => ({ ...current, companyId: company?.id || "", client: company?.name || current.client })); }}><option value="">Sem vínculo cadastrado</option>{(records.companies || []).map(company => <option key={company.id} value={company.id}>{company.name}</option>)}</select></label>}{key !== "clientes" && ["leads", "clientes", "contatos"].includes(key) && <label>E-mail<input type="email" value={draft.email} onChange={e => setDraft({
             ...draft,
             email: e.target.value
           })} /></label>}{key === "propostas" && <label>E-mail destinatario<input type="email" value={draft.email} onChange={e => setDraft({
@@ -2261,6 +2264,8 @@ function ListView({
   localDemo = false,
   onRefreshRecords,
   clients = [],
+  companies = [],
+  contacts = [],
   services = [],
   totalItems = 0,
   openClientId = "",
@@ -2288,7 +2293,7 @@ function ListView({
   }, [page]);
   const editableFields = commercialRecordEditorFields(page);
   const recordDirty = Boolean(selectedItem && (
-    commercialRecordEditorIsDirty(page, editorBaseline, recordDraft)
+    commercialRecordEditorIsDirty(page, editorBaseline, recordDraft, clients, companies)
     || statusDraft !== String(selectedItem.stage || selectedItem.status || "Ativo")
     || (page === "contratos" && contractDocDraft !== String(selectedItem.documentText || contractText(selectedItem)))
   ));
@@ -2299,7 +2304,7 @@ function ListView({
   };
   const saveRecordChanges = async () => {
     const { patch, error } = editableFields.length
-      ? buildCommercialRecordEditorPatch(page, recordDraft, clients, selectedItem, services)
+      ? buildCommercialRecordEditorPatch(page, recordDraft, clients, selectedItem, services, companies)
       : { patch: {} };
     if (error) {
       onAction?.(error);
@@ -2368,7 +2373,7 @@ function ListView({
       await onRefreshRecords?.();
       setSelectedItem(saved);
       setStatusDraft(saved.status || "Rascunho");
-      const nextDraft = commercialRecordEditorDraft(page, saved, clients);
+      const nextDraft = commercialRecordEditorDraft(page, saved, clients, companies);
       setRecordDraft(nextDraft);
       setEditorBaseline(nextDraft);
       setContractDocDraft(saved.documentText || contractText(saved));
@@ -2395,7 +2400,7 @@ function ListView({
       await onRefreshRecords?.();
       setSelectedItem(saved);
       setStatusDraft(saved.status || "Rascunho");
-      const nextDraft = commercialRecordEditorDraft(page, saved, clients);
+      const nextDraft = commercialRecordEditorDraft(page, saved, clients, companies);
       setRecordDraft(nextDraft);
       setEditorBaseline(nextDraft);
       setContractDocDraft(saved.documentText || contractText(saved));
@@ -2420,7 +2425,7 @@ function ListView({
       await onRefreshRecords?.();
       setSelectedItem(result.data);
       setStatusDraft(result.data.status || "Rascunho");
-      const nextDraft = commercialRecordEditorDraft(page, result.data, clients);
+      const nextDraft = commercialRecordEditorDraft(page, result.data, clients, companies);
       setRecordDraft(nextDraft);
       setEditorBaseline(nextDraft);
       setContractDocDraft(result.data.documentText || contractText(result.data));
@@ -2498,11 +2503,11 @@ function ListView({
           }}><Download size={15} /> Exportar CSV</button></div></div><Toolbar search={search} setSearch={setSearch} filter={filter} setFilter={setFilter} filters={filters} placeholder={`Buscar ${label}...`} extraFilterFields={extraFilterFields} extraFilters={extraFilters} onExtraFilterChange={(field, value) => setExtraFilters(currentFilters => ({
         ...currentFilters,
         [field]: value
-      }))} /><div className="com-table-wrap"><table className={`com-table com-table-${page}`}><thead><tr>{titles[page].map(title => <th key={title}>{title}</th>)}<th aria-label="Ações" /></tr></thead><tbody>{items.map((item, index) => <tr key={item.id ?? index}><td>{page === "leads" ? <Identity name={item.name} sub={item.email} initials={item.initials} tone={item.tone} /> : page === "clientes" || page === "empresas" || page === "contatos" ? <Identity name={item.name} sub={page === "contatos" ? item.role : page === "clientes" ? item.since : item.segment} initials={item.initials} tone={item.tone} /> : <div className="com-table-primary"><b>{item.title}</b><small>{item.code}</small></div>}</td>{page === "leads" && <Fragment><td><b>{item.company}</b><small>{item.service}</small></td><td><Badge tone={item.source === "Instagram" ? "purple" : item.source === "Indicação" ? "green" : "blue"}>{item.source}</Badge></td><td><Badge tone={stageTone(item.stage)}>{item.stage}</Badge></td><td className="com-amount">{item.value}</td><td className="com-muted">{item.date}</td></Fragment>}{page === "clientes" && <Fragment><td><b>{item.person}</b><small>{item.email}</small></td><td><span className="com-text-line">{item.segment}</span><small>{item.email}</small></td><td>{item.projects}</td><td className="com-amount">{clientRevenueLabel(item)}</td><td><Badge tone={item.status === "Ativo" ? "green" : "amber"}>{item.status}</Badge></td></Fragment>}{page === "empresas" && <Fragment><td>{item.segment}</td><td>{item.city}</td><td>{item.size}</td><td>{item.people}</td><td><Badge tone={item.status === "Cliente" ? "green" : "blue"}>{item.status}</Badge></td></Fragment>}{page === "contatos" && <Fragment><ContactChannelCells item={item} /><td className="com-muted">{item.last}</td><td><Badge tone={item.status === "Decisor" || item.status === "Decisora" ? "purple" : "blue"}>{item.status}</Badge></td></Fragment>}{(page === "propostas" || page === "contratos") && <Fragment><td><b>{item.client}</b><small>{item.code}</small></td><td className="com-amount">{item.value}</td>{page === "propostas" ? <Fragment><td><Badge tone={item.tone}>{item.status}</Badge></td><td className="com-muted">{item.date}</td></Fragment> : <Fragment><td><div className="com-contract-progress"><div className="com-progress"><i style={{
+      }))} /><div className="com-table-wrap"><table className={`com-table com-table-${page}`}><thead><tr>{titles[page].map(title => <th key={title}>{title}</th>)}<th aria-label="Ações" /></tr></thead><tbody>{items.map((item, index) => <tr key={item.id ?? index}><td>{page === "leads" ? <Identity name={item.name} sub={item.email} initials={item.initials} tone={item.tone} /> : page === "clientes" || page === "empresas" || page === "contatos" ? <Identity name={item.name} sub={page === "contatos" ? item.role : page === "clientes" ? item.since : item.segment} initials={item.initials} tone={item.tone} /> : <div className="com-table-primary"><b>{item.title}</b><small>{item.code}</small></div>}</td>{page === "leads" && <Fragment><td><b>{item.company}</b><small>{item.service}</small></td><td><Badge tone={item.source === "Instagram" ? "purple" : item.source === "Indicação" ? "green" : "blue"}>{item.source}</Badge></td><td><Badge tone={stageTone(item.stage)}>{item.stage}</Badge></td><td className="com-amount">{item.value}</td><td className="com-muted">{item.date}</td></Fragment>}{page === "clientes" && <Fragment><td><b>{item.person}</b><small>{item.email}</small></td><td><span className="com-text-line">{item.segment}</span><small>{item.email}</small></td><td>{item.projects}</td><td className="com-amount">{clientRevenueLabel(item)}</td><td><Badge tone={item.status === "Ativo" ? "green" : "amber"}>{item.status}</Badge></td></Fragment>}{page === "empresas" && <Fragment><td>{item.segment}</td><td>{item.city}</td><td>{item.size}</td><td>{companyContactCount(item, contacts, companies)} {companyContactCount(item, contacts, companies) === 1 ? "contato" : "contatos"}</td><td><Badge tone={item.status === "Cliente" ? "green" : "blue"}>{item.status}</Badge></td></Fragment>}{page === "contatos" && <Fragment><ContactChannelCells item={item} /><td className="com-muted">{item.last}</td><td><Badge tone={item.status === "Decisor" || item.status === "Decisora" ? "purple" : "blue"}>{item.status}</Badge></td></Fragment>}{(page === "propostas" || page === "contratos") && <Fragment><td><b>{item.client}</b><small>{item.code}</small></td><td className="com-amount">{item.value}</td>{page === "propostas" ? <Fragment><td><Badge tone={item.tone}>{item.status}</Badge></td><td className="com-muted">{item.date}</td></Fragment> : <Fragment><td><div className="com-contract-progress"><div className="com-progress"><i style={{
                           width: `${item.progress}%`
                         }} /></div><small>{item.renewal}</small></div></td><td><Badge tone={item.tone}>{item.status}</Badge></td></Fragment>}</Fragment>}<td><button className="com-row-more" aria-label={`Ações para ${item.name || item.title}`} onClick={() => {
                   setSelectedItem(item);
-                  const initialDraft = commercialRecordEditorDraft(page, item, clients);
+                  const initialDraft = commercialRecordEditorDraft(page, item, clients, companies);
                   setRecordDraft(initialDraft);
                   setEditorBaseline(initialDraft);
                   setStatusDraft(item.stage || item.status || "Ativo");
@@ -2529,7 +2534,7 @@ function ListView({
           return <label key={field.key} className={field.wide ? "wide" : ""}>{field.label}{field.type === "client" ? <select required={field.required} disabled={recordSaving || locked} value={value} onChange={event => {
               const client = clients.find(item => String(item.id) === event.target.value);
               setRecordDraft(current => ({ ...current, clientId: event.target.value, ...(page === "propostas" ? { email: client?.email || "" } : {}) }));
-            }}><option value="">Selecione um cliente</option>{clients.map(client => <option key={client.id} value={client.id}>{client.name}</option>)}</select> : field.type === "textarea" ? <textarea rows={3} required={field.required} disabled={recordSaving || locked} value={value} onChange={event => setRecordDraft(current => ({ ...current, [field.key]: event.target.value }))} /> : <input type={field.type === "number" ? "number" : field.type === "email" ? "email" : field.type === "tel" ? "tel" : "text"} inputMode={field.type === "currency" ? "decimal" : undefined} min={field.type === "number" ? "0" : undefined} max={field.type === "number" ? "100" : undefined} step={field.type === "number" ? "1" : undefined} required={field.required} disabled={recordSaving || locked} value={value} onChange={event => setRecordDraft(current => ({ ...current, [field.key]: event.target.value }))} />}</label>;
+            }}><option value="">Selecione um cliente</option>{clients.map(client => <option key={client.id} value={client.id}>{client.name}</option>)}</select> : field.type === "company" ? <select disabled={recordSaving} value={value} onChange={event => setRecordDraft(current => ({ ...current, companyId: event.target.value, company: companies.find(item => String(item.id) === event.target.value)?.name || "" }))}><option value="">Sem vínculo cadastrado</option>{companies.map(company => <option key={company.id} value={company.id}>{company.name}</option>)}</select> : field.type === "textarea" ? <textarea rows={3} required={field.required} disabled={recordSaving || locked} value={value} onChange={event => setRecordDraft(current => ({ ...current, [field.key]: event.target.value }))} /> : <input type={field.type === "number" ? "number" : field.type === "email" ? "email" : field.type === "tel" ? "tel" : "text"} inputMode={field.type === "currency" ? "decimal" : undefined} min={field.type === "number" ? "0" : undefined} max={field.type === "number" ? "100" : undefined} step={field.type === "number" ? "1" : undefined} required={field.required} disabled={recordSaving || locked} value={value} onChange={event => setRecordDraft(current => ({ ...current, [field.key]: event.target.value, ...(field.key === "company" ? { companyId: "" } : {}) }))} />}</label>;
         })}</div>{page === "propostas" && selectedItem.status === "Aprovada" && <small className="com-contract-locked-note">Esta proposta já originou contrato e projeto; os campos comerciais ficam bloqueados para preservar os vínculos.</small>}{page === "contratos" && isLockedContractStatus(selectedItem.status) && <small className="com-contract-locked-note">Termos bloqueados enquanto o contrato está em assinatura ou ativo. Renovação e progresso continuam editáveis.</small>}</form>}{page === "propostas" && <div className="com-proposal-email"><label>Enviar para<input type="email" required={true} value={sendTo} onChange={event => {
               setSendTo(event.target.value);
               setRetryKey("");

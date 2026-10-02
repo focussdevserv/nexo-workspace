@@ -2,16 +2,58 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildCommercialRecordEditorPatch,
+  companyContactCount,
   commercialRecordEditorDraft,
   commercialRecordEditorFields,
   commercialRecordEditorIsDirty,
 } from './commercial-record-editor.js';
 
 const clients = [{ id: 12, name: 'Nexo Ltda', email: 'financeiro@nexo.test' }];
+const companies = [{ id: 34, name: 'Acme Tecnologia' }];
 
 test('exposes editable business fields for companies and contacts', () => {
   assert.deepEqual(commercialRecordEditorFields('empresas').map(({ key }) => key), ['name', 'segment', 'city', 'size']);
-  assert.deepEqual(commercialRecordEditorFields('contatos').map(({ key }) => key), ['name', 'company', 'role', 'email', 'phone', 'last']);
+  assert.deepEqual(commercialRecordEditorFields('contatos').map(({ key }) => key), ['name', 'companyId', 'company', 'role', 'email', 'phone', 'last']);
+});
+
+test('contact editor links a registered company and preserves legacy free-text companies', () => {
+  const legacyContact = { id: 'contact-1', name: 'Ana', company: 'Acme Tecnologia' };
+  const legacyDraft = commercialRecordEditorDraft('contatos', legacyContact, [], companies);
+  assert.equal(legacyDraft.companyId, '34');
+  assert.equal(commercialRecordEditorIsDirty('contatos', legacyContact, legacyDraft, [], companies), false);
+  const linked = buildCommercialRecordEditorPatch('contatos', {
+    name: 'Ana', companyId: '34', company: 'Acme Tecnologia', role: 'Diretora', email: '', phone: '', last: '',
+  }, [], legacyContact, [], companies);
+  assert.equal(linked.error, undefined);
+  assert.equal(linked.patch.companyId, 34);
+  assert.equal(linked.patch.company, 'Acme Tecnologia');
+
+  const unlinked = buildCommercialRecordEditorPatch('contatos', {
+    name: 'Ana', companyId: '', company: 'Consultoria sem cadastro', role: 'Diretora', email: '', phone: '', last: '',
+  }, [], legacyContact, [], companies);
+  assert.equal(unlinked.error, undefined);
+  assert.equal(unlinked.patch.companyId, '');
+  assert.equal(unlinked.patch.company, 'Consultoria sem cadastro');
+});
+
+test('contact editor rejects a company identifier outside the loaded company list', () => {
+  const result = buildCommercialRecordEditorPatch('contatos', {
+    name: 'Ana', companyId: 'missing', company: 'Acme Tecnologia', role: '', email: '', phone: '', last: '',
+  }, [], {}, [], companies);
+  assert.match(result.error, /empresa cadastrada/i);
+});
+
+test('company contact counts use linked IDs and only unambiguous legacy names', () => {
+  const otherCompany = { id: 35, name: 'Outra Empresa' };
+  const contacts = [
+    { companyId: '34', company: 'Acme Tecnologia' },
+    { company: 'Acme Tecnologia' },
+    { companyId: '35', company: 'Acme Tecnologia' },
+    { company: 'Fornecedor' },
+  ];
+  assert.equal(companyContactCount(companies[0], contacts, [...companies, otherCompany]), 2);
+  const duplicateNameCompany = { id: 36, name: 'Acme Tecnologia' };
+  assert.equal(companyContactCount(companies[0], contacts, [...companies, duplicateNameCompany, otherCompany]), 1);
 });
 
 test('keeps draft values as strings and detects unsaved changes', () => {

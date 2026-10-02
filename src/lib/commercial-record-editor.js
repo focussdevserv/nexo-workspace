@@ -7,6 +7,7 @@ const commercialEditorFields = {
   ],
   contatos: [
     { key: 'name', label: 'Nome', required: true },
+    { key: 'companyId', label: 'Vincular empresa', type: 'company' },
     { key: 'company', label: 'Empresa' },
     { key: 'role', label: 'Cargo' },
     { key: 'email', label: 'E-mail', type: 'email' },
@@ -42,7 +43,17 @@ export function commercialRecordEditorFields(page) {
 
 const normalizeName = (value) => String(value || '').trim().toLocaleLowerCase('pt-BR');
 
-export function commercialRecordEditorDraft(page, record = {}, clients = []) {
+export function companyContactCount(company, contacts = [], companies = []) {
+  const companyId = String(company?.id ?? '');
+  const normalizedName = normalizeName(company?.name);
+  const nameIsUnique = normalizedName && companies.filter((item) => normalizeName(item.name) === normalizedName).length <= 1;
+  return contacts.filter((contact) => {
+    if (contact.companyId != null && String(contact.companyId).trim()) return String(contact.companyId) === companyId;
+    return Boolean(nameIsUnique && normalizedName && normalizeName(contact.company) === normalizedName);
+  }).length;
+}
+
+export function commercialRecordEditorDraft(page, record = {}, clients = [], companies = []) {
   return Object.fromEntries(commercialRecordEditorFields(page).map(({ key }) => {
     let value = record[key];
     if (key === 'progress' && value === undefined) value = 0;
@@ -50,15 +61,19 @@ export function commercialRecordEditorDraft(page, record = {}, clients = []) {
       const normalizedName = normalizeName(record.client);
       value = clients.find((client) => normalizeName(client.name) === normalizedName)?.id || record.clientId || '';
     }
+    if (key === 'companyId' && !value) {
+      const normalizedName = normalizeName(record.company);
+      value = companies.find((company) => normalizeName(company.name) === normalizedName)?.id || '';
+    }
     return [key, String(value ?? '')];
   }));
 }
 
-export function commercialRecordEditorIsDirty(page, record, draft, clients = []) {
-  return JSON.stringify(commercialRecordEditorDraft(page, record, clients)) !== JSON.stringify(draft || {});
+export function commercialRecordEditorIsDirty(page, record, draft, clients = [], companies = []) {
+  return JSON.stringify(commercialRecordEditorDraft(page, record, clients, companies)) !== JSON.stringify(draft || {});
 }
 
-export function buildCommercialRecordEditorPatch(page, draft, clients = [], record = {}, services = []) {
+export function buildCommercialRecordEditorPatch(page, draft, clients = [], record = {}, services = [], companies = []) {
   const fields = commercialRecordEditorFields(page);
   if (!fields.length) return { error: 'Este registro não pode ser editado por este formulário.' };
 
@@ -91,6 +106,13 @@ export function buildCommercialRecordEditorPatch(page, draft, clients = [], reco
     if (page === 'propostas' || page === 'contratos') patch.name = patch.title;
     if (page === 'propostas' && !patch.email) patch.email = client.email || '';
     if (page === 'contratos') patch.email = client.email || '';
+  }
+
+  if (page === 'contatos' && patch.companyId) {
+    const company = companies.find((item) => String(item.id) === String(patch.companyId));
+    if (!company) return { error: 'Selecione uma empresa cadastrada.' };
+    patch.companyId = company.id;
+    patch.company = company.name;
   }
 
   if (page === 'propostas' && patch.service !== undefined && patch.service !== record.service) {

@@ -33,6 +33,9 @@ import { isLocalDemoActive } from '../lib/local-demo.js';
 import { createSequentialQueue } from '../lib/sequential-queue.js';
 import { safeLowercase } from '../lib/safe-lowercase.js';
 import { isApprovalAwaitingDecision, isApprovalPending } from '../lib/approval-status.js';
+import { canCreateWorkRecord } from '../lib/work-screen-actions.js';
+import { nextAgendaEventTime, upcomingAgendaEvents } from '../lib/agenda-upcoming.js';
+import { googleCalendarErrorAction } from '../lib/google-calendar-error.js';
 
 function projectIsCompleted(project) {
   const status = String(project?.status || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
@@ -146,7 +149,7 @@ function AgendaTimeGrid({ dates, events, selectedDate, now, timeZone, locale, on
   </div>;
 }
 
-function AgendaCalendar({ events, selectedDate, setSelectedDate, agendaView, setAgendaView, agendaQuery, setAgendaQuery, calendarSyncBusy, calendarSyncError, calendarSyncedAt, localDemo, timeZone, weekStartPreference, locale, onSyncGoogleCalendar, onSelectEvent, onCreateEvent }) {
+function AgendaCalendar({ events, selectedDate, setSelectedDate, agendaView, setAgendaView, agendaQuery, setAgendaQuery, calendarSyncBusy, calendarSyncError, calendarSyncErrorCode, calendarSyncedAt, localDemo, timeZone, weekStartPreference, locale, onSyncGoogleCalendar, onSelectEvent, onCreateEvent }) {
   const monthDate = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
   const monthDays = new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 0).getDate();
   const firstWeekday = weekStartPreference === 'sunday' ? 0 : 1;
@@ -190,7 +193,8 @@ function AgendaCalendar({ events, selectedDate, setSelectedDate, agendaView, set
   const visibleMinutes = visibleEvents.reduce((total, event) => total + duration(event), 0);
   const visibleDuration = visibleMinutes ? `${Math.floor(visibleMinutes / 60)}h${visibleMinutes % 60 ? ` ${visibleMinutes % 60}min` : ''}` : '0h';
   const periodSummary = `${periodEvents.length} compromisso${periodEvents.length === 1 ? '' : 's'} · ${visibleDuration} reservado${agendaView === 'Dia' ? '' : ' no período'}`;
-  const now = calendarDateInTimeZone(new Date(), timeZone);
+  const nowInstant = new Date();
+  const now = calendarDateInTimeZone(nowInstant, timeZone);
   const isToday = sameDay(now, selectedDate);
   const eventTone = (event) => ['blue', 'lime', 'violet'].includes(event.color) ? event.color : 'blue';
   const weekdays = calendarWeekdayLabels(locale, weekStartPreference);
@@ -202,7 +206,7 @@ function AgendaCalendar({ events, selectedDate, setSelectedDate, agendaView, set
   const eventDate = (date) => { const [year, month, day] = date.split('-').map(Number); return new Date(year, month - 1, day); };
   const openEvent = (event) => { setSelectedDate(eventDate(event.date)); onSelectEvent(event); };
   const monthDates = Array.from({ length: monthDays }, (_, index) => new Date(selectedDate.getFullYear(), selectedDate.getMonth(), index + 1));
-  const upcomingEvents = sortEvents(filteredEvents.filter((event) => event.date >= selectedKey)).slice(0, 4);
+  const upcomingEvents = upcomingAgendaEvents(filteredEvents, { now: nowInstant, timeZone, fromDateKey: selectedKey }).slice(0, 4);
   const changeMiniMonth = (direction) => { const day = selectedDate.getDate(); const next = new Date(selectedDate.getFullYear(), selectedDate.getMonth() + direction, 1); next.setDate(Math.min(day, new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate())); setSelectedDate(next); };
 
   return <div className="agenda-workspace agenda-v2">
@@ -219,8 +223,8 @@ function AgendaCalendar({ events, selectedDate, setSelectedDate, agendaView, set
       </aside>
       <div className="agenda-view-area agenda-view-area-new">
         <div className="agenda-view-heading"><div><span>{agendaView === 'Dia' ? (isToday ? 'HOJE' : 'DIA SELECIONADO') : agendaView === 'Semana' ? 'SEMANA' : 'MÊS'}</span><h3>{agendaView === 'Dia' ? (isToday ? 'Compromissos de hoje' : selectedDate.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })) : agendaView === 'Semana' ? 'Sua semana' : title}</h3><small>{periodSummary}</small></div><span className="agenda-view-hint">Selecione um compromisso para ver ou editar</span></div>
-        <div className="agenda-v2-stats"><div><small>{agendaView === 'Dia' ? 'Compromissos do dia' : 'Compromissos do período'}</small><b>{visibleEvents.length}</b></div><div><small>Tempo reservado</small><b>{visibleDuration}</b></div><div><small>{agendaView === 'Dia' ? 'Próximo horário' : 'Primeiro horário'}</small><b>{visibleEvents.find((event) => event.time)?.time || 'Livre'}</b></div></div>
-        {calendarSyncError && !localDemo && <div className="agenda-sync-error" role="status"><CalendarDays size={15}/><span>{calendarSyncError}</span></div>}
+        <div className="agenda-v2-stats"><div><small>{agendaView === 'Dia' ? 'Compromissos do dia' : 'Compromissos do período'}</small><b>{visibleEvents.length}</b></div><div><small>Tempo reservado</small><b>{visibleDuration}</b></div><div><small>{agendaView === 'Dia' ? 'Próximo horário' : 'Primeiro horário'}</small><b>{agendaView === 'Dia' ? nextAgendaEventTime(visibleEvents, selectedKey, { now: nowInstant, timeZone }) || 'Livre' : visibleEvents.find((event) => event.time)?.time || 'Livre'}</b></div></div>
+        {calendarSyncError && !localDemo && <div className="agenda-sync-error" role="status"><CalendarDays size={15}/><span>{calendarSyncError}</span><button type="button" onClick={() => { const action = googleCalendarErrorAction(calendarSyncErrorCode); if (action === 'reauthorize') window.location.assign('/api/integrations/google/authorize'); else if (action === 'open_integrations') window.dispatchEvent(new CustomEvent('nexo:navigate', { detail: 'Integrações' })); else onSyncGoogleCalendar(); }}>{googleCalendarErrorAction(calendarSyncErrorCode) === 'reauthorize' ? 'Reautorizar Google' : googleCalendarErrorAction(calendarSyncErrorCode) === 'open_integrations' ? 'Abrir Integrações' : 'Tentar novamente'}</button></div>}
         {agendaView === 'Dia' && <AgendaTimeGrid dates={[selectedDate]} events={filteredEvents} selectedDate={selectedDate} now={now} timeZone={timeZone} locale={locale} onSelectDate={setSelectedDate} onCreateEvent={onCreateEvent} onSelectEvent={onSelectEvent} eventTone={eventTone} sameDay={sameDay} />}
         {agendaView === 'Semana' && <AgendaTimeGrid dates={Array.from({ length: 7 }, (_, index) => weekDate(index))} events={filteredEvents} selectedDate={selectedDate} now={now} timeZone={timeZone} locale={locale} onSelectDate={(date) => { setSelectedDate(date); setAgendaView('Dia'); }} onCreateEvent={onCreateEvent} onSelectEvent={openEvent} eventTone={eventTone} sameDay={sameDay} />}
         {agendaView === 'Mês' && <div className="agenda-month-view agenda-month-view-new">{weekdays.map((day, index) => <b key={day + index}>{day}</b>)}{Array.from({ length: monthStart }, (_, i) => <span key={`empty-${i}`} />)}{Array.from({ length: monthDays }, (_, i) => { const day = i + 1; const date = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), day); const items = monthItems(day); return <button type="button" key={day} className={`${sameDay(date, selectedDate) ? 'selected' : ''} ${sameDay(date, now) ? 'is-today' : ''}`} onClick={() => { setSelectedDate(date); setAgendaView('Dia'); }}><strong>{day}</strong>{items.slice(0, 3).map((event) => <span key={event.id} className={`agenda-month-event tone-${eventTone(event)}`}>{event.time || ''} {event.title}</span>)}{items.length > 3 && <small>+{items.length - 3} outros</small>}</button>; })}</div>}
@@ -294,6 +298,7 @@ function WorkScreen({ page, navigationContext = null, onNavigationContextConsume
   const [googleCalendarEvents, setGoogleCalendarEvents] = useState([]);
   const [calendarSyncBusy, setCalendarSyncBusy] = useState(false);
   const [calendarSyncError, setCalendarSyncError] = useState('');
+  const [calendarSyncErrorCode, setCalendarSyncErrorCode] = useState('');
   const [calendarSyncedAt, setCalendarSyncedAt] = useState('');
   const [calendarSyncRevision, setCalendarSyncRevision] = useState(0);
   useEffect(() => {
@@ -331,19 +336,27 @@ function WorkScreen({ page, navigationContext = null, onNavigationContextConsume
     const action = navigationContext?.quickCreate;
     const target = { project: 'projetos', task: 'tarefas', event: 'agenda' }[action];
     const loaded = action === 'project' ? projectsLoaded : action === 'task' ? tasksLoaded : action === 'event' ? eventsLoaded : false;
-    if (!target || key !== target || !loaded) return;
+    const collectionReady = action === 'project'
+      ? canCreateWorkRecord('projetos', { projects: { loaded: projectsLoaded, error: projectsError } })
+      : action === 'task'
+        ? canCreateWorkRecord('tarefas', { tasks: { loaded: tasksLoaded, error: tasksError } })
+        : action === 'event'
+          ? canCreateWorkRecord('agenda', { events: { loaded: eventsLoaded, error: eventsError } })
+          : false;
+    if (!target || key !== target || !loaded || !collectionReady) return;
     if (action === 'project') setDraft({ title: '', client: '', clientId: '', project: '', due: '', assignee: '', type: 'Site institucional', time: '16:30', detail: '', priority: 'Normal' });
     if (action === 'task') setDraft({ title: '', client: '', clientId: '', project: '', projectId: '', due: '', assignee: '', time: '16:30', detail: '', priority: 'Normal', recurrence: 'Nao recorrente' });
     if (action === 'event') setDraft({ title: '', client: '', project: '', due: toLocalDateInput(selectedDate), assignee: '', time: '16:30', endTime: '17:00', allDay: false, detail: '', priority: 'Normal', syncGoogleCalendar: !localDemo, createMeet: false, attendees: '' });
     setComposer(target);
     onNavigationContextConsumed();
-  }, [key, navigationContext?.quickCreate, projectsLoaded, tasksLoaded, eventsLoaded, selectedDate, localDemo, onNavigationContextConsumed]);
+  }, [key, navigationContext?.quickCreate, projectsLoaded, projectsError, tasksLoaded, tasksError, eventsLoaded, eventsError, selectedDate, localDemo, onNavigationContextConsumed]);
   useEffect(() => {
     if (key !== 'agenda') return undefined;
     if (localDemo) {
       setGoogleCalendarEvents([]);
       setCalendarSyncedAt('');
       setCalendarSyncError('');
+      setCalendarSyncErrorCode('');
       setCalendarSyncBusy(false);
       return undefined;
     }
@@ -359,10 +372,10 @@ function WorkScreen({ page, navigationContext = null, onNavigationContextConsume
     }
     const from = toLocalDateInput(start);
     const to = toLocalDateInput(end);
-    setCalendarSyncBusy(true); setCalendarSyncError('');
+    setCalendarSyncBusy(true); setCalendarSyncError(''); setCalendarSyncErrorCode('');
     apiRequest(`/api/integrations/google/calendar/events?from=${from}&to=${to}&timeZone=${encodeURIComponent(preferences.timezone)}`)
-      .then((result) => { if (!active) return; setGoogleCalendarEvents(result.data || []); setCalendarSyncedAt(new Intl.DateTimeFormat('pt-BR', { timeZone: preferences.timezone, hour: '2-digit', minute: '2-digit' }).format(new Date())); setCalendarSyncError(result.truncated ? 'A agenda contem mais eventos do que esta consulta exibiu. Reduza o periodo para ver todos.' : ''); })
-      .catch((error) => { if (!active) return; setGoogleCalendarEvents([]); setCalendarSyncError(error.message || 'Nao foi possivel ler os eventos do Google Calendar.'); })
+      .then((result) => { if (!active) return; setGoogleCalendarEvents(result.data || []); setCalendarSyncedAt(new Intl.DateTimeFormat('pt-BR', { timeZone: preferences.timezone, hour: '2-digit', minute: '2-digit' }).format(new Date())); setCalendarSyncError(result.truncated ? 'A agenda contem mais eventos do que esta consulta exibiu. Reduza o periodo para ver todos.' : ''); setCalendarSyncErrorCode(''); })
+      .catch((error) => { if (!active) return; setGoogleCalendarEvents([]); setCalendarSyncError(error.message || 'Nao foi possivel ler os eventos do Google Calendar.'); setCalendarSyncErrorCode(error.code || ''); })
       .finally(() => { if (active) setCalendarSyncBusy(false); });
     return () => { active = false; };
   }, [key, selectedDate, agendaView, calendarSyncRevision, localDemo, preferences.timezone, preferences.weekStart]);
@@ -819,7 +832,7 @@ function WorkScreen({ page, navigationContext = null, onNavigationContextConsume
       if (selectors[key]) document.querySelector(selectors[key])?.focus();
       else if (key === 'horas') { setHoursSearchOpen(true); window.requestAnimationFrame(() => document.querySelector('.hours-search input')?.focus()); }
       else if (key === 'aprovacoes') { setApprovalSearchOpen(true); window.requestAnimationFrame(() => document.querySelector('.approval-search input')?.focus()); }
-    }}><Search size={16} /><span>Buscar</span></button>{key !== 'horas' && !(isMember && key === 'projetos') && <button className="work-button work-button-primary" disabled={(key === 'agenda' && !eventsLoaded) || (key === 'tarefas' && !tasksLoaded) || (key === 'projetos' && (!projectsLoaded || Boolean(projectsError))) || (key === 'arquivos' && (!filesLoaded || Boolean(filesError)))} onClick={key === 'agenda' ? () => addEvent() : key === 'projetos' ? addProject : key === 'tarefas' ? addTask : key === 'arquivos' ? () => uploadRef.current?.click() : addApproval}><Plus size={16} />{key === 'agenda' ? 'Novo evento' : key === 'projetos' ? 'Novo projeto' : key === 'tarefas' ? 'Nova tarefa' : key === 'arquivos' ? 'Enviar arquivo' : 'Nova solicitação'}</button>}</div>
+    }}><Search size={16} /><span>Buscar</span></button>{key !== 'horas' && !(isMember && key === 'projetos') && <button className="work-button work-button-primary" disabled={!canCreateWorkRecord(key, { events: { loaded: eventsLoaded, error: eventsError }, tasks: { loaded: tasksLoaded, error: tasksError }, projects: { loaded: projectsLoaded, error: projectsError }, files: { loaded: filesLoaded, error: filesError }, approvals: { loaded: approvalsLoaded, error: approvalsError } })} onClick={key === 'agenda' ? () => addEvent() : key === 'projetos' ? addProject : key === 'tarefas' ? addTask : key === 'arquivos' ? () => uploadRef.current?.click() : addApproval}><Plus size={16} />{key === 'agenda' ? 'Novo evento' : key === 'projetos' ? 'Novo projeto' : key === 'tarefas' ? 'Nova tarefa' : key === 'arquivos' ? 'Enviar arquivo' : 'Nova solicitação'}</button>}</div>
     </header>
 
     {key === 'projetos' && <>
@@ -835,7 +848,7 @@ function WorkScreen({ page, navigationContext = null, onNavigationContextConsume
       <section className="work-panel"><div className="panel-toolbar"><div className="work-tabs">{['Todas', 'A fazer', 'Em andamento', 'Concluída'].map((status) => <button key={status} className={taskStatus === status ? 'active' : ''} onClick={() => setTaskStatus(status)}>{status}</button>)}</div><label className="inline-search"><Search size={15} /><input value={taskQuery} onChange={(e) => setTaskQuery(e.target.value)} placeholder="Buscar tarefa" /></label></div><div className="task-table"><div className="task-table-head"><span>Tarefa</span><span>Projeto</span><span>Responsável</span><span>Prazo</span><span>Status</span><span /></div>{visibleTasks.map((task) => { const priority = task.priority || 'Normal'; return <div className={`task-row ${taskIsCompleted(task) ? 'task-row-done' : ''}`} key={task.id}><button className="task-check" aria-label={taskIsCompleted(task) ? 'Reabrir tarefa' : 'Concluir tarefa'} onClick={() => toggleTask(task.id)}>{taskIsCompleted(task) ? <CheckCircle2 size={19} /> : <Circle size={19} />}</button><div className="task-main"><strong>{task.title}</strong><small>{task.client || 'Sem cliente'} <span className={`priority priority-${String(priority).toLowerCase()}`}>{priority}</span></small></div><span className="task-project">{task.project || 'Sem projeto'}</span><span className="task-owner"><Avatar name={task.assignee || 'Sem responsável'} /> {task.assignee || 'Sem responsável'}</span><span className="task-due"><Clock3 size={14} />{task.due || 'Sem prazo'}</span><StatusPill status={task.status} /><button className="row-more" aria-label="Mais opções" onClick={() => setSelectedTask(task)}><MoreHorizontal size={18} /></button></div>; })}{tasksLoaded && !tasksError && visibleTasks.length === 0 && <Empty title={tasks.length === 0 ? 'Nenhuma tarefa cadastrada' : 'Nada por aqui'} text={tasks.length === 0 ? 'Crie sua primeira tarefa para organizar o proximo passo.' : 'Tente outro filtro ou termo de busca.'} />}</div></section>
     </>}
 
-    {key === 'agenda' && <>{!eventsLoaded ? <div className="work-load-state" role="status">Carregando agenda...</div> : eventsError ? <div className="work-data-error" role="alert"><span>{eventsError}</span><button type="button" onClick={refreshEvents}>Tentar novamente</button></div> : <AgendaCalendar events={[...events, ...googleCalendarEvents.filter((item) => !events.some((event) => event.googleEventId === item.googleEventId))]} selectedDate={selectedDate} setSelectedDate={setSelectedDate} agendaView={agendaView} setAgendaView={setAgendaView} agendaQuery={agendaQuery} setAgendaQuery={setAgendaQuery} calendarSyncBusy={calendarSyncBusy} calendarSyncError={calendarSyncError} calendarSyncedAt={calendarSyncedAt} localDemo={localDemo} timeZone={preferences.timezone} weekStartPreference={preferences.weekStart} locale="pt-BR" onSyncGoogleCalendar={() => setCalendarSyncRevision((revision) => revision + 1)} onSelectEvent={setSelectedEvent} onCreateEvent={addEvent} />}</>}
+    {key === 'agenda' && <>{!eventsLoaded ? <div className="work-load-state" role="status">Carregando agenda...</div> : eventsError ? <div className="work-data-error" role="alert"><span>{eventsError}</span><button type="button" onClick={refreshEvents}>Tentar novamente</button></div> : <AgendaCalendar events={[...events, ...googleCalendarEvents.filter((item) => !events.some((event) => event.googleEventId === item.googleEventId))]} selectedDate={selectedDate} setSelectedDate={setSelectedDate} agendaView={agendaView} setAgendaView={setAgendaView} agendaQuery={agendaQuery} setAgendaQuery={setAgendaQuery} calendarSyncBusy={calendarSyncBusy} calendarSyncError={calendarSyncError} calendarSyncErrorCode={calendarSyncErrorCode} calendarSyncedAt={calendarSyncedAt} localDemo={localDemo} timeZone={preferences.timezone} weekStartPreference={preferences.weekStart} locale="pt-BR" onSyncGoogleCalendar={() => setCalendarSyncRevision((revision) => revision + 1)} onSelectEvent={setSelectedEvent} onCreateEvent={addEvent} />}</>}
     {key === 'horas' && <>
       {hoursError && <div className="work-data-error" role="alert"><span>Não foi possível carregar os registros de horas. {hoursError}</span><button type="button" onClick={refreshHours}>Tentar novamente</button></div>}
       {!hoursLoaded && <div className="work-load-state" role="status">Carregando registros de horas...</div>}

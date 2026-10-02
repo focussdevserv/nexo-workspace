@@ -28,6 +28,7 @@ import { billingClientIdsForWorkspaceScope, clientLinkedWorkspaceResources, reco
 import { renderProposalEmail } from './email/proposal.js';
 import { buildGoogleRawMessage, decodeGoogleDriveUpload, decodeGoogleMailAttachments, googleMailAddresses, googleThreadBelongsToAllowedContacts, mapGoogleMailMessage } from './integrations/google-mail.js';
 import { classifyGoogleDriveListFailure, googleDriveFileMetadataUrl, googleDriveFilesListUrl, mapGoogleDriveFile, type GoogleDriveFile } from './integrations/google-drive.js';
+import { classifyGoogleOAuthRefreshFailure, googleOAuthRefreshNetworkFailure } from './integrations/google-oauth-error.js';
 import { isWahaChatIdBoundToConversation } from './integrations/waha-chat-scope.js';
 import { validateClientServiceCharges } from './integrations/client-service-charges.js';
 import { clientApprovalDecisionHasValidComment, clientPortalApprovalDecisionRecord, isClientApprovalPending, portalApprovalRecord } from './integrations/client-approvals.js';
@@ -48,6 +49,7 @@ import { googleCalendarTestDisposition } from './integrations/google-health.js';
 import { sameMercadoPagoPaymentSnapshot } from './integrations/mercadopago.js';
 import { matchesMercadoPagoExternalReference, mercadoPagoAccountMatchesRecord, mercadoPagoWebhookResource } from './integrations/mercadopago-webhook.js';
 import { calculateFinanceTransferBalances } from './integrations/finance-transfers.js';
+import { financeTransferReplayMatches } from './integrations/finance-transfer-idempotency.js';
 import { calculateAccountMovementBalance, canUpdateFinanceAccountBalance, isCurrencyAmount, isCurrencyBalance, reverseAccountMovementBalance } from './integrations/account-ledger.js';
 import { paymentDueDateAtEndOfDay, paymentDueDateDuration } from './billing/due-date.js';
 import { withStableBillingPaidAt } from './billing/paid-at.js';
@@ -400,15 +402,25 @@ async function googleAccessToken(organizationId: string, userId: string) {
   const tokens = await getGoogleTokens(organizationId);
   if (!tokens) throw Object.assign(new Error('google_authorization_required'), { statusCode: 409 });
   if (tokens.expiresAt > Date.now() + 60_000) return tokens.accessToken;
-  if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) throw Object.assign(new Error('google_client_not_configured'), { statusCode: 503 });
-  const response = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ client_id: env.GOOGLE_CLIENT_ID, client_secret: env.GOOGLE_CLIENT_SECRET, refresh_token: tokens.refreshToken, grant_type: 'refresh_token' }),
-    signal: AbortSignal.timeout(12_000),
-  });
-  if (!response.ok) throw Object.assign(new Error('google_token_refresh_failed'), { statusCode: 502 });
-  const refreshed = await response.json() as { access_token?: string; expires_in?: number };
-  if (!refreshed.access_token || !refreshed.expires_in) throw Object.assign(new Error('google_token_refresh_invalid'), { statusCode: 502 });
+  if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) throw Object.assign(new Error('O servidor não tem GOOGLE_CLIENT_ID e GOOGLE_CLIENT_SECRET configurados no Coolify. A conta Google vinculada não foi alterada.'), { statusCode: 503, code: 'google_oauth_client_misconfigured' });
+  let response: Response;
+  try {
+    response = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ client_id: env.GOOGLE_CLIENT_ID, client_secret: env.GOOGLE_CLIENT_SECRET, refresh_token: tokens.refreshToken, grant_type: 'refresh_token' }),
+      signal: AbortSignal.timeout(12_000),
+    });
+  } catch {
+    const failure = googleOAuthRefreshNetworkFailure();
+    throw Object.assign(new Error(failure.message), { statusCode: failure.statusCode, code: failure.code });
+  }
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({})) as { error?: unknown };
+    const failure = classifyGoogleOAuthRefreshFailure(response.status, payload.error);
+    throw Object.assign(new Error(failure.message), { statusCode: failure.statusCode, code: failure.code });
+  }
+  const refreshed = await response.json().catch(() => ({})) as { access_token?: string; expires_in?: number };
+  if (!refreshed.access_token || !refreshed.expires_in) throw Object.assign(new Error('O Google retornou uma resposta inválida ao renovar o acesso.'), { statusCode: 502, code: 'google_token_refresh_failed' });
   const next = { ...tokens, accessToken: refreshed.access_token, expiresAt: Date.now() + refreshed.expires_in * 1000 };
   await saveGoogleConnection(organizationId, userId, next);
   return next.accessToken;
@@ -900,7 +912,12 @@ app.get('/api/integrations/google/calendar/events', { preHandler: app.authentica
     return { data: mapGoogleCalendarEvents(result, timeZone), truncated: Boolean(pageToken) };
   } catch (error) {
     const statusCode = (error as { statusCode?: number }).statusCode;
-    if (statusCode === 409 || statusCode === 503) return reply.code(statusCode).send({ error: 'google_authorization_required', message: 'Autorize o Google Workspace em Integrações antes de sincronizar eventos.' });
+    const code = (error as { code?: string }).code;
+    if (code === 'google_reauthorization_required' || code === 'google_oauth_client_misconfigured' || code === 'google_token_refresh_unavailable' || code === 'google_token_refresh_failed') {
+      app.log.warn({ code }, 'Google Calendar authorization could not be refreshed');
+      return reply.code(Number(statusCode) || 502).send({ error: code, message: error instanceof Error ? error.message : 'Não foi possível confirmar a autorização do Google.' });
+    }
+    if ((error as { message?: string }).message === 'google_authorization_required') return reply.code(409).send({ error: 'google_authorization_required', message: 'Autorize o Google Workspace em Integrações antes de sincronizar eventos.' });
     app.log.warn({ error: error instanceof Error ? error.name : 'unknown' }, 'Google Calendar event read failed');
     return reply.code(502).send({ error: 'google_calendar_unavailable', message: 'Não foi possível ler o Google Calendar. Tente novamente.' });
   }
@@ -1439,6 +1456,14 @@ app.post('/api/integrations/:provider/test', { preHandler: app.authenticate, con
     }
     return tested('setup_required', 'Os DSNs do frontend e da API estão configurados. A ingestão não foi testada para evitar criar um incidente artificial; erros reais serão enviados pelos SDKs.');
   } catch (error) {
+    if (provider === 'google') {
+      const code = (error as { code?: string }).code;
+      if (code === 'google_reauthorization_required') return tested('setup_required', error instanceof Error ? error.message : 'Reautorize a conta Google para continuar.');
+      if (code === 'google_oauth_client_misconfigured' || code === 'google_token_refresh_unavailable' || code === 'google_token_refresh_failed') return failed(error instanceof Error ? error.message : 'Não foi possível renovar o acesso do Google.');
+      if ((error as { message?: string }).message === 'google_authorization_required') return tested('setup_required', 'Autorize a conta Google em Integrações para liberar Gmail, Calendar, Drive e links de reunião Meet.');
+      app.log.warn({ provider, error: error instanceof Error ? error.name : 'unknown' }, 'Google connection test could not reach Google APIs');
+      return failed('A conta está vinculada, mas o Google não respondeu durante o teste de perfil ou Calendar. Tente novamente; se persistir, confira a conectividade do servidor e o estado da API Google Calendar.');
+    }
     app.log.warn({ provider, error: error instanceof Error ? error.name : 'unknown' }, 'Integration connection test failed');
     return failed('Não foi possível confirmar a conexão. Confira o serviço, a URL e as credenciais no Coolify.');
   }
@@ -3294,6 +3319,7 @@ app.post('/api/workspace/finance-transfers', { preHandler: app.authenticate, con
   const body = z.object({
     sourceAccountId: z.string().uuid(), destinationAccountId: z.string().uuid(),
     description: z.string().trim().min(2).max(240), amount: z.number().finite().positive().max(1_000_000_000_000),
+    idempotencyKey: z.string().uuid().optional(),
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
       const [year, month, day] = value.split('-').map(Number);
       const date = new Date(Date.UTC(year!, month! - 1, day!));
@@ -3303,8 +3329,18 @@ app.post('/api/workspace/finance-transfers', { preHandler: app.authenticate, con
   if (!body.success) return reply.code(400).send({ error: 'validation_error', message: 'Informe duas contas, uma descricao, uma data e um valor validos.' });
   if (body.data.sourceAccountId === body.data.destinationAccountId) return reply.code(400).send({ error: 'finance_transfer_same_account', message: 'Escolha duas contas diferentes.' });
   let balanceError = '';
+  const idempotencyKey = body.data.idempotencyKey || randomUUID();
   const result = await db.transaction(async (tx) => {
     const { sourceAccountId, destinationAccountId } = body.data;
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${request.user.organizationId}:finance-transfer:${idempotencyKey}`}, 0))`);
+    const previousRows = await tx.select().from(workspaceRecords).where(and(
+      eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'finance-transactions'),
+      isNull(workspaceRecords.archivedAt), sql`${workspaceRecords.data}->>'transferId' = ${idempotencyKey}`,
+    ));
+    if (previousRows.length) {
+      if (!financeTransferReplayMatches(previousRows, { ...body.data, description: body.data.description.trim() })) return { error: 'finance_transfer_idempotency_conflict' as const };
+      return { transferId: idempotencyKey, transactions: previousRows, replayed: true as const };
+    }
     // Lock both accounts in a stable order so concurrent transfers cannot overspend or deadlock.
     await tx.execute(sql`SELECT id FROM workspace_records WHERE organization_id = ${request.user.organizationId} AND resource = 'finance-accounts' AND archived_at IS NULL AND id IN (${sourceAccountId}::uuid, ${destinationAccountId}::uuid) ORDER BY id FOR UPDATE`);
     const rows = await tx.select().from(workspaceRecords).where(and(
@@ -3321,20 +3357,21 @@ app.post('/api/workspace/finance-transfers', { preHandler: app.authenticate, con
     catch (error) { balanceError = error instanceof Error ? error.message : 'finance_transfer_invalid_amount'; return { error: balanceError }; }
     await tx.update(workspaceRecords).set({ data: { ...sourceData, balance: balances.sourceBalance }, updatedAt: new Date() }).where(eq(workspaceRecords.id, source.id));
     await tx.update(workspaceRecords).set({ data: { ...destinationData, balance: balances.destinationBalance }, updatedAt: new Date() }).where(eq(workspaceRecords.id, destination.id));
-    const transferId = randomUUID();
+    const transferId = idempotencyKey;
     const transactions = await tx.insert(workspaceRecords).values([
       { organizationId: request.user.organizationId, createdBy: request.user.sub, resource: 'finance-transactions', data: { description: body.data.description, direction: 'Sa\u00edda', amount: balances.amount, date: body.data.date, accountId: source.id, accountName: String(sourceData.name ?? ''), status: 'Registrada', transferId, transferSide: 'debit', relatedAccountId: destination.id, relatedAccountName: String(destinationData.name ?? '') } },
       { organizationId: request.user.organizationId, createdBy: request.user.sub, resource: 'finance-transactions', data: { description: body.data.description, direction: 'Entrada', amount: balances.amount, date: body.data.date, accountId: destination.id, accountName: String(destinationData.name ?? ''), status: 'Registrada', transferId, transferSide: 'credit', relatedAccountId: source.id, relatedAccountName: String(sourceData.name ?? '') } },
     ]).returning();
     await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'finance-transfer', entityId: transferId, action: 'created', payload: { sourceAccountId: source.id, destinationAccountId: destination.id, amount: balances.amount, transactionIds: transactions.map((item) => item.id) } });
-    return { transferId, transactions, sourceBalance: balances.sourceBalance, destinationBalance: balances.destinationBalance };
+    return { transferId, transactions, sourceBalance: balances.sourceBalance, destinationBalance: balances.destinationBalance, replayed: false as const };
   });
   if ('error' in result) {
     if (result.error === 'finance_account_not_found') return reply.code(404).send({ error: result.error, message: 'Uma das contas nao existe neste workspace.' });
     if (result.error === 'finance_transfer_insufficient_funds') return reply.code(409).send({ error: result.error, message: 'Saldo insuficiente na conta de origem para esta transferencia.' });
+    if (result.error === 'finance_transfer_idempotency_conflict') return reply.code(409).send({ error: result.error, message: 'Esta chave ja identifica uma transferencia com outros dados. Confira o extrato da conta antes de iniciar um novo movimento.' });
     return reply.code(400).send({ error: result.error, message: 'O valor da transferencia deve ter no maximo duas casas decimais.' });
   }
-  return reply.code(201).send({ data: { transferId: result.transferId, transactions: result.transactions, balances: { source: result.sourceBalance, destination: result.destinationBalance } } });
+  return reply.code(result.replayed ? 200 : 201).send({ data: { transferId: result.transferId, transactions: result.transactions, ...(result.replayed ? { replayed: true } : { balances: { source: result.sourceBalance, destination: result.destinationBalance } }) } });
 });
 
 app.post('/api/workspace/leads/:id/convert', { preHandler: app.authenticate }, async (request, reply) => {

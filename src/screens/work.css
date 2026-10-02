@@ -167,9 +167,14 @@
 .agenda-google-sync .agenda-spin{animation:agendaSpin .9s linear infinite}
 .agenda-sync-error{display:flex;align-items:flex-start;gap:9px;margin:14px 0 4px;padding:11px 13px;border:1px solid #f1d8b9;border-radius:10px;background:#fff8ef;color:#8b5a1e;font-size:12px;line-height:1.5}
 .agenda-sync-error svg{flex:none;margin-top:1px}
+.agenda-sync-error span{flex:1;min-width:0}
+.agenda-sync-error button{flex:none;min-height:34px;padding:0 12px;border:1px solid #e5c79f;border-radius:8px;background:#fff;color:#704716;font:inherit;font-weight:700;white-space:nowrap;cursor:pointer}
+.agenda-sync-error button:hover{background:#fff1dc;border-color:#d5ad76}
+.agenda-sync-error button:focus-visible{outline:2px solid #24774a;outline-offset:2px}
 @keyframes agendaSpin{to{transform:rotate(360deg)}}
 @media(max-width:950px){.agenda-toolbar-new .agenda-google-sync{align-self:flex-start}}
 @media(max-width:680px){.agenda-toolbar-new .agenda-toolbar-tools{align-items:stretch}.agenda-toolbar-new .agenda-google-sync{align-self:flex-start}}
+@media(max-width:600px){.agenda-sync-error{flex-wrap:wrap}.agenda-sync-error span{flex-basis:calc(100% - 28px)}.agenda-sync-error button{margin-left:24px}}
 @media(prefers-reduced-motion:reduce){.agenda-google-sync .agenda-spin{animation:none}}
 .agenda-redesign .work-compose-grid>label.work-sync-option{display:flex;flex-direction:row;align-items:center;gap:8px;margin:0;color:#536071;font-size:12px;font-weight:600}
 .agenda-redesign .work-compose-grid>label.work-sync-option input[type=checkbox]{width:16px;min-height:16px;margin:0;accent-color:#24774a}
