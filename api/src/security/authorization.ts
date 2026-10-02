@@ -16,11 +16,11 @@ function moduleForPath(path: string): PermissionModule | null {
   if (resource && ['clients', 'leads', 'companies', 'contacts', 'proposals', 'services', 'contracts'].includes(resource)) return 'crm';
   if (resource && ['projects', 'tasks', 'events', 'hours', 'team'].includes(resource)) return 'delivery';
   if (resource && ['tickets', 'inbox', 'approvals', 'files', 'assignees'].includes(resource)) return 'support';
-  if (resource && ['revenues', 'expenses', 'finance-accounts', 'finance-transfers'].includes(resource)) return 'finance';
+  if (resource && ['revenues', 'expenses', 'finance-accounts', 'finance-transactions', 'finance-transfers'].includes(resource)) return 'finance';
   if (resource && ['site-assets', 'monitors', 'repositories'].includes(resource)) return 'sites';
   if (resource === 'automations') return 'automations';
   if (resource === 'preferences' || resource === 'settings') return 'settings';
-  if (resource === 'reports') return 'reports';
+  if (resource === 'reports' || resource === 'goals') return 'reports';
   if (path === '/api/clients' || path.startsWith('/api/clients/')) return 'crm';
   if (path.startsWith('/api/integrations/github/')) return 'sites';
   if (path.startsWith('/api/billing/')) return 'finance';

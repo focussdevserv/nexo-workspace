@@ -8,6 +8,12 @@ test('saving a contract status also persists the edited contract document', () =
   });
 });
 
+test('contract metadata edits omit an unchanged document managed by signature provider', () => {
+  assert.deepEqual(commercialStatusPatch('contratos', 'Assinado', 'Generated fallback', { includeContractDocument: false }), {
+    status: 'Assinado', tone: 'green',
+  });
+});
+
 test('status updates for other CRM records do not include contract fields', () => {
   assert.deepEqual(commercialStatusPatch('propostas', 'Enviada', ''), {
     status: 'Enviada', tone: 'amber',

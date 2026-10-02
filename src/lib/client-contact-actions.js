@@ -3,11 +3,15 @@ export function clientContactActions(email, phone) {
   const validEmail = address.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address);
   const phoneValue = String(phone || '').trim();
   const digits = phoneValue.replace(/\D/g, '');
+  const phoneHref = digits.length >= 7 && digits.length <= 15
+    ? `tel:${phoneValue.startsWith('+') ? '+' : ''}${digits}`
+    : '';
   const brazilianLocal = [10, 11].includes(digits.length);
   const international = phoneValue.startsWith('+') || (digits.startsWith('55') && [12, 13].includes(digits.length));
   const whatsappNumber = brazilianLocal ? `55${digits}` : international && digits.length >= 8 && digits.length <= 15 ? digits : '';
   return {
     emailHref: validEmail ? `mailto:${address}` : '',
+    phoneHref,
     whatsappHref: whatsappNumber ? `https://wa.me/${whatsappNumber}` : '',
   };
 }

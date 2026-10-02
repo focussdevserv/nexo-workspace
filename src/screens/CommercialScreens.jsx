@@ -24,7 +24,7 @@ import { splitInstallmentAmounts } from "../lib/installment-plan.js";
 import { clientMonthlyRevenue, clientMonthlyRevenueLabel, parseDisplayAmount, recurringMonthlyAmount } from "../lib/client-billing-summary.js";
 import { downloadCsvFile, recordsToCsv } from "../lib/csv.js";
 import { isLocalDemoActive } from "../lib/local-demo.js";
-import { buildClientFinanceHistory, clientFinanceDateKey, clientFinanceDueDateLabel, clientFinanceEditPatch, clientFinanceFailedResources, clientFinanceFilterCounts, clientFinanceFilterForPage, clientFinanceOpenBillingCount, isClientFinanceCancelled, isClientFinanceSettled, manualFinanceSettlementPatch, normalizeClientSubscriptionTerms, prepareClientContractTrackingPatch, prepareClientServiceChargeUpdate } from "../lib/client-finance.js";
+import { buildClientFinanceHistory, clientFinanceDateKey, clientFinanceDueDateLabel, clientFinanceEditPatch, clientFinanceFailedResources, clientFinanceFilterCounts, clientFinanceFilterForPage, clientFinanceLegacyClientValue, clientFinanceOpenBillingCount, isClientFinanceCancelled, isClientFinanceSettled, manualFinanceSettlementPatch, normalizeClientSubscriptionTerms, prepareClientContractTrackingPatch, prepareClientServiceChargeUpdate } from "../lib/client-finance.js";
 import { clientContactActions } from "../lib/client-contact-actions.js";
 import { removeClientContact } from "../lib/client-contact-records.js";
 import { clientFileRecordForUpload } from "../lib/client-file-link.js";
@@ -1522,8 +1522,8 @@ function ClientProfileModal({
   const projects = (related.projects || []).filter(item => belongsToClient(item, client, item.client));
   const tasks = (related.tasks || []).filter(item => belongsToClient(item, client, item.client));
   const billing = (related.billing || []).filter(item => belongsToClient(item, client, item.clientName || item.client));
-  const revenues = (related.revenues || []).filter(item => belongsToClient(item, client, item.counterparty));
-  const expenses = (related.expenses || []).filter(item => belongsToClient(item, client, item.counterparty));
+  const revenues = (related.revenues || []).filter(item => belongsToClient(item, client, clientFinanceLegacyClientValue("revenues", item)));
+  const expenses = (related.expenses || []).filter(item => belongsToClient(item, client, clientFinanceLegacyClientValue("expenses", item)));
   const contracts = (related.contracts || []).filter(item => belongsToClient(item, client, item.client));
   const subscriptions = (related.subscriptions || []).filter(item => belongsToClient(item, client, item.clientName || item.client));
   const messages = (related.inbox || []).filter(item => belongsToClient(item, client, item.company));
@@ -2313,7 +2313,9 @@ function ListView({
     try {
       const saved = await onUpdate?.(selectedItem, {
         ...patch,
-        ...commercialStatusPatch(page, statusDraft, contractDocDraft),
+        ...commercialStatusPatch(page, statusDraft, contractDocDraft, {
+          includeContractDocument: page === "contratos" && contractDocDraft !== String(selectedItem.documentText || contractText(selectedItem)),
+        }),
       });
       if (saved !== false) setSelectedItem(null);
     } catch (error) {
@@ -2496,7 +2498,7 @@ function ListView({
           }}><Download size={15} /> Exportar CSV</button></div></div><Toolbar search={search} setSearch={setSearch} filter={filter} setFilter={setFilter} filters={filters} placeholder={`Buscar ${label}...`} extraFilterFields={extraFilterFields} extraFilters={extraFilters} onExtraFilterChange={(field, value) => setExtraFilters(currentFilters => ({
         ...currentFilters,
         [field]: value
-      }))} /><div className="com-table-wrap"><table className={`com-table com-table-${page}`}><thead><tr>{titles[page].map(title => <th key={title}>{title}</th>)}<th aria-label="Ações" /></tr></thead><tbody>{items.map((item, index) => <tr key={item.id ?? index}><td>{page === "leads" ? <Identity name={item.name} sub={item.email} initials={item.initials} tone={item.tone} /> : page === "clientes" || page === "empresas" || page === "contatos" ? <Identity name={item.name} sub={page === "contatos" ? item.role : page === "clientes" ? item.since : item.segment} initials={item.initials} tone={item.tone} /> : <div className="com-table-primary"><b>{item.title}</b><small>{item.code}</small></div>}</td>{page === "leads" && <Fragment><td><b>{item.company}</b><small>{item.service}</small></td><td><Badge tone={item.source === "Instagram" ? "purple" : item.source === "Indicação" ? "green" : "blue"}>{item.source}</Badge></td><td><Badge tone={stageTone(item.stage)}>{item.stage}</Badge></td><td className="com-amount">{item.value}</td><td className="com-muted">{item.date}</td></Fragment>}{page === "clientes" && <Fragment><td><b>{item.person}</b><small>{item.email}</small></td><td><span className="com-text-line">{item.segment}</span><small>{item.email}</small></td><td>{item.projects}</td><td className="com-amount">{clientRevenueLabel(item)}</td><td><Badge tone={item.status === "Ativo" ? "green" : "amber"}>{item.status}</Badge></td></Fragment>}{page === "empresas" && <Fragment><td>{item.segment}</td><td>{item.city}</td><td>{item.size}</td><td>{item.people}</td><td><Badge tone={item.status === "Cliente" ? "green" : "blue"}>{item.status}</Badge></td></Fragment>}{page === "contatos" && <Fragment><td><a className="com-email" href={`mailto:${item.email}`}><Mail size={13} />{item.email}</a></td><td><a className="com-phone" href={`tel:${item.phone.replace(/\D/g, "")}`}><Phone size={13} />{item.phone}</a></td><td className="com-muted">{item.last}</td><td><Badge tone={item.status === "Decisor" || item.status === "Decisora" ? "purple" : "blue"}>{item.status}</Badge></td></Fragment>}{(page === "propostas" || page === "contratos") && <Fragment><td><b>{item.client}</b><small>{item.code}</small></td><td className="com-amount">{item.value}</td>{page === "propostas" ? <Fragment><td><Badge tone={item.tone}>{item.status}</Badge></td><td className="com-muted">{item.date}</td></Fragment> : <Fragment><td><div className="com-contract-progress"><div className="com-progress"><i style={{
+      }))} /><div className="com-table-wrap"><table className={`com-table com-table-${page}`}><thead><tr>{titles[page].map(title => <th key={title}>{title}</th>)}<th aria-label="Ações" /></tr></thead><tbody>{items.map((item, index) => <tr key={item.id ?? index}><td>{page === "leads" ? <Identity name={item.name} sub={item.email} initials={item.initials} tone={item.tone} /> : page === "clientes" || page === "empresas" || page === "contatos" ? <Identity name={item.name} sub={page === "contatos" ? item.role : page === "clientes" ? item.since : item.segment} initials={item.initials} tone={item.tone} /> : <div className="com-table-primary"><b>{item.title}</b><small>{item.code}</small></div>}</td>{page === "leads" && <Fragment><td><b>{item.company}</b><small>{item.service}</small></td><td><Badge tone={item.source === "Instagram" ? "purple" : item.source === "Indicação" ? "green" : "blue"}>{item.source}</Badge></td><td><Badge tone={stageTone(item.stage)}>{item.stage}</Badge></td><td className="com-amount">{item.value}</td><td className="com-muted">{item.date}</td></Fragment>}{page === "clientes" && <Fragment><td><b>{item.person}</b><small>{item.email}</small></td><td><span className="com-text-line">{item.segment}</span><small>{item.email}</small></td><td>{item.projects}</td><td className="com-amount">{clientRevenueLabel(item)}</td><td><Badge tone={item.status === "Ativo" ? "green" : "amber"}>{item.status}</Badge></td></Fragment>}{page === "empresas" && <Fragment><td>{item.segment}</td><td>{item.city}</td><td>{item.size}</td><td>{item.people}</td><td><Badge tone={item.status === "Cliente" ? "green" : "blue"}>{item.status}</Badge></td></Fragment>}{page === "contatos" && <Fragment><ContactChannelCells item={item} /><td className="com-muted">{item.last}</td><td><Badge tone={item.status === "Decisor" || item.status === "Decisora" ? "purple" : "blue"}>{item.status}</Badge></td></Fragment>}{(page === "propostas" || page === "contratos") && <Fragment><td><b>{item.client}</b><small>{item.code}</small></td><td className="com-amount">{item.value}</td>{page === "propostas" ? <Fragment><td><Badge tone={item.tone}>{item.status}</Badge></td><td className="com-muted">{item.date}</td></Fragment> : <Fragment><td><div className="com-contract-progress"><div className="com-progress"><i style={{
                           width: `${item.progress}%`
                         }} /></div><small>{item.renewal}</small></div></td><td><Badge tone={item.tone}>{item.status}</Badge></td></Fragment>}</Fragment>}<td><button className="com-row-more" aria-label={`Ações para ${item.name || item.title}`} onClick={() => {
                   setSelectedItem(item);
@@ -2631,6 +2633,10 @@ function Identity({
   tone
 }) {
   return <div className="com-identity"><Avatar initials={initials} tone={tone} /><span><b>{name}</b><small>{sub}</small></span></div>;
+}
+function ContactChannelCells({ item }) {
+  const actions = clientContactActions(item.email, item.phone);
+  return <Fragment><td>{actions.emailHref ? <a className="com-email" href={actions.emailHref}><Mail size={13} />{item.email}</a> : <span className="com-muted">E-mail não informado</span>}</td><td>{actions.phoneHref ? <a className="com-phone" href={actions.phoneHref}><Phone size={13} />{item.phone}</a> : <span className="com-muted">Telefone não informado</span>}</td></Fragment>;
 }
 function EmptyState({
   query,

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildClientFinanceHistory, clientFinanceDateKey, clientFinanceDueDateLabel, clientFinanceEditPatch, clientFinanceFailedResources, clientFinanceFilterCounts, clientFinanceFilterForPage, clientFinanceOpenBillingCount, isClientFinanceCancelled, isClientFinanceSettled, manualFinanceSettlementPatch, normalizeClientSubscriptionTerms, prepareClientContractTrackingPatch, prepareClientServiceChargeUpdate } from './client-finance.js';
+import { buildClientFinanceHistory, clientFinanceDateKey, clientFinanceDueDateLabel, clientFinanceEditPatch, clientFinanceFailedResources, clientFinanceFilterCounts, clientFinanceFilterForPage, clientFinanceLegacyClientValue, clientFinanceOpenBillingCount, isClientFinanceCancelled, isClientFinanceSettled, manualFinanceSettlementPatch, normalizeClientSubscriptionTerms, prepareClientContractTrackingPatch, prepareClientServiceChargeUpdate } from './client-finance.js';
+import { belongsToClient } from '../data/client-link.js';
 
 test('client finance shortcuts map to an in-profile filter', () => {
   assert.equal(clientFinanceFilterForPage('Cobranças'), 'billing');
@@ -22,6 +23,14 @@ test('finance failure state is scoped to the active client-profile filter', () =
   assert.deepEqual(clientFinanceFailedResources('billing', errors), ['billing']);
   assert.deepEqual(clientFinanceFailedResources('revenues', errors), []);
   assert.deepEqual(clientFinanceFailedResources('all', errors), ['billing', 'contracts']);
+});
+
+test('legacy client expenses link by client name, never by vendor counterparty', () => {
+  const client = { id: 'client-1', name: 'Aurora Café' };
+  const expense = { counterparty: 'CloudHost', client: 'Aurora Café' };
+  const unrelatedVendorExpense = { counterparty: 'Aurora Café' };
+  assert.equal(belongsToClient(expense, client, clientFinanceLegacyClientValue('expenses', expense)), true);
+  assert.equal(belongsToClient(unrelatedVendorExpense, client, clientFinanceLegacyClientValue('expenses', unrelatedVendorExpense)), false);
 });
 
 test('contract count is distinct and excluded from billing count', () => {

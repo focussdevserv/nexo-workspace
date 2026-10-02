@@ -96,6 +96,15 @@ test('workspace module permissions can restrict or grant access within their mod
   assert.equal(isWorkspaceRequestAllowed('member', 'POST', '/api/workspace/clients', { crm: { read: true, write: true } }), true);
   assert.equal(isWorkspaceRequestAllowed('member', 'POST', '/api/workspace/clients', { crm: { read: false, write: true } }), false);
   assert.equal(isWorkspaceRequestAllowed('member', 'GET', '/api/workspace/revenues', { finance: { read: true, write: false } }), true);
+  assert.equal(isWorkspaceRequestAllowed('member', 'GET', '/api/workspace/finance-transactions', { finance: { read: true, write: false } }), true);
+  assert.equal(isWorkspaceRequestAllowed('member', 'GET', '/api/workspace/finance-transactions', { finance: { read: false, write: false } }), false);
+  assert.equal(isWorkspaceRequestAllowed('member', 'DELETE', '/api/workspace/finance-transactions/transaction-123', { finance: { read: true, write: true, delete: true } }), true);
+  assert.equal(isWorkspaceRequestAllowed('member', 'DELETE', '/api/workspace/finance-transactions/transaction-123', { finance: { read: true, write: true, delete: false } }), false);
+  assert.equal(isWorkspaceRequestAllowed('admin', 'GET', '/api/workspace/finance-transactions', { finance: { read: false, write: false } }), false);
+  assert.equal(isWorkspaceRequestAllowed('member', 'GET', '/api/workspace/goals', { reports: { read: true, write: true } }), true);
+  assert.equal(isWorkspaceRequestAllowed('member', 'POST', '/api/workspace/goals', { reports: { read: true, write: true } }), true);
+  assert.equal(isWorkspaceRequestAllowed('member', 'POST', '/api/workspace/goals', { reports: { read: true, write: false } }), false);
+  assert.equal(isWorkspaceRequestAllowed('admin', 'GET', '/api/workspace/goals', { reports: { read: false, write: false } }), false);
   assert.equal(isWorkspaceRequestAllowed('member', 'POST', '/api/workspace/revenues', { finance: { read: true, write: false } }), false);
   assert.equal(isWorkspaceRequestAllowed('member', 'POST', '/api/workspace/revenues/recurring', { finance: { read: true, write: true } }), true);
   assert.equal(isWorkspaceRequestAllowed('member', 'POST', '/api/workspace/expenses/recurring', { finance: { read: true, write: false } }), false);

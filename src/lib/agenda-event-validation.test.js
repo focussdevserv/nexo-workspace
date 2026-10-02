@@ -10,8 +10,9 @@ test('validates calendar dates including leap days', () => {
 test('allows all-day events without times and requires a positive timed interval', () => {
   assert.equal(validateAgendaEvent({ date: '2026-10-02', allDay: true }), '');
   assert.match(validateAgendaEvent({ date: '2026-10-02', time: '10:00', end: '' }), /horário/);
-  assert.match(validateAgendaEvent({ date: '2026-10-02', time: '10:30', end: '10:30' }), /posterior/);
+  assert.match(validateAgendaEvent({ date: '2026-10-02', time: '10:30', end: '10:30' }), /iguais/);
   assert.equal(validateAgendaEvent({ date: '2026-10-02', time: '10:00', end: '10:30' }), '');
+  assert.equal(validateAgendaEvent({ date: '2026-10-02', time: '23:30', end: '00:30' }), '');
 });
 
 test('keeps valid unique attendees and rejects malformed addresses instead of silently dropping them', () => {

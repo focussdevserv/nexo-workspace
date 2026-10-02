@@ -23,6 +23,14 @@ export function clientFinanceFilterForPage(page) {
   return 'all';
 }
 
+export function clientFinanceLegacyClientValue(resource, record) {
+  // Expense counterparties are usually vendors, so only use an explicit
+  // client field for legacy records that predate clientId linking.
+  if (resource === 'expenses') return record?.clientName ?? record?.client;
+  if (resource === 'revenues') return record?.clientName ?? record?.client ?? record?.counterparty;
+  return record?.clientName ?? record?.client;
+}
+
 const clientFinanceResourcesByFilter = {
   all: ['billing', 'subscriptions', 'contracts', 'revenues', 'expenses'],
   billing: ['billing'],

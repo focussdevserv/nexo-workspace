@@ -14,6 +14,7 @@ import { completeTaskOccurrence } from '../lib/task-recurrence.js';
 import { taskIsCompleted, taskMatchesStatus } from '../lib/task-status.js';
 import { taskDependencyBlocker, taskDependencyBlockMessage, taskDependencyWouldCreateCycle } from '../lib/task-dependency.js';
 import { parseAgendaAttendees, validateAgendaAttendees, validateAgendaEvent } from '../lib/agenda-event-validation.js';
+import { agendaEventDurationMinutes, agendaEventEndDate } from '../lib/agenda-event-interval.js';
 import { isAgendaAllDayEvent } from '../lib/agenda-event-presentation.js';
 import { resolveAgendaNavigationEvent } from '../lib/agenda-navigation.js';
 import { findProjectClient } from '../lib/project-client-link.js';
@@ -128,7 +129,7 @@ function Avatar({ name, className = '' }) {
 }
 function toLocalDateInput(date) { return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`; }
 function nextCalendarDate(date) { const value = new Date(`${date}T12:00:00Z`); value.setUTCDate(value.getUTCDate() + 1); return value.toISOString().slice(0, 10); }
-function calendarEndDate(date, start, end) { if (end > start) return date; const next = new Date(`${date}T12:00:00`); next.setDate(next.getDate() + 1); return toLocalDateInput(next); }
+function calendarEndDate(date, start, end) { return agendaEventEndDate(date, start, end); }
 
 function AgendaTimeGrid({ dates, events, selectedDate, now, timeZone, locale, onSelectDate, onCreateEvent, onSelectEvent, eventTone, sameDay }) {
   const firstHour = 7, lastHour = 21, hourHeight = 64;
@@ -136,7 +137,7 @@ function AgendaTimeGrid({ dates, events, selectedDate, now, timeZone, locale, on
   const dayEvents = (date, allDay) => events.filter((event) => event.date === keyOf(date) && isAgendaAllDayEvent(event) === allDay);
   const hasEvents = dates.some((date) => events.some((event) => event.date === keyOf(date)));
   const offset = (event) => { const [hour, minute] = event.time.split(':').map(Number); return Math.max(0, Math.min((lastHour - firstHour) * hourHeight - 30, ((hour - firstHour) * 60 + minute) / 60 * hourHeight)); };
-  const height = (event) => { const [sh, sm] = event.time.split(':').map(Number); const [eh, em] = (event.end || `${String(sh + 1).padStart(2, '0')}:${String(sm).padStart(2, '0')}`).split(':').map(Number); return Math.max(34, Math.min(240, ((eh * 60 + em) - (sh * 60 + sm)) / 60 * hourHeight)); };
+  const height = (event) => { const [sh, sm] = event.time.split(':').map(Number); const fallbackEnd = `${String((sh + 1) % 24).padStart(2, '0')}:${String(sm).padStart(2, '0')}`; return Math.max(34, Math.min(240, agendaEventDurationMinutes(event.time, event.end || fallbackEnd) / 60 * hourHeight)); };
   return <div className={`agenda-time-grid ${dates.length === 1 ? 'is-day' : 'is-week'}`}>
     <div className="agenda-time-header"><div className="agenda-time-gutter-label">{calendarTimeZoneLabel(new Date(), locale, timeZone)}</div>{dates.map((date) => <button type="button" key={keyOf(date)} className={`agenda-time-date ${sameDay(date, selectedDate) ? 'selected' : ''} ${sameDay(date, now) ? 'is-today' : ''}`} onClick={() => onSelectDate(date)}><span>{date.toLocaleDateString(locale, { weekday: 'short' })}</span><b>{date.getDate()}</b></button>)}</div>
     <div className="agenda-all-day-row"><span>Dia todo</span>{dates.map((date) => <div key={keyOf(date)}>{dayEvents(date, true).map((event) => <button key={event.id} type="button" className={`agenda-grid-allday tone-${eventTone(event)}`} onClick={() => onSelectEvent(event)}>{event.title}</button>)}</div>)}</div>
@@ -177,9 +178,7 @@ function AgendaCalendar({ events, selectedDate, setSelectedDate, agendaView, set
   const duration = (event) => {
     if (!event.time || event.allDay) return 0;
     if (!event.end) return Math.max(0, Number(event.durationMinutes ?? event.duration) || 0);
-    const [startHour, startMinute] = event.time.split(':').map(Number);
-    const [endHour, endMinute] = event.end.split(':').map(Number);
-    return Math.max(0, endHour * 60 + endMinute - startHour * 60 - startMinute);
+    return agendaEventDurationMinutes(event.time, event.end);
   };
   const bookedMinutes = dayEvents.reduce((total, event) => total + duration(event), 0);
   const durationLabel = bookedMinutes ? `${Math.floor(bookedMinutes / 60)}h${bookedMinutes % 60 ? ` ${bookedMinutes % 60}min` : ''}` : '0h';
@@ -539,7 +538,7 @@ function WorkScreen({ page, navigationContext = null, onNavigationContextConsume
     const tempId = globalThis.crypto?.randomUUID?.() || `event-${Date.now()}`;
     const { attendees } = parseAgendaAttendees(draft.attendees);
     const shouldSyncGoogle = !localDemo && (draft.syncGoogleCalendar || draft.createMeet);
-    const eventRecord = { id: tempId, date: draft.due, time: draft.allDay ? '' : draft.time, end: draft.allDay ? '' : draft.endTime, allDay: Boolean(draft.allDay), title: draft.title.trim(), detail: draft.detail.trim() || draft.client || 'Agenda da equipe', people: attendees.join(', ') || draft.assignee, googleEventId: '', googleMeetUrl: '', calendarSyncStatus: localDemo ? 'demo_local' : shouldSyncGoogle ? 'pending' : 'not_requested', color: 'blue' };
+    const eventRecord = { id: tempId, date: draft.due, endDate: draft.allDay ? nextCalendarDate(draft.due) : calendarEndDate(draft.due, draft.time, draft.endTime), time: draft.allDay ? '' : draft.time, end: draft.allDay ? '' : draft.endTime, allDay: Boolean(draft.allDay), title: draft.title.trim(), detail: draft.detail.trim() || draft.client || 'Agenda da equipe', people: attendees.join(', ') || draft.assignee, googleEventId: '', googleMeetUrl: '', calendarSyncStatus: localDemo ? 'demo_local' : shouldSyncGoogle ? 'pending' : 'not_requested', color: 'blue' };
     setSavingAgenda(true);
     try {
       const saved = await setEvents((items) => [...items, eventRecord]);
@@ -766,7 +765,7 @@ function WorkScreen({ page, navigationContext = null, onNavigationContextConsume
   };
 
   const saveEventChanges = async (patch) => {
-    const updated = { ...selectedEvent, ...patch };
+    const updated = { ...selectedEvent, ...patch, endDate: patch.allDay ? (selectedEvent.allDay && patch.date === selectedEvent.date ? selectedEvent.endDate : nextCalendarDate(patch.date)) : calendarEndDate(patch.date, patch.time, patch.end) };
     const validationError = validateAgendaEvent({ date: updated.date, time: updated.time, end: updated.end, allDay: updated.allDay }); if (validationError) { notify(validationError); return; }
     const attendeeError = validateAgendaAttendees(updated.people); if (attendeeError) { notify(attendeeError); return; }
     const googleOnly = selectedEvent.calendarSource === 'google';

@@ -11,7 +11,7 @@ export function validateAgendaEvent({ date, time, end, allDay = false } = {}) {
   }
   if (allDay) return '';
   if (!timePattern.test(String(time || '')) || !timePattern.test(String(end || ''))) return 'Informe o horário de início e término.';
-  if (end <= time) return 'O término precisa ser posterior ao início.';
+  if (end === time) return 'O início e o término não podem ser iguais.';
   return '';
 }
 

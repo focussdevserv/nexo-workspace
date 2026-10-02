@@ -28,6 +28,7 @@ import { billingClientIdsForWorkspaceScope, clientLinkedWorkspaceResources, reco
 import { renderProposalEmail } from './email/proposal.js';
 import { buildGoogleRawMessage, decodeGoogleDriveUpload, decodeGoogleMailAttachments, googleMailAddresses, googleThreadBelongsToAllowedContacts, mapGoogleMailMessage } from './integrations/google-mail.js';
 import { classifyGoogleDriveListFailure, googleDriveFileMetadataUrl, googleDriveFilesListUrl, mapGoogleDriveFile, type GoogleDriveFile } from './integrations/google-drive.js';
+import { isWahaChatIdBoundToConversation } from './integrations/waha-chat-scope.js';
 import { validateClientServiceCharges } from './integrations/client-service-charges.js';
 import { clientApprovalDecisionHasValidComment, clientPortalApprovalDecisionRecord, isClientApprovalPending, portalApprovalRecord } from './integrations/client-approvals.js';
 import { recordBelongsToPortalClient } from './security/client-portal-record-scope.js';
@@ -622,6 +623,7 @@ app.post('/api/integrations/waha/send', { preHandler: app.authenticate, bodyLimi
   )).limit(1);
   if (!conversation) return reply.code(404).send({ error: 'conversation_not_found', message: 'A conversa não está mais disponível no workspace.' });
   const data = conversation.data as Record<string, any>;
+  if (!isWahaChatIdBoundToConversation(body.chatId, data)) return reply.code(409).send({ error: 'waha_recipient_mismatch', message: 'O destinatário não corresponde ao telefone desta conversa. Atualize os dados do contato antes de enviar.' });
   const existingHistory = Array.isArray(data.history) ? data.history as Array<Record<string, any>> : [];
   const duplicate = existingHistory.find((message) => message.clientMessageId === body.clientMessageId);
   if (duplicate?.status === 'sent' && duplicate.providerMessageId) return { data: { messageId: duplicate.providerMessageId, status: 'sent', duplicated: true } };
