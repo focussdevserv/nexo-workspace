@@ -1,3 +1,5 @@
+import { isFinanceReceivableStatusOpen } from './finance-receivable-status.js';
+
 const settledStatuses = new Set(['recebida', 'recebido', 'paga', 'pago', 'settled', 'paid', 'received']);
 const cancelledStatuses = new Set(['cancelada', 'cancelado', 'cancelled', 'canceled', 'estornada', 'refunded']);
 const pendingStatuses = new Set(['pendente', 'pending', 'aberta', 'open']);
@@ -10,8 +12,7 @@ export function isFinanceRecordOverdue(record, today = new Date()) {
 }
 
 export function isFinanceReceivableOpen(record) {
-  const status = String(record?.status || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-  return !settledStatuses.has(status) && !cancelledStatuses.has(status);
+  return isFinanceReceivableStatusOpen(record?.status);
 }
 
 // Workspace IDs are the stable identity for actions. Display codes can be duplicated

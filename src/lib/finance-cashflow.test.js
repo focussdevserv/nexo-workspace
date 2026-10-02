@@ -69,6 +69,14 @@ test('excludes Mercado Pago and localized settled or canceled statuses from rece
   assert.equal(isFinanceReceivableOpen({ status: 'Aguardando pagamento' }), true);
 });
 
+test('failed, rejected, expired and already authorized provider states are not receivable balances', () => {
+  for (const status of ['failed', 'payment_failed', 'rejected', 'expired', 'authorized', 'processed']) {
+    assert.equal(isFinanceReceivableOpen({ status }), false, status);
+  }
+  assert.equal(isFinanceReceivableOpen({ status: 'processing' }), true);
+  assert.equal(isFinanceReceivableOpen({ status: 'in_process' }), true);
+});
+
 test('filters finance records by category and due month, falling back to transaction date', () => {
   const records = [
     { id: 'march', category: 'Hospedagem', dueDate: '2026-03-19', date: '2026-02-28' },

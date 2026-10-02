@@ -1,3 +1,5 @@
+import { isFinanceReceivableStatusOpen } from './finance-receivable-status.js';
+
 const settledStatuses = new Set(['recebida', 'recebido', 'paga', 'pago', 'paid', 'received', 'settled']);
 const cancelledStatuses = new Set(['cancelada', 'cancelado', 'cancelled', 'canceled', 'estornada', 'refunded']);
 
@@ -111,7 +113,7 @@ export function isClientFinanceCancelled(record) {
 }
 
 export function clientFinanceOpenBillingCount(billing = []) {
-  return billing.filter((item) => !isClientFinanceSettled(item) && !isClientFinanceCancelled(item)).length;
+  return billing.filter((item) => isFinanceReceivableStatusOpen(item?.status)).length;
 }
 
 export function manualFinanceSettlementPatch(record, now = new Date()) {

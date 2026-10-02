@@ -28,3 +28,14 @@ test('search includes nested commercial metadata', () => {
   const result = filterCommercialRecords([{ id: 1, name: 'Nexo', emailDelivery: { recipient: 'ops@nexo.test' } }], { search: 'ops@nexo.test' });
   assert.equal(result.length, 1);
 });
+
+test('archived clients are isolated from active status filters and remain searchable on demand', () => {
+  const clients = [
+    { id: 1, name: 'Ativo', status: 'Ativo' },
+    { id: 2, name: 'Arquivo', status: 'Inativo', archivedAt: '2026-10-02T12:00:00.000Z' },
+  ];
+  assert.deepEqual(filterCommercialRecords(clients, { filter: 'Todos' }).map(({ id }) => id), [1]);
+  assert.deepEqual(filterCommercialRecords(clients, { filter: 'Inativo' }).map(({ id }) => id), []);
+  assert.deepEqual(filterCommercialRecords(clients, { filter: 'Arquivado' }).map(({ id }) => id), [2]);
+  assert.deepEqual(filterCommercialRecords(clients, { filter: 'Arquivado', search: 'Arquivo' }).map(({ id }) => id), [2]);
+});

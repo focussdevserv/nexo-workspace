@@ -85,12 +85,17 @@ test('client profile open billing count excludes provider and localized settled 
   assert.equal(clientFinanceOpenBillingCount([
     { status: 'pending' },
     { status: 'overdue' },
+    { status: 'processing' },
     { status: 'paid' },
     { status: 'Paga' },
     { status: 'cancelled' },
     { status: 'canceled' },
     { status: 'Cancelada' },
-  ]), 2);
+    { status: 'failed' },
+    { status: 'rejected' },
+    { status: 'expired' },
+    { status: 'authorized' },
+  ]), 3);
 });
 
 test('manual settlement uses realized timestamp and cannot settle closed records', () => {

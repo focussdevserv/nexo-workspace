@@ -24,8 +24,10 @@ export function filterCommercialRecords(records = [], {
       !extraFilters[field.key]
       || String(field.read ? field.read(record) || '' : record[field.key] || '') === extraFilters[field.key]
     ));
+    const matchesArchive = filter === 'Arquivado' ? Boolean(record.archivedAt) : !record.archivedAt;
     return (!term || text.includes(term))
-      && (filter === 'Todos' || status === filter || record.source === filter)
+      && matchesArchive
+      && (filter === 'Todos' || filter === 'Arquivado' || status === filter || record.source === filter)
       && matchesExtra;
   });
 }
