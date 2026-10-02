@@ -23,6 +23,7 @@ import { isSafeWorkspaceData } from './security/workspace-data.js';
 import { buildWorkspaceBackup, parseWorkspaceBackup } from './workspace-backup.js';
 import { findDuplicateLead, findLeadDuplicateMatch } from './crm/lead-identity.js';
 import { buildClientFromLead, mergeLeadServiceIntoClient } from './crm/lead-conversion.js';
+import { detachCatalogServiceReference } from './crm/service-reference.js';
 import { canChangeProjectArchiveState, isWorkspaceRequestAllowed, type WorkspaceRecordScope } from './security/authorization.js';
 import { billingClientIdsForWorkspaceScope, clientLinkedWorkspaceResources, recordMatchesWorkspaceScope } from './security/record-scope.js';
 import { renderProposalEmail } from './email/proposal.js';
@@ -3778,7 +3779,28 @@ app.delete('/api/workspace/:resource/:id', { preHandler: app.authenticate }, asy
   }
   const [archived] = await db.transaction(async (tx) => {
     const rows = await tx.update(workspaceRecords).set({ archivedAt: new Date(), updatedAt: new Date() }).where(and(eq(workspaceRecords.id, params.data.id), eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, params.data.resource), isNull(workspaceRecords.archivedAt), workspaceRecordScopeWhere(params.data.resource, request.user.permissions?.scope))).returning({ id: workspaceRecords.id });
-    if (rows[0]) await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: params.data.resource, entityId: rows[0].id, action: 'archived', payload: {} });
+    if (rows[0]) {
+      await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: params.data.resource, entityId: rows[0].id, action: 'archived', payload: {} });
+      if (params.data.resource === 'services') {
+        // Proposals/contracts retain a readable snapshot label, but must not keep
+        // editable links to a catalog entry that is no longer selectable.
+        for (const resource of ['proposals', 'contracts'] as const) {
+          const linkedRows = await tx.select({ id: workspaceRecords.id, data: workspaceRecords.data }).from(workspaceRecords).where(and(
+            eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, resource), isNull(workspaceRecords.archivedAt),
+          )).for('update');
+          for (const linked of linkedRows) {
+            if (!recordMatchesWorkspaceScope(resource, linked.id, linked.data, request.user.permissions?.scope)) continue;
+            const data = detachCatalogServiceReference(linked.data as Record<string, unknown>, rows[0].id);
+            if (data === linked.data) continue;
+            await tx.update(workspaceRecords).set({ data, updatedAt: new Date() }).where(and(
+              eq(workspaceRecords.id, linked.id), eq(workspaceRecords.organizationId, request.user.organizationId),
+              eq(workspaceRecords.resource, resource), isNull(workspaceRecords.archivedAt),
+            ));
+            await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: resource, entityId: linked.id, action: 'catalog_service_detached', payload: { serviceId: rows[0].id } });
+          }
+        }
+      }
+    }
     return rows;
   });
   if (!archived) return reply.code(404).send({ error: 'not_found', message: 'Registro não encontrado.' });

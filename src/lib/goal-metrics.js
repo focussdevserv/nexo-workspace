@@ -35,7 +35,7 @@ export function calculateGoalMetric(metric, data = {}, states = {}, period = 'mo
 
   if (metric === 'paid_revenue') {
     const orders = (data.orders || []).filter((item) => paidStatuses.has(normalize(item.status))
-      && inPeriod(item, ['paidAt', 'paid_at', 'paymentDetails.paidAt', 'updatedAt', 'updated_at', 'createdAt', 'created_at', 'date']));
+      && inPeriod(item, ['settledAt', 'settled_at', 'paidAt', 'paid_at', 'paymentDetails.settledAt', 'paymentDetails.paidAt', 'paymentDetails.paid_at', 'updatedAt', 'updated_at', 'createdAt', 'created_at', 'date']));
     const revenues = (data.revenues || []).filter((item) => paidStatuses.has(normalize(item.status))
       && inPeriod(item, ['settledAt', 'settled_at', 'paidAt', 'paid_at', 'date', 'createdAt', 'created_at', 'updatedAt', 'updated_at']));
     return { state: 'ready', value: [...orders, ...revenues].reduce((sum, item) => sum + parseReportAmount(item.amount ?? item.value), 0) };

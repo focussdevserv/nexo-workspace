@@ -39,3 +39,13 @@ test('archived clients are isolated from active status filters and remain search
   assert.deepEqual(filterCommercialRecords(clients, { filter: 'Arquivado' }).map(({ id }) => id), [2]);
   assert.deepEqual(filterCommercialRecords(clients, { filter: 'Arquivado', search: 'Arquivo' }).map(({ id }) => id), [2]);
 });
+
+test('lead follow-up filter finds open records without a next action', () => {
+  const leads = [
+    { id: 1, stage: 'Novo lead' },
+    { id: 2, stage: 'Negociação', nextAction: 'Enviar proposta' },
+    { id: 3, stage: 'Fechado' },
+    { id: 4, stage: 'Perdido' },
+  ];
+  assert.deepEqual(filterCommercialRecords(leads, { filter: 'Sem pr\u00f3xima a\u00e7\u00e3o' }).map(({ id }) => id), [1]);
+});

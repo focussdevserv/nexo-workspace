@@ -36,6 +36,18 @@ test('paid revenue goals use the actual payment date for refreshed orders and se
   assert.deepEqual(result, { state: 'ready', value: 500 });
 });
 
+test('paid revenue goals prioritize settlement timestamps on billing orders', () => {
+  const result = calculateGoalMetric('paid_revenue', {
+    orders: [
+      { status: 'paid', settledAt: '2026-10-01T12:00:00-03:00', createdAt: '2026-09-30T12:00:00-03:00', amount: 100 },
+      { status: 'paid', settled_at: '2026-09-30T12:00:00-03:00', updatedAt: '2026-10-01T12:00:00-03:00', amount: 200 },
+      { status: 'paid', paymentDetails: { settledAt: '2026-10-02T12:00:00-03:00' }, createdAt: '2026-09-30T12:00:00-03:00', amount: 300 },
+    ],
+  }, { orders: 'ready', revenues: 'ready' }, 'month', now, prefs);
+
+  assert.deepEqual(result, { state: 'ready', value: 400 });
+});
+
 test('linked goals distinguish access/load errors from a real zero', () => {
   assert.deepEqual(calculateGoalMetric('won_leads', {}, { leads: 'restricted' }, 'month', now, prefs), { state: 'restricted', value: null });
   assert.deepEqual(calculateGoalMetric('won_leads', { leads: [] }, { leads: 'ready' }, 'month', now, prefs), { state: 'ready', value: 0 });
