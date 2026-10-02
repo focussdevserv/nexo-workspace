@@ -61,8 +61,10 @@ Coolify lista Ubuntu 24.04 LTS como compatível. A documentação informa mínim
 6. Confirme `https://focussdev.space/api/health` e `https://focussdev.space`.
 7. O acesso e exclusivo ao e-mail `OWNER_EMAIL`. O cadastro publico foi removido e o servidor apaga usuarios adicionais somente quando encontra a conta proprietaria configurada.
 
-## Estado atual e próximo trabalho
+## Estado atual e deploy automatico
 
-O repositório Git privado está conectado a este projeto e a interface usa autenticação e API com persistência PostgreSQL para os módulos implementados. O workflow GitHub Actions valida build, lint, testes e revisão publicada.
+O repositorio privado `focussdevserv/nexo-workspace` esta conectado ao recurso `nexo-workspace` no Coolify. O workflow GitHub Actions valida build, lint, testes e revisao publicada.
 
-A publicação está bloqueada operacionalmente: os secrets COOLIFY_WEBHOOK e COOLIFY_TOKEN não estão cadastrados no GitHub Actions. As últimas tentativas falharam enquanto o domínio retornava HTTP 503; a leitura mais recente confirmou site e API saudáveis, mas ainda na revisão 4b8022789d5bc7b70461fb5b39b5a7b01cd56bd2. Cadastre esses secrets ou habilite o auto-deploy do repositório no Coolify antes de reenviar o workflow.
+O Coolify esta conectado ao repositorio por um Git App e configura o webhook do repositorio automaticamente. O auto deploy usa esse vinculo; nao e necessario criar nem armazenar token global do Coolify no GitHub.
+
+O workflow grava o manifesto da revisao no branch. Esse commit tambem aciona o Git App, enquanto a deteccao de mudancas ignora apenas o manifesto para evitar um ciclo de builds. A verificacao de producao so confirma quando os manifests, a API e a rota autenticada correspondem a revisao esperada. O secret opcional `COOLIFY_WEBHOOK` pode habilitar o acionamento direto pelo Actions.

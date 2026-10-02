@@ -65,7 +65,7 @@ jobs:
           git fetch --no-tags --depth=1 origin "$EVENT_BEFORE"
           runtime_paths=(src api/src api/drizzle api/tsconfig.json api/drizzle.config.ts public index.html Dockerfile api/Dockerfile compose.yaml nginx.conf .dockerignore)
           runtime_changed='false'
-          if ! git diff --quiet "$EVENT_BEFORE" "$GITHUB_SHA" -- "${runtime_paths[@]}"; then
+          if ! git diff --quiet "$EVENT_BEFORE" "$GITHUB_SHA" -- "${runtime_paths[@]}" ':(exclude)public/nexo-build.json'; then
             runtime_changed='true'
           fi
           # Lockfiles also change for development-only tools. Rebuild production only
@@ -116,7 +116,7 @@ jobs:
             git config user.name 'github-actions[bot]'
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
             git add public/nexo-build.json
-            git commit -m "chore: record deploy revision $GITHUB_SHA [skip ci]"
+            git commit -m "chore: record deploy revision $GITHUB_SHA"
             git push origin HEAD:main
             echo "Coolify auto deploy requested with revision $GITHUB_SHA." >> "$GITHUB_STEP_SUMMARY"
           fi
@@ -128,30 +128,28 @@ jobs:
     runs-on: ubuntu-latest
     env:
       COOLIFY_WEBHOOK: ${{ secrets.COOLIFY_WEBHOOK }}
-      COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
       API_DEPLOY_REQUIRED: ${{ needs.validate.outputs.api_deploy_required }}
     steps:
-      - name: Explain missing Coolify secrets
-        if: ${{ env.COOLIFY_WEBHOOK == '' || env.COOLIFY_TOKEN == '' }}
+      - name: Explain missing Coolify webhook
+        if: ${{ env.COOLIFY_WEBHOOK == '' }}
         run: |
           set -euo pipefail
           {
-            echo '## Waiting for Coolify Git auto-deploy'
-            echo 'Direct Coolify webhook credentials are absent. The revision was recorded on main, so production verification will wait for the configured Git deployment.'
+            echo '## Waiting for Coolify Git App deployment'
+            echo 'No direct Coolify webhook secret is configured. The connected Coolify Git App deploys repository pushes; production verification will wait for that deployment.'
           } >> "$GITHUB_STEP_SUMMARY"
-          echo 'No direct webhook credentials; waiting for the Coolify Git auto-deploy.'
+          echo 'Waiting for the connected Coolify Git App deployment.'
 
       - name: Queue Coolify deployment
-        if: ${{ env.COOLIFY_WEBHOOK != '' && env.COOLIFY_TOKEN != '' }}
+        if: ${{ env.COOLIFY_WEBHOOK != '' }}
         env:
           WEBHOOK_URL: ${{ secrets.COOLIFY_WEBHOOK }}
-          API_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
         run: |
           set -euo pipefail
           response_file="$(mktemp)"
-          status="$(curl --silent --show-error --location --output "$response_file" --write-out '%{http_code}' --max-time 30 --retry 2 --retry-all-errors --request GET "$WEBHOOK_URL" --header "Authorization: Bearer $API_TOKEN")"
+          status="$(curl --silent --show-error --location --output "$response_file" --write-out '%{http_code}' --max-time 30 --retry 2 --retry-all-errors --request GET "$WEBHOOK_URL")"
           if [[ "$status" != 2* ]]; then
-            echo "Coolify recusou o deploy (HTTP $status). Confira os secrets e o webhook configurado." >&2
+            echo "Coolify recusou o deploy (HTTP $status). Confira o secret COOLIFY_WEBHOOK." >&2
             exit 1
           fi
           echo 'Coolify aceitou o pedido de deploy.' >> "$GITHUB_STEP_SUMMARY"
