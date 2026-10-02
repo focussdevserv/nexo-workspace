@@ -11,11 +11,11 @@
 .com-deal-actions .com-deal-open{flex:1;justify-content:center;padding:7px 5px;border:1px solid #e9edf2;border-radius:7px;background:#fff;font-size:12px}
 .com-modal-backdrop{position:fixed;z-index:70;inset:0;display:grid;place-items:center;padding:18px;background:#111c2e77;backdrop-filter:blur(3px)}
 .com-create-modal{width:min(100%,500px);max-height:90vh;overflow:auto;padding:22px;border:1px solid #e6eaf0;border-radius:15px;background:#fff;box-shadow:0 25px 90px #14203933}
-.com-create-modal header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px}
+.com-create-modal header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px}
 .com-create-modal header small{color:#8490a0;font-size:12px;font-weight:700;letter-spacing:.1em}
 .com-create-modal header h2{margin:5px 0 0;font-size:20px}
 .com-create-modal header button{width:30px;height:30px;border:1px solid #e5e9ef;border-radius:8px;background:#fff;color:#768295;font-size:20px}
-.com-create-modal>label{display:flex;flex-direction:column;gap:6px;margin:0 0 13px;color:#596678;font-size:12px;font-weight:650}
+.com-create-modal>label{display:flex;flex-direction:column;gap:6px;margin:0 0 9px;color:#596678;font-size:12px;font-weight:650}
 .com-create-modal input{height:39px;padding:8px 10px;border:1px solid #dfe5ec;border-radius:8px;color:#202a38;font-size:12px}
 .com-create-modal select{height:39px;padding:8px 10px;border:1px solid #dfe5ec;border-radius:8px;background:#fff;color:#202a38;font-size:12px}
 .com-record-details{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin:4px 0 17px}
@@ -71,6 +71,7 @@
 @media(max-width:560px){.com-client-row{flex-wrap:wrap}.com-client-charge-action{min-height:44px;margin-left:38px}}
 
 @media(max-width:700px){.com-client-body>.com-client-content{flex:0 0 auto;height:auto;min-height:min-content;width:100%}.com-client-body>.com-client-live-feed{flex:0 0 auto;width:100%;max-height:440px}}
+@media(max-width:600px){.com-create-modal header{margin-bottom:10px}.com-create-modal>label{gap:4px;margin-bottom:6px}}
 
 .com-proposal-service-search{display:flex!important;align-items:center;gap:8px;min-height:38px;padding:0 10px;border:1px solid #dce3eb;border-radius:8px;background:#fff;color:#7b8796}.com-proposal-service-search svg{flex:none}.com-service-picker .com-proposal-service-search input{width:100%;min-width:0;height:36px;padding:6px 0;border:0;background:transparent;color:#344054;font:inherit;outline:0}.com-proposal-selected-services{margin:0;padding:7px 9px;border-radius:7px;background:#edf4ff;color:#315a91;line-height:1.4}.com-proposal-show-services{justify-self:start;padding:6px 9px;border:1px solid #d6e0ed;border-radius:7px;background:#fff;color:#315a91;font-weight:650}.com-proposal-show-services:hover{background:#f3f7fc}
 

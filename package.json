@@ -12,6 +12,9 @@
     "api:build": "npm --prefix api run build"
   },
   "dependencies": {
+    "@fontsource-variable/dm-sans": "^5.3.0",
+    "@fontsource-variable/manrope": "^5.3.0",
+    "@fontsource-variable/urbanist": "^5.3.0",
     "@sentry/react": "^11.1.0",
     "lucide-react": "^0.468.0",
     "react": "^18.3.1",

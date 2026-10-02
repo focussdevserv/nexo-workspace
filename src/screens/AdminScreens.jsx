@@ -45,7 +45,7 @@ export default function AdminScreen({ page, navigationContext = null, onNavigati
 
   return <main className="admin-screen">
     <header className="admin-heading">
-      <div><div className="admin-breadcrumb">NEXO <ChevronRight size={13} /> GESTÃO</div><span className="admin-eyebrow">ESPAÇO DE GESTÃO</span><h1>{page}</h1><p>{descriptionFor(page)}</p></div>
+      <div><div className="admin-breadcrumb">FOCUSSHUB <ChevronRight size={13} /> GESTÃO</div><span className="admin-eyebrow">ESPAÇO DE GESTÃO</span><h1>{page}</h1><p>{descriptionFor(page)}</p></div>
       {!['Configurações', 'Metas', 'Relatórios', 'Equipe', 'Portal do cliente'].includes(page) && <button className="admin-primary" onClick={() => page === 'Repositórios' ? setRepoModal(true) : notify('Relatório atualizado.')}><Plus size={16} />{page === 'Repositórios' ? 'Conectar repositório' : 'Novo relatório'}</button>}
     </header>
 

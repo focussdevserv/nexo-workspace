@@ -7,6 +7,12 @@
 .app-shell .cp-modal-backdrop,
 .cp-public-page .cp-modal-backdrop { z-index: 100; }
 
+/* Keep the page behind an open dialog from creating a second scrollbar. */
+html:has(#root :is(.repo-modal-backdrop,.com-modal-backdrop,.goal-modal-backdrop,.team-modal-backdrop,.work-modal-backdrop,.cp-modal-backdrop,.ns-integration-modal-backdrop)) {
+  overflow:hidden;
+  overscroll-behavior:none;
+}
+
 .app-shell :is(.repo-modal,.cp-modal,.com-create-modal,.goal-modal,.team-modal,.work-compose-modal),
 .cp-public-page .cp-modal { color: #202b3a; font-family: Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; font-size: 13px; }
 .app-shell :is(.repo-modal,.cp-modal,.com-create-modal,.goal-modal,.team-modal,.work-compose-modal)>header h2,

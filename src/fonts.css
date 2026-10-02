@@ -1,0 +1,24 @@
+/* Self-hosted variable fonts keep the Focusshub typography available offline. */
+@font-face {
+  font-family: Urbanist;
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('../node_modules/@fontsource-variable/urbanist/files/urbanist-latin-ext-wght-normal.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: Manrope;
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url('../node_modules/@fontsource-variable/manrope/files/manrope-latin-ext-wght-normal.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'DM Sans';
+  font-style: normal;
+  font-weight: 100 1000;
+  font-display: swap;
+  src: url('../node_modules/@fontsource-variable/dm-sans/files/dm-sans-latin-ext-wght-normal.woff2') format('woff2');
+}

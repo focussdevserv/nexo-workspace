@@ -1,7 +1,7 @@
 import React, { useEffect, useLayoutEffect, useState } from 'react';
 import { ArrowRight, KeyRound, LoaderCircle, LockKeyhole, Moon, ShieldCheck, Sun } from 'lucide-react';
 import { apiRequest, parseApiResponse } from '../lib/workspace-api.js';
-import { publishWorkspacePreferences, readCachedWorkspacePreferences } from '../lib/workspace-preferences.js';
+import { publishWorkspacePreferences, readCachedWorkspacePreferences, rememberWorkspaceThemePreference } from '../lib/workspace-preferences.js';
 import './workspace-access.css';
 
 function readInviteToken() {
@@ -16,7 +16,7 @@ export default function WorkspaceAccess({ children }) {
   const [checking, setChecking] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [form, setForm] = useState({ email: 'contato@focussdev.art', password: '' });
+  const [form, setForm] = useState({ email: '', password: '' });
   const [inviteToken, setInviteToken] = useState(() => readInviteToken());
   const [invitePassword, setInvitePassword] = useState('');
   const [invitePasswordConfirm, setInvitePasswordConfirm] = useState('');
@@ -29,12 +29,13 @@ export default function WorkspaceAccess({ children }) {
 
   const toggleTheme = () => {
     const next = !darkMode;
+    rememberWorkspaceThemePreference(next);
     setDarkMode(next);
     publishWorkspacePreferences({ ...readCachedWorkspacePreferences(), darkMode: next });
   };
 
   useEffect(() => {
-    if (!user) document.title = 'Nexo · Entrar';
+    if (!user) document.title = 'Focusshub · Entrar';
   }, [user]);
 
   useEffect(() => {
@@ -45,7 +46,7 @@ export default function WorkspaceAccess({ children }) {
     window.addEventListener('nexo:session-expired', onExpired);
     let active = true;
     apiRequest('/api/auth/me').then((response) => { if (active) { const profile = { ...response.user, organizationName: response.organization?.name }; sessionStorage.setItem('nexo.api.user', JSON.stringify(profile)); setUser(profile); } })
-      .catch((err) => { if (active) { sessionStorage.removeItem('nexo.api.user'); setUser(null); if (/API do Nexo|conectar à API/i.test(err.message || '')) setError(err.message); } })
+      .catch((err) => { if (active) { sessionStorage.removeItem('nexo.api.user'); setUser(null); if (/API do Focusshub|conectar à API/i.test(err.message || '')) setError((err.message || '').replace(/Nexo/g, 'Focusshub')); } })
       .finally(() => { if (active) setChecking(false); });
     return () => { active = false; window.removeEventListener('nexo:session-expired', onExpired); };
   }, [inviteToken]);
@@ -84,10 +85,10 @@ export default function WorkspaceAccess({ children }) {
 
   if (checking) return <div className="workspace-access-loading"><LoaderCircle className="spin" size={24} /><span>Verificando sua sessão...</span></div>;
   if (user) return <>{children}</>;
-  if (inviteToken) return <main className="workspace-access-page"><button className="workspace-theme-toggle" type="button" onClick={toggleTheme} aria-label={darkMode ? 'Ativar modo claro' : 'Ativar modo escuro'} title={darkMode ? 'Ativar modo claro' : 'Ativar modo escuro'}>{darkMode ? <Sun size={16} /> : <Moon size={16} />}<span>{darkMode ? 'Modo claro' : 'Modo escuro'}</span></button><section className="workspace-access-card" aria-labelledby="workspace-invite-title"><div className="workspace-access-brand"><span className="brand-glyph"><i /><b /><em /></span><strong>nexo</strong><small>WORKSPACE</small></div><span className="workspace-access-icon"><ShieldCheck size={18} /></span><p className="eyebrow">CONVITE DE EQUIPE</p><h1 id="workspace-invite-title">Ative seu acesso</h1><p className="workspace-access-description">Crie uma senha com pelo menos 12 caracteres. Este link pode ser usado uma vez e expira em 48 horas.</p><form onSubmit={acceptInvite}><label htmlFor="invite-password">Nova senha<input id="invite-password" type="password" autoComplete="new-password" minLength={12} maxLength={128} required value={invitePassword} onChange={(event) => setInvitePassword(event.target.value)} /></label><label htmlFor="invite-password-confirm">Confirme a senha<input id="invite-password-confirm" type="password" autoComplete="new-password" minLength={12} maxLength={128} required value={invitePasswordConfirm} onChange={(event) => setInvitePasswordConfirm(event.target.value)} /></label>{error && <p className="workspace-access-error" role="alert">{error}</p>}<button className="admin-primary workspace-access-submit" disabled={busy}>{busy ? <LoaderCircle className="spin" size={15} /> : <KeyRound size={15} />}{busy ? 'Ativando...' : 'Ativar acesso'}<ArrowRight size={15} /></button><button type="button" className="workspace-access-switch" disabled={busy} onClick={() => { const url = new URL(window.location.href); url.searchParams.delete('invite'); if (new URLSearchParams(url.hash.slice(1)).has('invite')) url.hash = ''; window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`); setInviteToken(''); setError(''); }}>Voltar para entrar</button></form></section></main>;
+  if (inviteToken) return <main className="workspace-access-page"><button className="workspace-theme-toggle" type="button" onClick={toggleTheme} aria-label={darkMode ? 'Ativar modo claro' : 'Ativar modo escuro'} title={darkMode ? 'Ativar modo claro' : 'Ativar modo escuro'}>{darkMode ? <Sun size={16} /> : <Moon size={16} />}<span>{darkMode ? 'Modo claro' : 'Modo escuro'}</span></button><section className="workspace-access-card" aria-labelledby="workspace-invite-title"><div className="workspace-access-brand"><span className="brand-glyph"><i /><b /><em /></span><strong>Focusshub</strong><small>WORKSPACE</small></div><span className="workspace-access-icon"><ShieldCheck size={18} /></span><p className="eyebrow">CONVITE DE EQUIPE</p><h1 id="workspace-invite-title">Ative seu acesso</h1><p className="workspace-access-description">Crie uma senha com pelo menos 12 caracteres. Este link pode ser usado uma vez e expira em 48 horas.</p><form onSubmit={acceptInvite}><label htmlFor="invite-password">Nova senha<input id="invite-password" type="password" autoComplete="new-password" minLength={12} maxLength={128} required value={invitePassword} onChange={(event) => setInvitePassword(event.target.value)} /></label><label htmlFor="invite-password-confirm">Confirme a senha<input id="invite-password-confirm" type="password" autoComplete="new-password" minLength={12} maxLength={128} required value={invitePasswordConfirm} onChange={(event) => setInvitePasswordConfirm(event.target.value)} /></label>{error && <p className="workspace-access-error" role="alert">{error}</p>}<button className="admin-primary workspace-access-submit" disabled={busy}>{busy ? <LoaderCircle className="spin" size={15} /> : <KeyRound size={15} />}{busy ? 'Ativando...' : 'Ativar acesso'}<ArrowRight size={15} /></button><button type="button" className="workspace-access-switch" disabled={busy} onClick={() => { const url = new URL(window.location.href); url.searchParams.delete('invite'); if (new URLSearchParams(url.hash.slice(1)).has('invite')) url.hash = ''; window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`); setInviteToken(''); setError(''); }}>Voltar para entrar</button></form></section></main>;
 
   return <main className="workspace-access-page"><button className="workspace-theme-toggle" type="button" onClick={toggleTheme} aria-label={darkMode ? 'Ativar modo claro' : 'Ativar modo escuro'} title={darkMode ? 'Ativar modo claro' : 'Ativar modo escuro'}>{darkMode ? <Sun size={16} /> : <Moon size={16} />}<span>{darkMode ? 'Modo claro' : 'Modo escuro'}</span></button><section className="workspace-access-card" aria-labelledby="workspace-login-title">
-    <div className="workspace-access-brand"><span className="brand-glyph"><i /><b /><em /></span><strong>nexo</strong><small>WORKSPACE</small></div>
+    <div className="workspace-access-brand"><span className="brand-glyph"><i /><b /><em /></span><strong>Focusshub</strong><small>WORKSPACE</small></div>
     <span className="workspace-access-icon"><LockKeyhole size={18} /></span>
     <p className="eyebrow">ACESSO PRIVADO</p>
     <h1 id="workspace-login-title">Entre no seu workspace</h1>

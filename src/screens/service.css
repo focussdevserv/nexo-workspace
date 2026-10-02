@@ -230,6 +230,10 @@
 .ns-chart-bars { width:100%; height:calc(100% - 18px); display:flex; justify-content:center; align-items:flex-end; gap:4px; }
 .ns-chart-bars i { display:block; width:13px; min-height:4px; border-radius:4px 4px 1px 1px; background:#92c97d; }
 .ns-chart-bars i+i { background:#c4cfdb; }
+.ns-chart-empty{min-height:143px;display:grid;align-content:center;justify-items:center;gap:6px;padding:18px;text-align:center;color:var(--nexo-text)}
+.ns-chart-empty>span{width:34px;height:34px;display:grid;place-items:center;border-radius:10px;background:var(--nexo-lime-soft);color:#4b7622}
+.ns-chart-empty>b{font-size:14px;font-weight:700}
+.ns-chart-empty>small{max-width:44ch;color:var(--nexo-muted);font-size:12px;line-height:1.45}
 .ns-chart-month small { color:#737e8e; font-size:12px; }
 .ns-finance-date { display:grid; gap:4px; color:#596577; font-size:12px; }
 .ns-finance-date input { min-height:35px; padding:7px 8px; border:1px solid var(--ns-line); border-radius:7px; }
@@ -245,3 +249,25 @@
 .ns-inline-form textarea { flex:1 1 100%; min-width:0; min-height:66px; padding:9px 10px; border:1px solid var(--ns-line); border-radius:7px; background:#fff; color:#263248; font:inherit; font-size:13px; line-height:1.45; resize:vertical; }
 .ns-integration-modal footer .ns-ticket-archive { margin-right:auto; border-color:#f1c7c7; color:#a82b35; }
 .ns-integration-modal footer .ns-ticket-archive:hover { background:#fff2f2; border-color:#e5aaaa; }
+@media(max-width:600px){
+  .ns-integration-modal{width:calc(100vw - 40px);max-width:calc(100vw - 40px);min-width:0}
+  .ns-integration-modal{gap:11px}
+  .ns-integration-modal>header{padding-bottom:12px}
+  .ns-integration-modal>footer{bottom:-13px;margin:0 -13px -13px;padding:12px 13px max(12px,env(safe-area-inset-bottom))}
+  .pay-create-modal>footer{margin-inline:0;margin-bottom:0;bottom:0}
+}
+
+/* Keep ticket creation inside the usable app width when the sidebar is open. */
+@media (min-width:761px) and (max-width:1600px) {
+  .ns-ticket-compose { grid-template-columns:repeat(3,minmax(0,1fr)); align-items:stretch; }
+  .ns-ticket-compose>div { grid-column:1/-1; }
+  .ns-ticket-compose>input:first-of-type { grid-column:span 1; }
+  .ns-ticket-compose>textarea { grid-column:span 2; }
+  .ns-ticket-compose>.ns-primary { grid-column:2; align-self:end; }
+  .ns-ticket-compose>.ns-icon-button { grid-column:3; justify-self:end; align-self:end; }
+}
+@media (max-width:480px) {
+  .ns-ticket-stats { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .ns-ticket-stats article:last-child { grid-column:1/-1; }
+  .ns-ticket-compose>.ns-icon-button { justify-self:end; }
+}

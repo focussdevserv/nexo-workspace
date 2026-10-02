@@ -7,7 +7,7 @@ import {
 import './settings.css';
 import './branding.css';
 import { apiRequest, useWorkspaceRecords } from '../lib/workspace-api.js';
-import { publishWorkspacePreferences } from '../lib/workspace-preferences.js';
+import { publishWorkspacePreferences, rememberWorkspaceThemePreference } from '../lib/workspace-preferences.js';
 import { compressBrandLogo } from '../lib/brand-logo.js';
 
 const defaults = {
@@ -58,7 +58,10 @@ export default function SettingsScreen({ notify, navigationContext = null, onNav
     const next = { ...settings, [group]: { ...settings[group], [field]: value } };
     const baseline = Object.fromEntries(Object.entries(defaults).map(([key, fallback]) => [key, { ...fallback, ...(savedSettings?.settings?.[key] || {}) }]));
     setSettings(next);
-    if (group === 'preferences') publishWorkspacePreferences(next.preferences);
+    if (group === 'preferences') {
+      if (field === 'darkMode') rememberWorkspaceThemePreference(value);
+      publishWorkspacePreferences(next.preferences);
+    }
     setDirty(JSON.stringify(next) !== JSON.stringify(baseline));
   };
   const save = async () => {
@@ -89,7 +92,7 @@ export default function SettingsScreen({ notify, navigationContext = null, onNav
       setSettings(Object.fromEntries(Object.entries(defaults).map(([key, value]) => [key, { ...value, ...(payload.settings[key] || {}) }])));
       setDirty(true);
       notify('Configurações importadas. Salve para aplicar.');
-    } catch { notify('Esse arquivo não contém uma exportação válida do Nexo.'); }
+    } catch { notify('Esse arquivo não contém uma exportação válida do Focusshub.'); }
     event.target.value = '';
   };
   const uploadBrandLogo = async (event) => {
@@ -126,7 +129,7 @@ export default function SettingsScreen({ notify, navigationContext = null, onNav
     try {
       if (file.size > 25 * 1024 * 1024) throw new Error('O arquivo de backup excede o limite de 25 MB.');
       const backup = JSON.parse(await file.text());
-      if (backup.format !== 'nexo-workspace-backup' || backup.version !== 1 || !Array.isArray(backup.records)) throw new Error('Selecione um backup completo exportado pelo Nexo.');
+      if (backup.format !== 'nexo-workspace-backup' || backup.version !== 1 || !Array.isArray(backup.records)) throw new Error('Selecione um backup completo exportado pelo Focusshub.');
       if (dirty && !window.confirm('Há configurações não salvas. Continuar e descartá-las após a restauração?')) return;
       const count = (backup.records?.length || 0) + (backup.clients?.length || 0) + (backup.billingOrders?.length || 0) + (backup.billingSubscriptions?.length || 0);
       const message = `Restaurar ${count} registro(s) deste backup? Registros com o mesmo ID serão atualizados; os demais dados atuais serão mantidos. Nenhum e-mail, cobrança ou automação externa será disparado.`;
@@ -176,7 +179,7 @@ export default function SettingsScreen({ notify, navigationContext = null, onNav
 
       {active === 'notifications' && <>
         <SettingsCard title="Alertas do workspace" description="Escolha quais acontecimentos merecem uma notificação." icon={Bell}><SettingToggle title="Tarefas próximas do prazo" detail="Avisar quando uma tarefa estiver perto do vencimento." value={settings.notifications.taskDue} onChange={(v) => update('notifications', 'taskDue', v)} /><SettingToggle title="Tarefas atrasadas" detail="Alertar você e o responsável quando uma tarefa atrasar." value={settings.notifications.overdue} onChange={(v) => update('notifications', 'overdue', v)} /><SettingToggle title="Novo lead recebido" detail="Avisar quando um formulário ou integração criar um lead." value={settings.notifications.newLead} onChange={(v) => update('notifications', 'newLead', v)} /><SettingToggle title="Proposta visualizada ou aceita" detail="Acompanhar mudanças importantes nas propostas." value={settings.notifications.proposal} onChange={(v) => update('notifications', 'proposal', v)} /><SettingToggle title="Pagamento recebido ou vencido" detail="Acompanhar cobranças e assinaturas dos clientes." value={settings.notifications.payment} onChange={(v) => update('notifications', 'payment', v)} /></SettingsCard>
-        <SettingsCard title="Canais e frequência" description="Defina como e quando você quer receber os avisos." icon={Mail}><SettingToggle title="Resumo semanal por e-mail" detail="Resumo de projetos, vendas e financeiro na segunda-feira." value={settings.notifications.weekly} onChange={(v) => update('notifications', 'weekly', v)} /><SettingToggle title="Notificações por e-mail" detail="Enviar alertas importantes para o e-mail da sua conta." value={settings.notifications.email} onChange={(v) => update('notifications', 'email', v)} /><SettingToggle title="Notificações no navegador" detail="Exibir alertas enquanto o Nexo estiver aberto." value={settings.notifications.browser} onChange={(v) => update('notifications', 'browser', v)} /><SettingToggle title="Avisos pelo WhatsApp" detail="Depende da configuração de uma instância Evolution ou WAHA." value={settings.notifications.whatsapp} onChange={(v) => update('notifications', 'whatsapp', v)} /><SettingToggle title="Horário silencioso" detail="Pausar notificações fora do seu horário de trabalho." value={settings.notifications.quietHours} onChange={(v) => update('notifications', 'quietHours', v)} />{settings.notifications.quietHours && <div className="settings-fields settings-hours"><Field label="Início"><input type="time" value={settings.notifications.quietStart} onChange={(e) => update('notifications', 'quietStart', e.target.value)} /></Field><Field label="Fim"><input type="time" value={settings.notifications.quietEnd} onChange={(e) => update('notifications', 'quietEnd', e.target.value)} /></Field></div>}</SettingsCard>
+        <SettingsCard title="Canais e frequência" description="Defina como e quando você quer receber os avisos." icon={Mail}><SettingToggle title="Resumo semanal por e-mail" detail="Resumo de projetos, vendas e financeiro na segunda-feira." value={settings.notifications.weekly} onChange={(v) => update('notifications', 'weekly', v)} /><SettingToggle title="Notificações por e-mail" detail="Enviar alertas importantes para o e-mail da sua conta." value={settings.notifications.email} onChange={(v) => update('notifications', 'email', v)} /><SettingToggle title="Notificações no navegador" detail="Exibir alertas enquanto o Focusshub estiver aberto." value={settings.notifications.browser} onChange={(v) => update('notifications', 'browser', v)} /><SettingToggle title="Avisos pelo WhatsApp" detail="Depende da configuração de uma instância Evolution ou WAHA." value={settings.notifications.whatsapp} onChange={(v) => update('notifications', 'whatsapp', v)} /><SettingToggle title="Horário silencioso" detail="Pausar notificações fora do seu horário de trabalho." value={settings.notifications.quietHours} onChange={(v) => update('notifications', 'quietHours', v)} />{settings.notifications.quietHours && <div className="settings-fields settings-hours"><Field label="Início"><input type="time" value={settings.notifications.quietStart} onChange={(e) => update('notifications', 'quietStart', e.target.value)} /></Field><Field label="Fim"><input type="time" value={settings.notifications.quietEnd} onChange={(e) => update('notifications', 'quietEnd', e.target.value)} /></Field></div>}</SettingsCard>
       </>}
 
       {active === 'team' && <>
@@ -198,7 +201,7 @@ export default function SettingsScreen({ notify, navigationContext = null, onNav
 
       {active === 'data' && <>
         <SettingsCard title="Backup do workspace" description="Exporte ou restaure clientes, registros operacionais, histórico financeiro e preferências." icon={Database}><div className="settings-data-action"><div><b>Baixar backup completo</b><small>Inclui os dados deste workspace e os registros do Mercado Pago. Senhas, tokens e filas de automação ficam de fora; arquivos do Drive mantêm o link, sem copiar o conteúdo.</small></div><button type="button" className="admin-secondary" disabled={backupBusy} onClick={exportBackup}><Download size={15} /> {backupBusy ? 'Preparando…' : 'Baixar backup'}</button></div><div className="settings-data-action"><div><b>Restaurar backup</b><small>Disponível no mesmo workspace. Mescla por ID e não dispara integrações; lembretes automáticos de cobranças vencidas do arquivo são suprimidos para evitar reenvio de avisos antigos.</small></div><button type="button" className="admin-secondary" disabled={backupBusy} onClick={() => backupRef.current?.click()}><Upload size={15} /> {backupBusy ? 'Restaurando…' : 'Selecionar backup'}</button><input ref={backupRef} hidden type="file" accept="application/json,.json" onChange={restoreBackup} /></div></SettingsCard>
-        <SettingsCard title="Exportar configurações" description="Baixe uma cópia das preferências deste workspace em JSON." icon={Download}><div className="settings-data-action"><div><b>Exportar preferências</b><small>Este arquivo contém somente as preferências gerais do workspace; use o backup completo para incluir os outros dados.</small></div><button className="admin-secondary" onClick={exportData}><Download size={15} /> Exportar arquivo</button></div><div className="settings-data-action"><div><b>Importar preferências</b><small>Carregue um JSON exportado pelo Nexo; revise as alterações e salve para aplicar.</small></div><button className="admin-secondary" onClick={() => fileRef.current?.click()}><Upload size={15} /> Escolher arquivo</button><input ref={fileRef} hidden type="file" accept="application/json,.json" onChange={importData} /></div></SettingsCard>
+        <SettingsCard title="Exportar configurações" description="Baixe uma cópia das preferências deste workspace em JSON." icon={Download}><div className="settings-data-action"><div><b>Exportar preferências</b><small>Este arquivo contém somente as preferências gerais do workspace; use o backup completo para incluir os outros dados.</small></div><button className="admin-secondary" onClick={exportData}><Download size={15} /> Exportar arquivo</button></div><div className="settings-data-action"><div><b>Importar preferências</b><small>Carregue um JSON exportado pelo Focusshub; revise as alterações e salve para aplicar.</small></div><button className="admin-secondary" onClick={() => fileRef.current?.click()}><Upload size={15} /> Escolher arquivo</button><input ref={fileRef} hidden type="file" accept="application/json,.json" onChange={importData} /></div></SettingsCard>
         <SettingsCard title="Privacidade e armazenamento" description="As preferências do workspace são persistidas no banco da aplicação." icon={Globe2}><div className="settings-security-note"><Database size={19} /><div><b>Salvas na conta proprietária</b><p>Clientes, projetos e preferências são acessados por sessão autenticada. A exportação nesta tela cobre apenas as preferências mostradas em Configurações, não substituindo backup completo do banco.</p></div></div></SettingsCard>
         <div className="settings-danger-zone"><div><b>Restaurar valores iniciais</b><small>Remove as preferências salvas neste navegador e recupera os valores padrão.</small></div><button onClick={reset}><RotateCcw size={14} /> Restaurar configurações</button></div>
       </>}

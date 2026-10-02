@@ -47,6 +47,11 @@
 .settings-layout .settings-switch { width: 42px; height: 24px; }
 .settings-layout .settings-switch i { width: 20px; height: 20px; }
 .settings-layout .settings-switch.on i { transform: translateX(18px); }
+.settings-sidebar nav button>span,
+.settings-help span { min-width: 0; }
+.settings-sidebar nav button small,
+.settings-help small { white-space: normal; overflow-wrap: anywhere; }
+.settings-sidebar nav button small { line-height: 1.35; }
 @media (max-width: 720px) {
   .settings-layout .settings-sidebar nav button b { font-size: 13px; }
   .settings-layout .settings-sidebar nav button { min-height: 40px; }

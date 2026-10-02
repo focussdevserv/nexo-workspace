@@ -73,7 +73,7 @@ export function ClientPortalAdmin({ notify = () => {}, navigationContext = null,
 }
 
 export function PublicClientPortal({ slug }) {
-  useEffect(() => { document.title = 'Nexo \u00b7 Portal do cliente'; }, []);
+  useEffect(() => { document.title = 'Focusshub \u00b7 Portal do cliente'; }, []);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');

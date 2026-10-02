@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 
 const storageKey = 'nexo.workspace.preferences.v1';
+const themePreferenceKey = 'nexo.workspace.theme-preference.v1';
 const defaultPreferences = Object.freeze({ compact: false, darkMode: false, showCompleted: false, confirmDelete: true, startPage: 'Meu Dia' });
 const startPages = new Set(['Meu Dia', 'Agenda', 'Tarefas', 'CRM', 'Projetos']);
 
@@ -25,6 +26,19 @@ export function normalizeWorkspacePreferences(value) {
 export function readCachedWorkspacePreferences() {
   try { return normalizeWorkspacePreferences(JSON.parse(localStorage.getItem(storageKey) || 'null')); }
   catch { return { ...defaultPreferences }; }
+}
+
+export function rememberWorkspaceThemePreference(darkMode) {
+  try { localStorage.setItem(themePreferenceKey, darkMode ? 'dark' : 'light'); } catch { /* The active tab can still use the selected theme. */ }
+}
+
+export function mergeServerWorkspacePreferences(value) {
+  const preferences = normalizeWorkspacePreferences(value);
+  try {
+    const localTheme = localStorage.getItem(themePreferenceKey);
+    if (localTheme === 'dark' || localTheme === 'light') preferences.darkMode = localTheme === 'dark';
+  } catch { /* Fall back to the server preference when local storage is unavailable. */ }
+  return preferences;
 }
 
 export function publishWorkspacePreferences(value) {

@@ -2,10 +2,12 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import * as Sentry from '@sentry/react';
 import App from './App.jsx';
+import './fonts.css';
 import './styles.css';
 import './navigation.css';
 import './dark-mode.css';
 import './notifications.css';
+import './premium-design.css';
 
 const sentryDsn = import.meta.env.VITE_SENTRY_DSN;
 Sentry.init({
@@ -32,10 +34,15 @@ Sentry.init({
 });
 
 function AppErrorFallback() {
-  return <main role="alert" style={{ maxWidth: 520, margin: '12vh auto', padding: 24, fontFamily: 'system-ui, sans-serif', color: '#18212f' }}>
-    <h1>Não foi possível abrir esta tela</h1>
-    <p>Recarregue o app. Se o problema continuar, tente novamente em alguns instantes.</p>
-    <button type="button" onClick={() => window.location.reload()}>Recarregar o app</button>
+  return <main className="app-error-page" role="alert">
+    <section className="app-error-card">
+      <div className="app-error-brand"><span>F</span><strong>Focusshub</strong></div>
+      <div className="app-error-icon" aria-hidden="true">!</div>
+      <p className="app-error-kicker">Esta área está indisponível</p>
+      <h1>Não foi possível abrir esta tela</h1>
+      <p className="app-error-copy">Atualize a página para tentar novamente. Se o problema continuar, volte ao menu e abra outra área.</p>
+      <button className="app-error-retry" type="button" onClick={() => window.location.reload()}>Atualizar página</button>
+    </section>
   </main>;
 }
 

@@ -49,7 +49,7 @@ async function performApiRequest(path, options) {
       },
     });
   } catch {
-    throw new Error('Não foi possível conectar à API do Nexo. Confira se o servidor está em execução.');
+    throw new Error('Não foi possível conectar à API do Focusshub. Confira se o servidor está em execução.');
   }
   const payload = await parseApiResponse(response);
   if (response.status === 401 && path !== '/api/auth/me') {
@@ -70,12 +70,12 @@ export async function parseApiResponse(response) {
   if (response.status === 204) return { data: null };
   const contentType = response.headers.get('content-type') || '';
   if (!contentType.toLowerCase().includes('application/json')) {
-    throw new Error('A API do Nexo não respondeu corretamente. Verifique a conexão com o servidor.');
+    throw new Error('A API do Focusshub não respondeu corretamente. Verifique a conexão com o servidor.');
   }
   try {
     return await response.json();
   } catch {
-    throw new Error('A API do Nexo retornou uma resposta inválida. Tente novamente.');
+    throw new Error('A API do Focusshub retornou uma resposta inválida. Tente novamente.');
   }
 }
 

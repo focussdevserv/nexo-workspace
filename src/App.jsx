@@ -15,7 +15,7 @@ import { PublicClientPortal } from './screens/ClientPortalScreens.jsx';
 import WorkspaceAccess from './screens/WorkspaceAccess.jsx';
 import PublicLegalPage from './screens/PublicLegalPages.jsx';
 import { apiRequest, fetchAllRecords } from './lib/workspace-api.js';
-import { publishWorkspacePreferences, readCachedWorkspacePreferences, useWorkspacePreferences } from './lib/workspace-preferences.js';
+import { mergeServerWorkspacePreferences, publishWorkspacePreferences, readCachedWorkspacePreferences, rememberWorkspaceThemePreference, useWorkspacePreferences } from './lib/workspace-preferences.js';
 import { purgeFictitiousLocalData } from './lib/demo-data.js';
 import './screens/forms-polish.css';
 import './screens/buttons-polish.css';
@@ -33,7 +33,7 @@ function ModuleScreen({ page, navigationContext, onNavigationContextConsumed }) 
   if (workPages.has(page)) return <Suspense fallback={<ModuleLoading />}><WorkScreen key={page} page={page} navigationContext={navigationContext} onNavigationContextConsumed={onNavigationContextConsumed} /></Suspense>;
   if (servicePages.has(page)) return <Suspense fallback={<ModuleLoading />}><ServiceScreen key={page} page={page} navigationContext={navigationContext} onNavigationContextConsumed={onNavigationContextConsumed} /></Suspense>;
   if (adminPages.has(page)) return <Suspense fallback={<ModuleLoading />}><AdminScreen key={page} page={page} navigationContext={navigationContext} onNavigationContextConsumed={onNavigationContextConsumed} /></Suspense>;
-  return <div className="module-screen-shell"><header className="module-page-header"><div><span className="eyebrow">NEXO · WORKSPACE</span><h1>{page}</h1><p>Organize esta área da sua agência em um só lugar.</p></div></header></div>;
+  return <div className="module-screen-shell"><header className="module-page-header"><div><span className="eyebrow">FOCUSSHUB · WORKSPACE</span><h1>{page}</h1><p>Organize esta área da sua agência em um só lugar.</p></div></header></div>;
 }
 
 const leads = [];
@@ -110,14 +110,15 @@ function Avatar({ initials, color = 'blue', small = false, online = false }) {
 }
 
 function ModuleLoading() {
-  return <div className="module-loading" role="status" aria-live="polite">Carregando módulo...</div>;
+  return <div className="module-loading" role="status" aria-live="polite">Carregando módulo…</div>;
 }
 
 function ModuleErrorFallback({ resetError }) {
   return <section className="module-load-error" role="alert">
-    <span className="eyebrow">NEXO / MODULO</span>
-    <h2>Nao foi possivel abrir esta tela</h2>
-    <p>O restante do workspace continua disponivel. Tente novamente ou abra outra area pelo menu.</p>
+    <span className="module-error-mark" aria-hidden="true">!</span>
+    <span className="eyebrow">FOCUSSHUB · MÓDULO</span>
+    <h2>Não foi possível abrir esta tela</h2>
+    <p>O restante do workspace continua disponível. Tente novamente ou abra outra área pelo menu.</p>
     <button className="primary-button" type="button" onClick={resetError}>Tentar novamente</button>
   </section>;
 }
@@ -174,15 +175,15 @@ function FirstRunSetup({ onNavigate, notify }) {
   if (snapshot.error) return <section className="first-run-setup first-run-error" role="alert"><div><b>Vamos preparar seu workspace</b><p>{snapshot.error}</p></div><button type="button" className="first-run-secondary" onClick={refresh}>Tentar novamente</button></section>;
   if (snapshot.completed || collapsed) return snapshot.completed ? null : <button className="first-run-reopen" type="button" onClick={() => setCollapsed(false)}>Retomar configuração inicial <ArrowRight size={15} /></button>;
   const steps = [
-    { id: 'profile', title: 'Perfil da agência', detail: 'Nome e dados usados em propostas e contratos.', done: snapshot.profile, page: 'Configurações', context: { settingsSection: 'agency' }, action: 'Configurar perfil' },
-    { id: 'service', title: 'Primeiro serviço', detail: 'Confira o catálogo e configure preço ou modalidade.', done: snapshot.service, page: 'Serviços', action: 'Abrir catálogo' },
-    { id: 'client', title: 'Primeiro cliente', detail: 'Cadastre pessoa física, empresa ou ambos.', done: snapshot.client, page: 'Clientes', action: 'Cadastrar cliente' },
-    { id: 'kickoff', title: 'Projeto ou proposta', detail: 'Inicie o primeiro trabalho quando estiver pronto.', done: snapshot.kickoff || snapshot.skipKickoff, page: 'Projetos', optional: !snapshot.kickoff, skipField: 'skipKickoff', action: 'Criar projeto' },
-    { id: 'integration', title: 'Conectar um canal', detail: 'Google, pagamentos e WhatsApp podem ser conectados depois.', done: snapshot.integration || snapshot.skipIntegrations, page: 'Integrações', optional: !snapshot.integration, skipField: 'skipIntegrations', action: 'Ver integrações' },
+    { id: 'profile', title: 'Perfil da agência', detail: 'Dados usados em propostas e contratos.', done: snapshot.profile, page: 'Configurações', context: { settingsSection: 'agency' }, action: 'Configurar perfil' },
+    { id: 'service', title: 'Primeiro serviço', detail: 'Defina serviços, preços e cobrança.', done: snapshot.service, page: 'Serviços', action: 'Abrir catálogo' },
+    { id: 'client', title: 'Primeiro cliente', detail: 'Cadastre pessoas físicas ou empresas.', done: snapshot.client, page: 'Clientes', action: 'Cadastrar cliente' },
+    { id: 'kickoff', title: 'Projeto ou proposta', detail: 'Comece um projeto ou envie uma proposta.', done: snapshot.kickoff || snapshot.skipKickoff, page: 'Projetos', optional: !snapshot.kickoff, skipField: 'skipKickoff', action: 'Criar projeto' },
+    { id: 'integration', title: 'Conectar um canal', detail: 'Conecte Google, pagamentos ou WhatsApp.', done: snapshot.integration || snapshot.skipIntegrations, page: 'Integrações', optional: !snapshot.integration, skipField: 'skipIntegrations', action: 'Ver integrações' },
   ];
   const finished = steps.filter((step) => step.done).length;
   return <section className="first-run-setup" aria-labelledby="first-run-title">
-    <div className="first-run-header"><div><span className="first-run-kicker">COMECE POR AQUI</span><h2 id="first-run-title">Deixe o Nexo pronto para sua rotina</h2><p>Os dados ficam salvos enquanto você avança. Nenhuma cobrança será criada por este assistente.</p></div><div className="first-run-progress"><b>{finished} de {steps.length}</b><span>etapas</span></div></div>
+    <div className="first-run-header"><div><span className="first-run-kicker">COMECE POR AQUI</span><h2 id="first-run-title">Deixe o Focusshub pronto para sua rotina</h2><p>Os dados ficam salvos enquanto você avança. Nenhuma cobrança será criada por este assistente.</p></div><div className="first-run-progress"><b>{finished} de {steps.length}</b><span>etapas</span></div></div>
     <div className="first-run-track" aria-hidden="true"><i style={{ width: `${Math.round(finished / steps.length * 100)}%` }} /></div>
     <div className="first-run-steps">{steps.map((step, index) => <article className={`first-run-step ${step.done ? 'done' : ''}`} key={step.id}><span className="first-run-step-number">{step.done ? <Check size={15} /> : index + 1}</span><div className="first-run-step-copy"><b>{step.title}{step.optional && <small>Opcional</small>}</b><p>{step.detail}</p><div className="first-run-step-actions">{!step.done && <button type="button" className="first-run-primary" onClick={() => onNavigate(step.page, step.context)}>{step.action}<ArrowRight size={14} /></button>}{step.optional && !step.done && <button type="button" className="first-run-skip" disabled={busy} onClick={() => skip(step.skipField)}>Pular esta etapa</button>}</div></div></article>)}</div>
     <footer><span>{busy ? 'Salvando progresso…' : 'Pode sair e continuar depois. As etapas concluídas são detectadas automaticamente.'}</span><button type="button" className="first-run-skip" onClick={() => setCollapsed(true)}>Lembrar mais tarde</button></footer>
@@ -229,7 +230,7 @@ function WorkspaceShell() {
   });
   const pageTitle = activeNav;
   useEffect(() => {
-    document.title = `Nexo · ${pageTitle}`;
+    document.title = `Focusshub · ${pageTitle}`;
   }, [pageTitle]);
   const [navigationContext, setNavigationContext] = useState(null);
   const initialRouteSync = useRef(false);
@@ -273,7 +274,7 @@ function WorkspaceShell() {
     let active = true;
     apiRequest('/api/workspace/preferences').then((result) => {
       if (!active) return;
-      const next = publishWorkspacePreferences(result.data);
+      const next = publishWorkspacePreferences(mergeServerWorkspacePreferences(result.data));
       if (!hadExplicitPageAtStartup.current && !didNavigateAtStartup.current && roleCanOpenPage(currentUser?.role, next.startPage, currentUser?.permissions)) setActiveNav(next.startPage);
     }).catch(() => {});
     return () => { active = false; };
@@ -405,7 +406,9 @@ function WorkspaceShell() {
   };
 
   const toggleTheme = async () => {
-    const nextPreferences = publishWorkspacePreferences({ ...preferences, darkMode: !preferences.darkMode });
+    const nextDarkMode = !preferences.darkMode;
+    rememberWorkspaceThemePreference(nextDarkMode);
+    const nextPreferences = publishWorkspacePreferences({ ...preferences, darkMode: nextDarkMode });
     try {
       const records = await fetchAllRecords('/api/workspace/settings');
       const existing = records.find((record) => record.key === 'workspace-preferences');
@@ -437,8 +440,8 @@ function WorkspaceShell() {
   return (
     <div className={"app-shell " + (preferences.compact ? 'is-compact' : '')}>
       <aside id="workspace-mobile-navigation" className={`side-nav ${mobileMenuOpen ? 'mobile-open' : ''}`} aria-label="Navegação principal">
-        <button className="side-brand" aria-label="Nexo início" onClick={() => { didNavigateAtStartup.current = true; setActiveNav('Meu Dia'); setMobileMenuOpen(false); }}>
-          <span className="brand-glyph"><i /><b /><em /></span><strong>nexo</strong>
+        <button className="side-brand" aria-label="Focusshub início" onClick={() => { didNavigateAtStartup.current = true; setActiveNav('Meu Dia'); setMobileMenuOpen(false); }}>
+          <span className="brand-glyph"><i /><b /><em /></span><strong>Focusshub</strong>
         </button>
         <nav className="side-nav-scroll">
           {visibleNavGroups.map((group) => <div className="nav-group" key={group.label}>
@@ -458,7 +461,7 @@ function WorkspaceShell() {
             <div className={`strip-event ${todayEvents.length ? 'strip-current' : 'strip-idle'}`}><span className="time-pin">{now}</span><strong>{todayEvents[0]?.title || todayEvents[0]?.name || "Agenda livre"}</strong><span className="strip-empty">{todayEvents[0]?.time || (todayEvents[0]?.startsAt ? new Date(todayEvents[0].startsAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : "Sem compromissos marcados.")}</span></div>
           </div>
           {mobileMenuOpen && <button className="mobile-nav-backdrop" type="button" aria-label="Fechar menu" onClick={() => setMobileMenuOpen(false)} />}
-          <div className="top-actions"><button className="icon-button mobile-menu-toggle" aria-label="Abrir menu" aria-expanded={mobileMenuOpen} aria-controls="workspace-mobile-navigation" onClick={() => setMobileMenuOpen((open) => !open)}><Menu size={19} /></button><button className="icon-button" aria-label="Buscar" aria-expanded={searchOpen} onClick={() => { setSearchOpen((open) => !open); setSearchQuery(''); }}><Search size={19} /></button><button className="icon-button theme-toggle-button" type="button" aria-label={preferences.darkMode ? 'Ativar modo claro' : 'Ativar modo escuro'} title={preferences.darkMode ? 'Ativar modo claro' : 'Ativar modo escuro'} onClick={toggleTheme}>{preferences.darkMode ? <Sun size={19} /> : <Moon size={19} />}</button><button className="icon-button notification-button" aria-label={`Notificações${notificationUnread ? `, ${notificationUnread} não lidas` : ''}`} aria-expanded={notificationOpen} aria-haspopup="dialog" onClick={() => { setNotificationOpen((open) => !open); refreshNotifications(); }}><Bell size={19} />{notificationUnread > 0 && <span className="notification-count">{notificationUnread > 99 ? '99+' : notificationUnread}</span>}</button><Avatar initials={initials || "—"} color="teal" online />{notificationOpen && <section className="notification-panel" role="dialog" aria-label="Central de notificações"><header><div><b>Notificações</b><span>{notificationUnread ? `${notificationUnread} não lidas` : 'Atualizadas com os dados do workspace'}</span></div><button type="button" className="notification-mark-read" onClick={markNotificationsRead} disabled={!notificationUnread}>Marcar como lidas</button></header>{notificationError ? <div className="notification-state error" role="alert"><span>{notificationError}</span><button type="button" onClick={refreshNotifications}>Tentar novamente</button></div> : notificationLoading ? <div className="notification-state">Carregando notificações...</div> : notificationItems.length === 0 ? <div className="notification-state"><Bell size={21} /><b>Tudo em dia</b><span>Quando houver atualizações em clientes, projetos, tarefas ou cobranças, elas aparecerão aqui.</span></div> : <div className="notification-list">{notificationItems.map((item) => <button type="button" className={`notification-item ${item.unread ? 'unread' : ''}`} key={item.id} onClick={() => openNotification(item)}><span className="notification-item-dot" /><span className="notification-item-copy"><b>{item.title}</b><span>{item.detail}</span><small>{new Date(item.createdAt).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}</small></span><ArrowRight size={15} /></button>)}</div>}</section>}{searchOpen && <div className="quick-search-panel"><label><Search size={15} /><input autoFocus value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Buscar uma área do Nexo" /></label>{navGroups.flatMap((group) => group.items).filter((item) => !searchQuery || item.label.toLocaleLowerCase('pt-BR').includes(searchQuery.toLocaleLowerCase('pt-BR'))).slice(0, 8).map((item) => <button type="button" key={item.label} onClick={() => { setActiveNav(item.label); setMobileMenuOpen(false); setSearchOpen(false); }}>{item.label}<ArrowRight size={14} /></button>)}</div>}</div>
+          <div className="top-actions"><button className="icon-button mobile-menu-toggle" aria-label="Abrir menu" aria-expanded={mobileMenuOpen} aria-controls="workspace-mobile-navigation" onClick={() => setMobileMenuOpen((open) => !open)}><Menu size={19} /></button><button className="icon-button" aria-label="Buscar" aria-expanded={searchOpen} onClick={() => { setSearchOpen((open) => !open); setSearchQuery(''); }}><Search size={19} /></button><button className="icon-button theme-toggle-button" type="button" aria-label={preferences.darkMode ? 'Ativar modo claro' : 'Ativar modo escuro'} title={preferences.darkMode ? 'Ativar modo claro' : 'Ativar modo escuro'} onClick={toggleTheme}>{preferences.darkMode ? <Sun size={19} /> : <Moon size={19} />}</button><button className="icon-button notification-button" aria-label={`Notificações${notificationUnread ? `, ${notificationUnread} não lidas` : ''}`} aria-expanded={notificationOpen} aria-haspopup="dialog" onClick={() => { setNotificationOpen((open) => !open); refreshNotifications(); }}><Bell size={19} />{notificationUnread > 0 && <span className="notification-count">{notificationUnread > 99 ? '99+' : notificationUnread}</span>}</button><Avatar initials={initials || "—"} color="teal" online />{notificationOpen && <section className="notification-panel" role="dialog" aria-label="Central de notificações"><header><div><b>Notificações</b><span>{notificationUnread ? `${notificationUnread} não lidas` : 'Atualizadas com os dados do workspace'}</span></div><button type="button" className="notification-mark-read" onClick={markNotificationsRead} disabled={!notificationUnread}>Marcar como lidas</button></header>{notificationError ? <div className="notification-state error" role="alert"><span>{notificationError}</span><button type="button" onClick={refreshNotifications}>Tentar novamente</button></div> : notificationLoading ? <div className="notification-state">Carregando notificações...</div> : notificationItems.length === 0 ? <div className="notification-state"><Bell size={21} /><b>Tudo em dia</b><span>Quando houver atualizações em clientes, projetos, tarefas ou cobranças, elas aparecerão aqui.</span></div> : <div className="notification-list">{notificationItems.map((item) => <button type="button" className={`notification-item ${item.unread ? 'unread' : ''}`} key={item.id} onClick={() => openNotification(item)}><span className="notification-item-dot" /><span className="notification-item-copy"><b>{item.title}</b><span>{item.detail}</span><small>{new Date(item.createdAt).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}</small></span><ArrowRight size={15} /></button>)}</div>}</section>}{searchOpen && <div className="quick-search-panel"><label><Search size={15} /><input autoFocus value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Buscar no Focusshub" /></label>{navGroups.flatMap((group) => group.items).filter((item) => !searchQuery || item.label.toLocaleLowerCase('pt-BR').includes(searchQuery.toLocaleLowerCase('pt-BR'))).slice(0, 8).map((item) => <button type="button" key={item.label} onClick={() => { setActiveNav(item.label); setMobileMenuOpen(false); setSearchOpen(false); }}>{item.label}<ArrowRight size={14} /></button>)}</div>}</div>
         </header>
 
         <div className="page-content">
