@@ -21,7 +21,9 @@ export function isLocalDemoRequested() {
 }
 
 export function isLocalDemoActive() {
-  return import.meta.env?.DEV === true && typeof window !== 'undefined' && ['localhost', '127.0.0.1'].includes(window.location.hostname) && localStorage.getItem(ENABLED_KEY) === 'true';
+  // Explicit opt-in stored by this origin enables a production-safe preview.
+  // Demo API calls are intercepted in the browser and never reach the workspace.
+  return typeof window !== 'undefined' && typeof localStorage !== 'undefined' && localStorage.getItem(ENABLED_KEY) === 'true';
 }
 
 function buildSeed() {

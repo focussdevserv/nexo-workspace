@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useState } from 'react';
-import { ArrowRight, KeyRound, LoaderCircle, LockKeyhole, Moon, ShieldCheck, Sun } from 'lucide-react';
+import { ArrowRight, KeyRound, LoaderCircle, LockKeyhole, Moon, ShieldCheck, Sparkles, Sun } from 'lucide-react';
 import { apiRequest, parseApiResponse } from '../lib/workspace-api.js';
 import { activateLocalDemo, getLocalDemoUser, isLocalDemoActive, isLocalDemoRequested } from '../lib/local-demo.js';
 import { publishWorkspacePreferences, readCachedWorkspacePreferences, rememberWorkspaceThemePreference } from '../lib/workspace-preferences.js';
@@ -149,6 +149,16 @@ export default function WorkspaceAccess({ children }) {
     finally { setBusy(false); }
   };
 
+  const startLocalDemo = () => {
+    activateLocalDemo();
+    const profile = getLocalDemoUser();
+    sessionStorage.removeItem('nexo.api.token');
+    sessionStorage.setItem('nexo.api.user', JSON.stringify(profile));
+    setError('');
+    setSessionCheckFailed(false);
+    setUser(profile);
+  };
+
   const requestPasswordReset = async (event) => {
     event.preventDefault(); if (busy) return; setBusy(true); setError(''); setResetNotice('');
     try {
@@ -200,6 +210,7 @@ export default function WorkspaceAccess({ children }) {
       {sessionCheckFailed && <button type="button" className="workspace-access-retry" onClick={retrySessionCheck} disabled={retryingSession}>{retryingSession ? <LoaderCircle className="spin" size={14} /> : null}{retryingSession ? 'Verificando sessao...' : 'Tentar verificar novamente'}</button>}
       <button className="admin-primary workspace-access-submit" disabled={busy}>{busy ? <LoaderCircle className="spin" size={15} /> : <KeyRound size={15} />}{busy ? 'Verificando...' : 'Entrar'}<ArrowRight size={15} /></button>
     </form>
+    <button type="button" className="workspace-access-demo" onClick={startLocalDemo} disabled={busy} aria-label="Explorar Focusshub com dados de demonstração local"><Sparkles size={15} /><span><b>Explorar com dados de demonstração</b><small>Exemplos fictícios neste navegador. Nenhuma alteração chega ao workspace ou a serviços externos.</small></span><ArrowRight size={15} /></button>
     <div className="workspace-access-restricted"><ShieldCheck size={15} /><span>Acesso por convite da pessoa proprietária. Se já tem conta, entre com seu e-mail e senha.</span></div>
   </section></main>;
 }

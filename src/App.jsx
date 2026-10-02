@@ -17,7 +17,7 @@ import PublicLegalPage from './screens/PublicLegalPages.jsx';
 import { apiRequest, fetchAllRecords } from './lib/workspace-api.js';
 import { mergeServerWorkspacePreferences, publishWorkspacePreferences, readCachedWorkspacePreferences, rememberWorkspaceThemePreference, useWorkspacePreferences } from './lib/workspace-preferences.js';
 import { purgeFictitiousLocalData } from './lib/demo-data.js';
-import { exitLocalDemo, isLocalDemoActive, resetLocalDemo } from './lib/local-demo.js';
+import { activateLocalDemo, exitLocalDemo, isLocalDemoActive, resetLocalDemo } from './lib/local-demo.js';
 import { completeTaskOccurrence } from './lib/task-recurrence.js';
 import { shouldRefreshDashboardOnNavigation } from './lib/dashboard-navigation.js';
 import { dashboardCreateContext } from './lib/dashboard-create-context.js';
@@ -654,6 +654,7 @@ function WorkspaceShell() {
             </button>; })}
           </div>)}
         </nav>
+        {!localDemo && <button className="side-nav-link" type="button" onClick={() => { activateLocalDemo(); window.location.reload(); }} aria-label="Explorar Focusshub com dados fictícios" title="Demonstração local"><Sparkles size={16} strokeWidth={1.8} /><span>Explorar demonstração</span></button>}
         <button className="profile-shortcut" onClick={() => navigateToPage(currentUser?.role === 'member' ? 'Meu Dia' : 'Configura\u00e7\u00f5es')}><Avatar initials={initials || '—'} color="teal" online /><span><b>{currentUser?.name || currentUser?.email || 'Minha conta'}</b><small>{currentUser?.organizationName || 'Workspace'}</small></span><ChevronDown size={14} /></button>
         {!localDemo && <button className="side-nav-link" type="button" onClick={handleLogout} disabled={loggingOut} aria-label="Sair da conta" title="Sair da conta"><LogOut size={16} strokeWidth={1.8} /><span>{loggingOut ? 'Encerrando sessão...' : 'Sair da conta'}</span></button>}
       </aside>
