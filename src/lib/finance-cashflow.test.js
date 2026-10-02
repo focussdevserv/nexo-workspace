@@ -1,6 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildCashflowMonths, filterFinanceRecords, financeRecordActionKey, financeRecordsCsv, isFinanceReceivableOpen, isFinanceRecordOverdue } from './finance-cashflow.js';
+import { buildCashflowMonths, filterFinanceRecords, financeOverviewActivityRows, financeRecordActionKey, financeRecordsCsv, isFinanceReceivableOpen, isFinanceRecordOverdue } from './finance-cashflow.js';
+
+test('finance overview shows the description in the description column, not the internal code', () => {
+  assert.deepEqual(financeOverviewActivityRows([
+    { id: 'rev-1', code: 'REC-10001', description: 'Manutenção mensal', counterparty: 'Cliente Aurora', date: '2026-10-02', amount: 1200, status: 'Pendente' },
+  ], [
+    { id: 'exp-1', code: 'DES-10002', description: 'Hospedagem', category: 'Infraestrutura', date: '2026-10-01', amount: 89.9, status: 'Paga' },
+  ], 8), [
+    ['Manutenção mensal', 'Cliente Aurora', '2026-10-02', '+ R$\u00a01.200,00', 'Pendente'],
+    ['Hospedagem', 'Infraestrutura', '2026-10-01', '- R$\u00a089,90', 'Paga'],
+  ]);
+});
 
 test('uses immutable workspace IDs for finance actions even when display codes collide', () => {
   const records = [

@@ -19,7 +19,12 @@ function applyWorkspaceTheme(darkMode) {
   if (typeof document === 'undefined') return;
   const theme = darkMode ? 'dark' : 'light';
   document.documentElement.dataset.theme = theme;
-  document.documentElement.style.colorScheme = theme;
+  // `only light` opts out of Chromium's forced darkening when the user chose
+  // the light theme, while preserving native dark controls in dark mode.
+  const colorScheme = darkMode ? 'dark' : 'only light';
+  document.documentElement.style.colorScheme = colorScheme;
+  const colorSchemeMeta = document.querySelector('meta[name="color-scheme"]');
+  if (colorSchemeMeta) colorSchemeMeta.content = colorScheme;
 }
 
 export function normalizeWorkspacePreferences(value) {

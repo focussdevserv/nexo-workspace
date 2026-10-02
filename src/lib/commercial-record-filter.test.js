@@ -1,0 +1,30 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { filterCommercialRecords } from './commercial-record-filter.js';
+
+const records = Array.from({ length: 23 }, (_, index) => ({
+  id: index,
+  name: `Empresa ${index}`,
+  city: index % 2 ? 'São Paulo' : 'Santos',
+  status: index % 2 ? 'Ativo' : 'Prospect',
+  source: index % 3 ? 'Site' : 'Indicação',
+}));
+
+test('returns the full loaded list without artificial page slicing', () => {
+  assert.equal(filterCommercialRecords(records).length, records.length);
+});
+
+test('combines search, status/source filters and extra fields over the full list', () => {
+  const result = filterCommercialRecords(records, {
+    search: 'Empresa 1',
+    filter: 'Ativo',
+    extraFilters: { city: 'São Paulo' },
+    extraFilterFields: [{ key: 'city', label: 'Cidade', values: ['Santos', 'São Paulo'] }],
+  });
+  assert.deepEqual(result.map((record) => record.id), [1, 11, 13, 15, 17, 19]);
+});
+
+test('search includes nested commercial metadata', () => {
+  const result = filterCommercialRecords([{ id: 1, name: 'Nexo', emailDelivery: { recipient: 'ops@nexo.test' } }], { search: 'ops@nexo.test' });
+  assert.equal(result.length, 1);
+});

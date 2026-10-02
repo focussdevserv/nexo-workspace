@@ -29,6 +29,8 @@ import { clientContactActions } from "../lib/client-contact-actions.js";
 import { removeClientContact } from "../lib/client-contact-records.js";
 import { clientFileRecordForUpload } from "../lib/client-file-link.js";
 import { buildClientRelationshipHistory, clientRelationshipHistoryDateLabel } from "../lib/client-relationship-history.js";
+import { buildCommercialRecordEditorPatch, commercialRecordEditorDraft, commercialRecordEditorFields, commercialRecordEditorIsDirty } from "../lib/commercial-record-editor.js";
+import { filterCommercialRecords } from "../lib/commercial-record-filter.js";
 const datasets = {
   leads: [],
   clients: [],
@@ -424,12 +426,11 @@ export default function CommercialScreen({
       values
     }] : [];
   }), [data]);
-  const visible = useMemo(() => data.filter(item => {
-    const term = search.trim().toLocaleLowerCase("pt-BR");
-    const text = Object.values(item).join(" ").toLocaleLowerCase("pt-BR");
-    const status = item.status || item.stage;
-    const matchesExtra = extraFilterFields.every(field => !extraFilters[field.key] || String(field.read ? field.read(item) || "" : item[field.key] || "") === extraFilters[field.key]);
-    return (!term || text.includes(term)) && (filter === "Todos" || status === filter || item.source === filter) && matchesExtra;
+  const visible = useMemo(() => filterCommercialRecords(data, {
+    search,
+    filter,
+    extraFilters,
+    extraFilterFields,
   }), [data, search, filter, extraFilters, extraFilterFields]);
   const proposalServices = useMemo(() => {
     const term = proposalServiceSearch.trim().toLocaleLowerCase("pt-BR");
@@ -966,6 +967,8 @@ export default function CommercialScreen({
         setShowAllProposalServices(false);
         setComposer(true);
       }}><Plus size={17} />{createLabel}<ChevronDown size={14} /></button></header><nav className="com-tabs" aria-label="Módulos comerciais">{Object.entries(config).map(([id, item]) => <button className={id === key ? "active" : ""} aria-current={id === key ? "page" : void 0} key={id} onClick={() => {
+        const dirtyEditor = document.querySelector('[data-commercial-editor-dirty="true"]');
+        if (id !== key && dirtyEditor && !window.confirm("Há alterações não salvas. Descartar as alterações?")) return;
         setLocalPage(id);
         setSearch("");
         setFilter("Todos");
@@ -982,14 +985,7 @@ export default function CommercialScreen({
         projects: [project, ...(records.projects || [])],
         tasks: [...tasks, ...(records.tasks || [])]
       });
-    }} onAction={notify} onUpdate={updateServiceRecord} onDelete={record => {
-      if (!window.confirm(`Excluir o serviço "${record.name}"?`)) return;
-      persistRecords({
-        ...records,
-        services: (records.services || datasets.services).filter(item => item.id !== record.id)
-      });
-      notify("Serviço removido do workspace.");
-    }} onImportCatalog={importCatalog} catalogImporting={catalogSeedState === "loading" || servicesLoading} catalogSeedState={catalogSeedState} search={search} setSearch={setSearch} /> : <ListView page={key} items={visible} relatedProjects={records.projects || []} relatedSubscriptions={relatedSubscriptions} relatedContracts={records.contracts || []} onArchive={archiveClient} openClientId={key === "clientes" ? navigationContext?.clientId : ""} onClientOpened={onNavigationContextConsumed} search={search} setSearch={setSearch} filter={filter} setFilter={setFilter} extraFilterFields={extraFilterFields} extraFilters={extraFilters} setExtraFilters={setExtraFilters} onAction={notify} onAccept={acceptProposal} onSendProposal={sendProposal} localDemo={localDemo} onRefreshRecords={refreshRecords} onUpdate={updateCommercialRecord} onDelete={deleteCommercialRecord} />}{composer && <div className="com-modal-backdrop" onMouseDown={event => {
+    }} onAction={notify} onUpdate={updateServiceRecord} onDelete={deleteServiceRecord} onImportCatalog={importCatalog} catalogImporting={catalogSeedState === "loading" || servicesLoading} catalogSeedState={catalogSeedState} search={search} setSearch={setSearch} /> : <ListView page={key} items={visible} relatedProjects={records.projects || []} relatedSubscriptions={relatedSubscriptions} relatedContracts={records.contracts || []} onArchive={archiveClient} openClientId={key === "clientes" ? navigationContext?.clientId : ""} onClientOpened={onNavigationContextConsumed} search={search} setSearch={setSearch} filter={filter} setFilter={setFilter} extraFilterFields={extraFilterFields} extraFilters={extraFilters} setExtraFilters={setExtraFilters} onAction={notify} onAccept={acceptProposal} onSendProposal={sendProposal} localDemo={localDemo} onRefreshRecords={refreshRecords} onUpdate={updateCommercialRecord} onDelete={deleteCommercialRecord} clients={records.clients || []} services={records.services || []} totalItems={data.length} />}{composer && <div className="com-modal-backdrop" onMouseDown={event => {
       if (event.target === event.currentTarget) setComposer(false);
     }}><form className="com-create-modal" onSubmit={createRecord}><header><div><small>{current.eyebrow}</small><h2>{createLabel}</h2></div><button type="button" aria-label="Fechar" onClick={() => setComposer(false)}><X size={15} /></button></header>{key === "clientes" && <label>Tipo de cadastro<select value={draft.clientType} onChange={e => setDraft({
             ...draft,
@@ -1128,12 +1124,13 @@ function Metric({
 function StatusControl({
   page,
   statusDraft,
-  setStatusDraft
+  setStatusDraft,
+  disabled = false
 }) {
   const options = page === "leads" ? ["Novo lead", "Contato realizado", "Reunião agendada", "Diagnóstico", "Proposta enviada", "Negociação", "Fechado", "Perdido"] : page === "propostas" ? ["Rascunho", "Enviada", "Visualizada", "Em negociação", "Recusada", "Expirada"] : page === "contratos" ? editableContractStatuses : page === "empresas" ? ["Prospect", "Cliente", "Inativo"] : page === "contatos" ? ["Decisor", "Influenciador", "Contato"] : ["Ativo", "Em atenção", "Inativo"];
   const existingSigningState = page === "contratos" && isLockedContractStatus(statusDraft) && !options.includes(statusDraft);
   const existingApprovedProposalState = page === "propostas" && statusDraft === "Aprovada";
-  return <label>Status / etapa<select value={statusDraft} onChange={event => setStatusDraft(event.target.value)}>{existingSigningState && <option value={statusDraft} disabled={true}>{statusDraft} · estado já registrado</option>}{existingApprovedProposalState && <option value={statusDraft} disabled={true}>Aprovada · convertida</option>}{options.map(option => <option>{option}</option>)}</select>{page === "contratos" && <small>Sem provedor de assinatura conectado, o Focusshub não permite marcar um contrato como assinado ou ativo.</small>}{existingApprovedProposalState && <small>A aprovação cria o contrato, o projeto e suas tarefas em conjunto; esse status não pode ser definido manualmente.</small>}</label>;
+  return <label>Status / etapa<select disabled={disabled} value={statusDraft} onChange={event => setStatusDraft(event.target.value)}>{existingSigningState && <option value={statusDraft} disabled={true}>{statusDraft} · estado já registrado</option>}{existingApprovedProposalState && <option value={statusDraft} disabled={true}>Aprovada · convertida</option>}{options.map(option => <option>{option}</option>)}</select>{page === "contratos" && <small>Sem provedor de assinatura conectado, o Focusshub não permite marcar um contrato como assinado ou ativo.</small>}{existingApprovedProposalState && <small>A aprovação cria o contrato, o projeto e suas tarefas em conjunto; esse status não pode ser definido manualmente.</small>}</label>;
 }
 function Toolbar({
   search,
@@ -2263,10 +2260,15 @@ function ListView({
   onSendProposal,
   localDemo = false,
   onRefreshRecords,
+  clients = [],
+  services = [],
+  totalItems = 0,
   openClientId = "",
   onClientOpened = () => {}
 }) {
   const [selectedItem, setSelectedItem] = useState(null);
+  const [recordDraft, setRecordDraft] = useState({});
+  const [editorBaseline, setEditorBaseline] = useState({});
   const [recordSaving, setRecordSaving] = useState(false);
   const [statusDraft, setStatusDraft] = useState("");
   const [sendTo, setSendTo] = useState("");
@@ -2278,10 +2280,41 @@ function ListView({
   const [contractDocDraft, setContractDocDraft] = useState("");
   const [sendingContract, setSendingContract] = useState(false);
   const [syncingContract, setSyncingContract] = useState(false);
-  const saveRecordStatus = async () => {
+  useEffect(() => {
+    setSelectedItem(null);
+    setRecordDraft({});
+    setEditorBaseline({});
+    setStatusDraft("");
+  }, [page]);
+  const editableFields = commercialRecordEditorFields(page);
+  const recordDirty = Boolean(selectedItem && (
+    commercialRecordEditorIsDirty(page, editorBaseline, recordDraft)
+    || statusDraft !== String(selectedItem.stage || selectedItem.status || "Ativo")
+    || (page === "contratos" && contractDocDraft !== String(selectedItem.documentText || contractText(selectedItem)))
+  ));
+  const closeRecordEditor = () => {
+    if (recordSaving) return;
+    if (recordDirty && !window.confirm("Há alterações não salvas. Descartar as alterações?")) return;
+    setSelectedItem(null);
+  };
+  const saveRecordChanges = async () => {
+    const { patch, error } = editableFields.length
+      ? buildCommercialRecordEditorPatch(page, recordDraft, clients, selectedItem, services)
+      : { patch: {} };
+    if (error) {
+      onAction?.(error);
+      return;
+    }
+    if (page === "contratos" && selectedItem?.clicksign?.envelopeId && contractDocDraft !== selectedItem.documentText) {
+      onAction?.("O documento não pode ser alterado depois de enviado para assinatura.");
+      return;
+    }
     setRecordSaving(true);
     try {
-      const saved = await onUpdate?.(selectedItem, page === "leads" ? { stage: statusDraft } : commercialStatusPatch(page, statusDraft, contractDocDraft));
+      const saved = await onUpdate?.(selectedItem, {
+        ...patch,
+        ...commercialStatusPatch(page, statusDraft, contractDocDraft),
+      });
       if (saved !== false) setSelectedItem(null);
     } catch (error) {
       onAction?.(error.message || "Não foi possível salvar as alterações.");
@@ -2332,6 +2365,11 @@ function ListView({
       const saved = result.data;
       await onRefreshRecords?.();
       setSelectedItem(saved);
+      setStatusDraft(saved.status || "Rascunho");
+      const nextDraft = commercialRecordEditorDraft(page, saved, clients);
+      setRecordDraft(nextDraft);
+      setEditorBaseline(nextDraft);
+      setContractDocDraft(saved.documentText || contractText(saved));
       onAction(result.warning || (result.notificationSent ? `Contrato ativado e notificacao enviada para ${signerEmail.trim()}.` : "Envelope ativado na Clicksign."));
     } catch (error) {
       onAction(error.message || "Não foi possível enviar o contrato para assinatura.");
@@ -2354,6 +2392,11 @@ function ListView({
       const saved = result.data;
       await onRefreshRecords?.();
       setSelectedItem(saved);
+      setStatusDraft(saved.status || "Rascunho");
+      const nextDraft = commercialRecordEditorDraft(page, saved, clients);
+      setRecordDraft(nextDraft);
+      setEditorBaseline(nextDraft);
+      setContractDocDraft(saved.documentText || contractText(saved));
       onAction(`Status Clicksign sincronizado: ${saved.status}.`);
     } catch (error) {
       onAction(error.message || "Não foi possível sincronizar o contrato.");
@@ -2374,6 +2417,11 @@ function ListView({
       });
       await onRefreshRecords?.();
       setSelectedItem(result.data);
+      setStatusDraft(result.data.status || "Rascunho");
+      const nextDraft = commercialRecordEditorDraft(page, result.data, clients);
+      setRecordDraft(nextDraft);
+      setEditorBaseline(nextDraft);
+      setContractDocDraft(result.data.documentText || contractText(result.data));
       onAction("Notificacao de assinatura reenviada pela Clicksign.");
     } catch (error) {
       onAction(error.message || "Não foi possível reenviar a notificacao.");
@@ -2452,6 +2500,9 @@ function ListView({
                           width: `${item.progress}%`
                         }} /></div><small>{item.renewal}</small></div></td><td><Badge tone={item.tone}>{item.status}</Badge></td></Fragment>}</Fragment>}<td><button className="com-row-more" aria-label={`Ações para ${item.name || item.title}`} onClick={() => {
                   setSelectedItem(item);
+                  const initialDraft = commercialRecordEditorDraft(page, item, clients);
+                  setRecordDraft(initialDraft);
+                  setEditorBaseline(initialDraft);
                   setStatusDraft(item.stage || item.status || "Ativo");
                   setSendTo(item.email || "");
                   setRetryKey(["sending", "failed"].includes(item.emailDelivery?.status) ? item.emailDelivery.key || "" : "");
@@ -2461,21 +2512,29 @@ function ListView({
                 }}><Ellipsis size={18} /></button></td></tr>)}</tbody></table>{items.length === 0 && <EmptyState query={search} noun={label} onClear={() => {
           setSearch("");
           setFilter("Todos");
-        }} />}</div><div className="com-table-footer"><span>Mostrando <b>{items.length ? `1–${items.length}` : "0–0"}</b> de <b>{items.length}</b> {items.length === 1 ? label.replace(/s$/, "") : label}</span><div><button type="button" disabled={true}>Anterior</button><button type="button" className="current" aria-current="page" disabled={true}>1</button><button type="button" disabled={true}>Próxima</button></div></div></section>{selectedItem && (page === "leads" ? <LeadRecordModal lead={selectedItem} onClose={() => setSelectedItem(null)} onSave={async patch => {
+          setExtraFilters({});
+        }} />}</div><div className="com-table-footer"><span>Mostrando <b>{items.length}</b> de <b>{totalItems}</b> {items.length === 1 ? label.replace(/s$/, "") : label} após busca e filtros.</span></div></section>{selectedItem && (page === "leads" ? <LeadRecordModal lead={selectedItem} onClose={() => setSelectedItem(null)} onSave={async patch => {
       const saved = await onUpdate?.(selectedItem, patch);
       if (saved !== false) setSelectedItem(null);
     }} onDelete={async () => {
       const deleted = await onDelete?.(selectedItem);
       if (deleted !== false) setSelectedItem(null);
     }} /> : page === "clientes" ? <ClientProfileModal client={selectedItem} onClose={() => setSelectedItem(null)} onArchive={onArchive} onUpdate={updated => onUpdate?.(selectedItem, updated)} onAction={onAction} /> : <div className="com-modal-backdrop" onMouseDown={event => {
-      if (event.target === event.currentTarget) setSelectedItem(null);
-    }}><section className="com-create-modal"><header><div><small>{page.toUpperCase()} · REGISTRO</small><h2>{selectedItem.name || selectedItem.title}</h2></div><button aria-label="Fechar" onClick={() => setSelectedItem(null)}><X size={15} /></button></header><div className="com-record-details"><span>Cliente / empresa<b>{selectedItem.client || selectedItem.company || selectedItem.name || "?"}</b></span><span>Valor<b>{selectedItem.value || selectedItem.price || "A definir"}</b></span><span>Contato<b>{selectedItem.email || selectedItem.person || selectedItem.role || "?"}</b></span><span>Detalhes<b>{selectedItem.service || selectedItem.segment || selectedItem.description || selectedItem.code || "?"}</b></span></div>{page === "propostas" && <div className="com-proposal-detail"><b>Escopo</b><p>{selectedItem.scope || selectedItem.service || "Escopo nao detalhado"}</p><span>Prazo: {selectedItem.deadline || "A definir"} · Pagamento: {selectedItem.paymentTerms || "A combinar"}</span></div>}{page === "propostas" && <div className="com-proposal-email"><label>Enviar para<input type="email" required={true} value={sendTo} onChange={event => {
+      if (event.target === event.currentTarget) closeRecordEditor();
+    }}><section className="com-create-modal com-edit-modal" data-commercial-editor-dirty={recordDirty ? "true" : "false"}><header><div><small>{page.toUpperCase()} · REGISTRO</small><h2>{selectedItem.name || selectedItem.title}</h2></div><button type="button" aria-label="Fechar" onClick={closeRecordEditor} disabled={recordSaving}><X size={15} /></button></header>{editableFields.length === 0 && <div className="com-record-details"><span>Cliente / empresa<b>{selectedItem.client || selectedItem.company || selectedItem.name || "?"}</b></span><span>Valor<b>{selectedItem.value || selectedItem.price || "A definir"}</b></span><span>Contato<b>{selectedItem.email || selectedItem.person || selectedItem.role || "?"}</b></span><span>Detalhes<b>{selectedItem.service || selectedItem.segment || selectedItem.description || selectedItem.code || "?"}</b></span></div>}{editableFields.length > 0 && <form className="com-commercial-editor" onSubmit={event => event.preventDefault()}><div className="com-commercial-editor-heading"><strong>Dados comerciais</strong><span>As alterações só serão aplicadas ao salvar.</span></div><div className="com-commercial-editor-grid">{editableFields.map(field => {
+          const locked = (page === "propostas" && selectedItem.status === "Aprovada") || (page === "contratos" && Boolean(selectedItem.clicksign?.envelopeId || isLockedContractStatus(selectedItem.status)) && !["renewal", "progress"].includes(field.key));
+          const value = recordDraft[field.key] ?? "";
+          return <label key={field.key} className={field.wide ? "wide" : ""}>{field.label}{field.type === "client" ? <select required={field.required} disabled={recordSaving || locked} value={value} onChange={event => {
+              const client = clients.find(item => String(item.id) === event.target.value);
+              setRecordDraft(current => ({ ...current, clientId: event.target.value, ...(page === "propostas" ? { email: client?.email || "" } : {}) }));
+            }}><option value="">Selecione um cliente</option>{clients.map(client => <option key={client.id} value={client.id}>{client.name}</option>)}</select> : field.type === "textarea" ? <textarea rows={3} required={field.required} disabled={recordSaving || locked} value={value} onChange={event => setRecordDraft(current => ({ ...current, [field.key]: event.target.value }))} /> : <input type={field.type === "number" ? "number" : field.type === "email" ? "email" : field.type === "tel" ? "tel" : "text"} inputMode={field.type === "currency" ? "decimal" : undefined} min={field.type === "number" ? "0" : undefined} max={field.type === "number" ? "100" : undefined} step={field.type === "number" ? "1" : undefined} required={field.required} disabled={recordSaving || locked} value={value} onChange={event => setRecordDraft(current => ({ ...current, [field.key]: event.target.value }))} />}</label>;
+        })}</div>{page === "propostas" && selectedItem.status === "Aprovada" && <small className="com-contract-locked-note">Esta proposta já originou contrato e projeto; os campos comerciais ficam bloqueados para preservar os vínculos.</small>}{page === "contratos" && isLockedContractStatus(selectedItem.status) && <small className="com-contract-locked-note">Termos bloqueados enquanto o contrato está em assinatura ou ativo. Renovação e progresso continuam editáveis.</small>}</form>}{page === "propostas" && <div className="com-proposal-email"><label>Enviar para<input type="email" required={true} value={sendTo} onChange={event => {
               setSendTo(event.target.value);
               setRetryKey("");
             }} placeholder="cliente@empresa.com" /></label><label>Enviar com<select value={emailProvider} onChange={event => {
               setEmailProvider(event.target.value);
               setRetryKey("");
-            }}><option value="resend">Resend</option><option value="google">Gmail (Google Workspace)</option></select></label><small>{selectedItem.emailDelivery?.status === "sent" ? `Ultimo envio confirmado em ${new Date(selectedItem.emailDelivery.sentAt).toLocaleString("pt-BR")}` : selectedItem.emailDelivery?.status === "failed" ? "O envio anterior nao foi confirmado. Repetir mantem a mesma chave idempotente." : "O e-mail inclui escopo, valor, prazo e condicoes da proposta."}</small><button type="button" className="com-primary" disabled={sendingProposal || !sendTo.trim() || localDemo} onClick={async () => {
+            }}><option value="resend">Resend</option><option value="google">Gmail (Google Workspace)</option></select></label><small>{selectedItem.emailDelivery?.status === "sent" ? `Ultimo envio confirmado em ${new Date(selectedItem.emailDelivery.sentAt).toLocaleString("pt-BR")}` : selectedItem.emailDelivery?.status === "failed" ? "O envio anterior nao foi confirmado. Repetir mantem a mesma chave idempotente." : "O e-mail inclui escopo, valor, prazo e condicoes da proposta."}</small><button type="button" className="com-primary" disabled={recordSaving || sendingProposal || !sendTo.trim() || localDemo || recordDirty} onClick={async () => {
             if (!window.confirm(`Enviar esta proposta para ${sendTo.trim()} usando ${emailProvider === "google" ? "Gmail" : "Resend"}?`)) return;
             const key = retryKey || crypto.randomUUID();
             setRetryKey(key);
@@ -2494,19 +2553,21 @@ function ListView({
                 }
               });
               setStatusDraft("Enviada");
+              setRecordDraft(current => ({ ...current, email: sendTo.trim() }));
+              setEditorBaseline(current => ({ ...current, email: sendTo.trim() }));
               setRetryKey("");
             } catch (error) {
               onAction(error.message || "Não foi possível enviar a proposta.");
             } finally {
               setSendingProposal(false);
             }
-          }}><Send size={14} />{sendingProposal ? "Enviando..." : localDemo ? "Envio externo desativado na demonstração" : selectedItem.emailDelivery?.status === "sent" ? "Enviar novamente" : "Enviar proposta"}</button></div>}{page === "contratos" && <div className="com-proposal-detail"><b>Termos do contrato</b><p>{selectedItem.scope || selectedItem.service || "Escopo pendente de revisao"}</p><span>Prazo: {selectedItem.deadline || selectedItem.renewal || "A definir"} · Condição: {selectedItem.paymentTerms || "A combinar"}</span></div>}{page === "contratos" && <div className="com-contract-document"><strong>Documento base para assinatura</strong><p>Revise e complete o texto antes do envio. Campos entre colchetes bloqueiam a assinatura. O contrato so sera enviado quando voce clicar no botao.</p><textarea rows={16} value={contractDocDraft} onChange={event => setContractDocDraft(event.target.value)} disabled={Boolean(selectedItem.clicksign?.envelopeId)} aria-label="Texto integral do contrato" /><button type="button" className="com-secondary" onClick={() => downloadContract({
+          }}><Send size={14} />{sendingProposal ? "Enviando..." : localDemo ? "Envio externo desativado na demonstração" : selectedItem.emailDelivery?.status === "sent" ? "Enviar novamente" : "Enviar proposta"}</button></div>}{page === "contratos" && <div className="com-contract-document"><strong>Documento base para assinatura</strong><p>Revise e complete o texto antes do envio. Campos entre colchetes bloqueiam a assinatura. O contrato só será enviado quando você clicar no botão. Alterar os dados acima não reescreve este documento; revise o texto antes da assinatura.</p><textarea rows={16} value={contractDocDraft} onChange={event => setContractDocDraft(event.target.value)} disabled={recordSaving || Boolean(selectedItem.clicksign?.envelopeId) || isLockedContractStatus(selectedItem.status)} aria-label="Texto integral do contrato" /><button type="button" className="com-secondary" onClick={() => downloadContract({
             ...selectedItem,
             documentText: contractDocDraft
-          })}><Download size={14} />Baixar modelo HTML para revisao</button>{selectedItem.clicksign?.envelopeId ? <div className="com-proposal-email"><b>Clicksign · {selectedItem.clicksign.status || "running"}</b><small>Signatario: {selectedItem.clicksign.signerEmail || signerEmail} · notificação: {selectedItem.clicksign.notificationStatus || "pendente"}</small><div className="com-toolbar-actions"><button type="button" className="com-secondary" disabled={syncingContract} onClick={syncContract}><RefreshCw size={14} />{syncingContract ? "Sincronizando..." : "Sincronizar status"}</button>{selectedItem.clicksign.notificationStatus !== "sent" && <button type="button" className="com-secondary" onClick={notifyContractSigner}><Send size={14} />Reenviar notificacao</button>}</div></div> : selectedItem.clicksign ? <div className="com-proposal-detail"><b>Envio interrompido</b><p>A solicitacao foi interrompida antes da confirmacao do ID do envelope. Consulte a conta Clicksign pelo codigo deste contrato antes de tentar novamente; o Focusshub bloqueia um segundo envio automatico para evitar duplicidade.</p></div> : <div className="com-proposal-email"><label>Nome completo do signatario<input required={true} value={signerName} onChange={event => setSignerName(event.target.value)} placeholder="Nome Sobrenome" /></label><label>E-mail do signatario<input required={true} type="email" value={signerEmail} onChange={event => setSignerEmail(event.target.value)} placeholder="cliente@empresa.com" /></label><button type="button" className="com-primary" disabled={sendingContract || !signerName.trim() || !signerEmail.trim() || contractDocDraft.length < 100 || localDemo} onClick={sendContract}><Send size={14} />{sendingContract ? "Preparando envelope..." : localDemo ? "Assinatura externa desativada na demonstração" : "Enviar para assinatura Clicksign"}</button></div>}</div>}{page !== "servicos" && <StatusControl page={page} statusDraft={statusDraft} setStatusDraft={setStatusDraft} />}<footer><button type="button" className="com-secondary com-delete-action" onClick={deleteSelectedRecord} disabled={recordSaving}>Excluir</button><span />{page === "propostas" && !["Aprovada", "Recusada", "Expirada"].includes(selectedItem.status) && <button type="button" className="com-secondary" onClick={async () => {
+          })}><Download size={14} />Baixar modelo HTML para revisao</button>{selectedItem.clicksign?.envelopeId ? <div className="com-proposal-email"><b>Clicksign · {selectedItem.clicksign.status || "running"}</b><small>Signatario: {selectedItem.clicksign.signerEmail || signerEmail} · notificação: {selectedItem.clicksign.notificationStatus || "pendente"}</small><div className="com-toolbar-actions"><button type="button" className="com-secondary" disabled={syncingContract || recordDirty} onClick={syncContract}><RefreshCw size={14} />{syncingContract ? "Sincronizando..." : "Sincronizar status"}</button>{selectedItem.clicksign.notificationStatus !== "sent" && <button type="button" className="com-secondary" disabled={recordDirty} onClick={notifyContractSigner}><Send size={14} />Reenviar notificacao</button>}</div></div> : selectedItem.clicksign ? <div className="com-proposal-detail"><b>Envio interrompido</b><p>A solicitacao foi interrompida antes da confirmacao do ID do envelope. Consulte a conta Clicksign pelo codigo deste contrato antes de tentar novamente; o Focusshub bloqueia um segundo envio automatico para evitar duplicidade.</p></div> : <div className="com-proposal-email"><label>Nome completo do signatario<input required={true} value={signerName} onChange={event => setSignerName(event.target.value)} placeholder="Nome Sobrenome" /></label><label>E-mail do signatario<input required={true} type="email" value={signerEmail} onChange={event => setSignerEmail(event.target.value)} placeholder="cliente@empresa.com" /></label><button type="button" className="com-primary" disabled={recordSaving || sendingContract || !signerName.trim() || !signerEmail.trim() || contractDocDraft.length < 100 || localDemo || recordDirty || isLockedContractStatus(selectedItem.status)} onClick={sendContract}><Send size={14} />{sendingContract ? "Preparando envelope..." : localDemo ? "Assinatura externa desativada na demonstração" : "Enviar para assinatura Clicksign"}</button></div>}</div>}{page !== "servicos" && <StatusControl page={page} statusDraft={statusDraft} setStatusDraft={setStatusDraft} disabled={recordSaving || (page === "propostas" && selectedItem.status === "Aprovada") || (page === "contratos" && isLockedContractStatus(selectedItem.status))} />}<footer><button type="button" className="com-secondary com-delete-action" onClick={deleteSelectedRecord} disabled={recordSaving}>Excluir</button><span />{page === "propostas" && !["Aprovada", "Recusada", "Expirada"].includes(selectedItem.status) && <button type="button" className="com-secondary" disabled={recordDirty} onClick={async () => {
             const accepted = await onAccept?.(selectedItem);
             if (accepted) setSelectedItem(null);
-          }}>Aceitar e iniciar</button>}<button type="button" className="com-primary" onClick={saveRecordStatus} disabled={recordSaving}>{recordSaving ? "Salvando..." : "Salvar alteração"}</button></footer></section></div>)}</Fragment>;
+          }}>Aceitar e iniciar</button>}<button type="button" className="com-primary" onClick={saveRecordChanges} disabled={recordSaving || !recordDirty}>{recordSaving ? "Salvando..." : "Salvar alteração"}</button></footer></section></div>)}</Fragment>;
 }
 function LeadRecordModal({
   lead,
@@ -2747,7 +2808,7 @@ function ServicesView({
   const topContracted = serviceContracts[0]?.count ? serviceContracts[0].service.name : "Sem contratações";
   const [saving, setSaving] = useState(false);
   const save = async event => {
-    event.preventDefault();
+    event?.preventDefault?.();
     if (saving) return;
     const next = {
       ...selected,
@@ -2855,10 +2916,7 @@ function ServicesView({
               })} placeholder="Escopo e condicoes comerciais padrao" /></label><label className="wide">Modelo de contrato<textarea rows="3" value={draft.contractTemplate} onChange={e => setDraft({
                 ...draft,
                 contractTemplate: e.target.value
-              })} placeholder="Termos padrao para revisao" /></label></div><footer><button type="button" className="com-secondary com-delete-action" onClick={() => {
-              onDelete(selected);
-              setSelected(null);
-            }}>Excluir serviço</button><span /><button className="com-primary" type="submit"><Check size={14} />Salvar alterações</button></footer></form> : <div className="com-service-template"><label>Checklist padrão<textarea rows="8" value={draft.checklist} onChange={e => setDraft({
+              })} placeholder="Termos padrao para revisao" /></label></div><footer><button type="button" className="com-secondary com-delete-action" onClick={() => void deleteService()} disabled={saving}>Excluir serviço</button><span /><button className="com-primary" type="submit" disabled={saving}><Check size={14} />{saving ? "Salvando…" : "Salvar alterações"}</button></footer></form> : <div className="com-service-template"><label>Checklist padrão<textarea rows="8" value={draft.checklist} onChange={e => setDraft({
               ...draft,
               checklist: e.target.value
             })} placeholder="Briefing\nReceber materiais\nCriar primeira versão\nRevisão do cliente\nPublicação" /></label><p>Uma tarefa será criada para cada linha quando você iniciar um projeto por este serviço.</p><div className="com-project-from-template"><label>Cliente do projeto<select required={true} value={clientId} onChange={e => setClientId(e.target.value)}><option value="">Selecione um cliente cadastrado</option>{clients.map(item => <option value={item.id}>{item.name}</option>)}</select></label><button className="com-primary" type="button" disabled={!clientId} onClick={startProject}><Plus size={14} />Criar projeto e tarefas</button></div><button className="com-secondary" type="button" onClick={save}>Salvar template</button></div>}</section></div>}</Fragment>;

@@ -67,6 +67,19 @@ export function sortFinanceActivity(records, limit = 8) {
   }).slice(0, Math.max(0, limit));
 }
 
+export function financeOverviewActivityRows(incomeRows, expenseRows, limit = 8) {
+  return sortFinanceActivity([
+    ...incomeRows.map((row) => ({ ...row, entryType: 'income' })),
+    ...expenseRows.map((row) => ({ ...row, entryType: 'expense' })),
+  ], limit).map((row) => [
+    row.description || row.code || row.id || '',
+    row.counterparty || row.category || '',
+    row.date || '',
+    `${row.entryType === 'income' ? '+' : '-'} ${new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(row.amount) || 0)}`,
+    row.status || 'Pendente',
+  ]);
+}
+
 function sumMonth(rows, month, realized, currentMonth) {
   return rows.filter((row) => {
     const status = String(row.status || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();

@@ -9,7 +9,7 @@
 }
 
 html[data-theme='light'] {
-  color-scheme: light;
+  color-scheme: only light;
   --nexo-bg: #f5f6f2;
   --nexo-surface: #fff;
   --nexo-surface-raised: #f1f1f4;

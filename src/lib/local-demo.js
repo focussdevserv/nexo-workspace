@@ -1,6 +1,7 @@
 import { findLeadDuplicateMatch } from './lead-identity.js';
 import { checkLocalDemoSite, getLocalDemoSiteHistory } from './local-demo-monitoring.js';
 import { proposalAcceptanceState } from './proposal-acceptance-state.js';
+import { handleLocalDemoInboxRequest } from './local-demo-inbox.js';
 
 const STORAGE_KEY = 'focusshub.local-demo.v1';
 const ENABLED_KEY = 'focusshub.local-demo.enabled';
@@ -168,6 +169,11 @@ export function handleLocalDemoRequest(path, options = {}) {
   const method = (options.method || 'GET').toUpperCase();
   const body = options.body ? JSON.parse(options.body) : {};
   const store = readStore();
+  const inboxRequest = handleLocalDemoInboxRequest(store, url.pathname, method, body);
+  if (inboxRequest) {
+    if (inboxRequest.changed) save();
+    return inboxRequest.response;
+  }
   const siteMonitoring = url.pathname.match(/^\/api\/monitoring\/site-assets\/([^/]+)\/(history|check)$/);
   if (siteMonitoring) {
     const [, rawAssetId, action] = siteMonitoring;
