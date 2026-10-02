@@ -46,11 +46,7 @@ const navGroups = [
     { label: 'Aprovações', icon: Check },
   ] },
   { label: 'Comercial', items: [
-    { label: 'CRM', icon: Users }, { label: 'Leads', icon: Users },
-    { label: 'Pipeline', icon: Activity }, { label: 'Clientes', icon: Users },
-    { label: 'Empresas', icon: BriefcaseBusiness }, { label: 'Contatos', icon: Users },
-    { label: 'Propostas', icon: FileText }, { label: 'Serviços', icon: LayoutDashboard },
-    { label: 'Contratos', icon: FileText },
+    { label: 'CRM', icon: Users },
   ] },
   { label: 'Projetos', items: [
     { label: 'Projetos', icon: FolderKanban }, { label: 'Horas', icon: Clock3 },
@@ -79,9 +75,11 @@ const navGroups = [
     { label: 'Configurações', icon: Settings },
   ] },
 ];
+const allWorkspacePageLabels = new Set([...navGroups.flatMap((group) => group.items.map((item) => item.label)), ...commercialPages]);
 
 const memberWorkspacePages = new Set(['Meu Dia', 'Agenda', 'Tarefas', 'Caixa de entrada', 'Aprova\u00e7\u00f5es', 'Projetos', 'Arquivos', 'Tickets']);
 function navigationPermissionModule(page) {
+  if (commercialPages.has(page)) return 'crm';
   const groupIndex = navGroups.findIndex((group) => group.items.some((item) => item.label === page));
   const group = navGroups[groupIndex];
   const itemIndex = group?.items.findIndex((item) => item.label === page) ?? -1;
@@ -197,7 +195,7 @@ function workspacePageSlug(label) { return label.normalize('NFD').replace(/[\u03
 function workspacePageFromPath(pathname) {
   if (!pathname.startsWith('/app/')) return null;
   const slug = decodeURIComponent(pathname.slice('/app/'.length)).replace(/\/+$/, '');
-  return navGroups.flatMap((group) => group.items).find((item) => workspacePageSlug(item.label) === slug)?.label || null;
+  return [...allWorkspacePageLabels].find((label) => workspacePageSlug(label) === slug) || null;
 }
 
 function normalizedTaskStatus(task) {
@@ -224,7 +222,7 @@ function WorkspaceShell() {
     if (routedPage && roleCanOpenPage(role, routedPage, user?.permissions)) return routedPage;
     try {
       const savedPage = sessionStorage.getItem('nexo.workspace.activePage');
-      if (navGroups.some((group) => group.items.some((item) => item.label === savedPage)) && roleCanOpenPage(role, savedPage, user?.permissions)) return savedPage;
+      if (allWorkspacePageLabels.has(savedPage) && roleCanOpenPage(role, savedPage, user?.permissions)) return savedPage;
       const startPage = readCachedWorkspacePreferences().startPage;
       return roleCanOpenPage(role, startPage, user?.permissions) ? startPage : 'Meu Dia';
     } catch { return 'Meu Dia'; }
@@ -367,7 +365,7 @@ function WorkspaceShell() {
   }, []);
 
   useEffect(() => {
-    const navigate = (event) => { const detail = typeof event.detail === 'string' ? { page: event.detail, context: null } : event.detail; const user = storedWorkspaceUser(); if (detail?.page && navGroups.some((group) => group.items.some((item) => item.label === detail.page)) && roleCanOpenPage(user?.role, detail.page, user?.permissions)) { didNavigateAtStartup.current = true; setActiveNav(detail.page); setNavigationContext(detail.context || null); setMobileMenuOpen(false); } };
+    const navigate = (event) => { const detail = typeof event.detail === 'string' ? { page: event.detail, context: null } : event.detail; const user = storedWorkspaceUser(); if (detail?.page && allWorkspacePageLabels.has(detail.page) && roleCanOpenPage(user?.role, detail.page, user?.permissions)) { didNavigateAtStartup.current = true; setActiveNav(detail.page); setNavigationContext(detail.context || null); setMobileMenuOpen(false); } };
     window.addEventListener('nexo:navigate', navigate);
     return () => window.removeEventListener('nexo:navigate', navigate);
   }, []);
@@ -445,9 +443,9 @@ function WorkspaceShell() {
         <nav className="side-nav-scroll">
           {visibleNavGroups.map((group) => <div className="nav-group" key={group.label}>
             <span className="nav-group-title">{group.label}</span>
-            {group.items.map(({ label, icon: Icon }) => <button key={label} className={`side-nav-link ${activeNav === label ? 'active' : ''}`} onClick={() => { didNavigateAtStartup.current = true; setActiveNav(label); setMobileMenuOpen(false); }} aria-current={activeNav === label ? 'page' : undefined} aria-label={label} title={label}>
+            {group.items.map(({ label, icon: Icon }) => { const selected = label === 'CRM' ? commercialPages.has(activeNav) : activeNav === label; return <button key={label} className={`side-nav-link ${selected ? 'active' : ''}`} onClick={() => { didNavigateAtStartup.current = true; setActiveNav(label); setMobileMenuOpen(false); }} aria-current={selected ? 'page' : undefined} aria-label={label} title={label}>
               <Icon size={16} strokeWidth={1.8} /><span>{label}</span>
-            </button>)}
+            </button>; })}
           </div>)}
         </nav>
         <button className="profile-shortcut" onClick={() => { didNavigateAtStartup.current = true; setActiveNav(currentUser?.role === 'member' ? 'Meu Dia' : 'Configura\u00e7\u00f5es'); }}><Avatar initials={initials || '—'} color="teal" online /><span><b>{currentUser?.name || currentUser?.email || 'Minha conta'}</b><small>{currentUser?.organizationName || 'Workspace'}</small></span><ChevronDown size={14} /></button>

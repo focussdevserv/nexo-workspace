@@ -35,11 +35,7 @@ html[data-theme='dark'] .lead-card,
 html[data-theme='dark'] .task-card,
 html[data-theme='dark'] .alert-card,
 html[data-theme='dark'] .empty-filter,
-html[data-theme='dark'] [class*='-card'],
-html[data-theme='dark'] [class*='-panel'],
-html[data-theme='dark'] [class*='-surface'],
-html[data-theme='dark'] [class*='-drawer'],
-html[data-theme='dark'] [class*='-modal'] {
+html[data-theme='dark'] :is(.ns-metric,.ns-panel,.ns-table-panel,.ns-integration-card,.ns-ticket-stats article,.com-metric,.com-panel,.com-pipeline-panel,.work-metric,.project-card,.hours-panel,.approval-card,.drive-card,.integration-overview,.ns-integration-modal,.ns-integration-modal-backdrop,[role='dialog']) {
   background: var(--nexo-surface);
   border-color: var(--nexo-border);
   color: var(--nexo-text);
@@ -59,12 +55,7 @@ html[data-theme='dark'] .attention-panel,
 html[data-theme='dark'] .day-strip,
 html[data-theme='dark'] .modal-overlay [role='dialog'] { background-color: #111a28; }
 html[data-theme='dark'] .featured.task-card { background: #243a2b; border-color: #3c5b3d; }
-html[data-theme='dark'] .commercial-screen [class*='-metric'],
-html[data-theme='dark'] .commercial-screen [class*='-stat'],
-html[data-theme='dark'] .commercial-screen [class*='-filter'],
-html[data-theme='dark'] .commercial-screen [class*='-table'],
-html[data-theme='dark'] .commercial-screen [class*='-toolbar'],
-html[data-theme='dark'] .commercial-screen [class*='-tabs'] button:not(.active) { background: var(--nexo-surface); border-color: var(--nexo-border); color: var(--nexo-text); }
+html[data-theme='dark'] .commercial-screen :is(.com-metric,.com-panel,.com-pipeline-panel,.com-filter,.com-toolbar,.com-toolbar-actions,.com-tabs button:not(.active),.com-table th,.com-table-footer) { background: var(--nexo-surface); border-color: var(--nexo-border); color: var(--nexo-text); }
 html[data-theme='dark'] .commercial-screen :is(.com-metric-copy,.com-table-wrap,.com-client-card,.com-client-main,.com-client-sidebar,.com-client-content) { color: var(--nexo-text); }
 html[data-theme='dark'] .commercial-screen :is(.com-icon-action,.com-secondary,.com-filter button,.com-toolbar button:not(.com-primary),.com-table-footer button) { background: var(--nexo-surface-raised); border-color: var(--nexo-border); color: var(--nexo-text); }
 html[data-theme='dark'] .work-screen :is(.work-metric,.work-empty,.agenda-summary,.agenda-empty,.agenda-grid-empty,.agenda-v2-empty,.agenda-google-state,.project-card,.project-kanban-column,.project-detail-modal,.hours-panel,.approval-card,.drive-card,.approval-summary) {
@@ -916,7 +907,7 @@ html[data-theme='dark'] .day-strip .strip-event > span:first-child:not(.avatar-s
 html[data-theme='dark'] .day-strip .strip-empty { color: #687068; }
 html[data-theme='dark'] .day-strip .strip-current { background: #b8f27d; color: #182016; }
 html[data-theme='dark'] .day-strip .strip-current .time-pin { background: #20251f; color: #fff; }
-html[data-theme='dark'] :is(.settings-sidebar,.settings-main,.settings-card,.stat-card,.lead-card,.task-card,.alert-card,.empty-filter,[class*='-panel'],[class*='-drawer'],[class*='-modal']) {
+html[data-theme='dark'] :is(.settings-sidebar,.settings-main,.settings-card,.stat-card,.lead-card,.task-card,.alert-card,.empty-filter,.ns-panel,.ns-table-panel,.com-panel,.com-pipeline-panel,.work-panel,.attention-panel,.notification-panel,.search-panel,.quick-search-panel,.project-detail-modal,.ns-integration-modal,[role='dialog']) {
   background-color: #171a18;
   border-color: #303632;
   color: #f1f3f0;
@@ -994,16 +985,75 @@ html[data-theme='light'] .side-nav-link.active {
 html[data-theme='light'] .side-nav-link.active svg { color: #4d8f30 !important; }
 html[data-theme='light'] .nav-group-title { color: #778174 !important; }
 
-/* Normalize every module's card and overlay surface, including CSS loaded on demand. */
+/* Normalize real surface components only. Substring matches such as `-metric`
+   also matched inner labels (`metric-copy`, `metric-note`) and painted white bars. */
 html[data-theme='light'] .app-shell :is(
-  [class*='-card'],[class*='-panel'],[class*='-surface'],[class*='-drawer'],[class*='-modal'],
-  [class*='-metric'],[class*='-empty'],[class*='-summary'],[class*='-toolbar'],[class*='-table'],
-  [class*='-column'],[class*='-popover'],[class*='-dropdown'],[class*='-menu'],[role='dialog']
+  .stat-card,.lead-card,.task-card,.alert-card,.settings-card,.settings-sidebar,.settings-main,
+  .ns-metric,.ns-panel,.ns-table-panel,.ns-account-card,.ns-add-account,.ns-contact-panel,.ns-cash-panel,.ns-integration-card,
+  .com-metric,.com-panel,.com-pipeline-panel,.com-client-card,.com-client-main,.com-client-sidebar,.com-client-content,.com-service-card,
+  .work-metric,.work-empty,.work-empty-state,.agenda-summary,.agenda-empty,.agenda-grid-empty,.agenda-v2-empty,
+  .project-card,.project-kanban-column,.project-detail-modal,.hours-panel,.approval-card,.drive-card,.pay-record,.pay-empty,
+  .attention-panel,.notification-panel,.quick-search-panel,.search-panel,.settings-panel,.integration-overview,
+  .first-run-setup,.first-run-step,.first-run-reopen,[role='dialog']
 ) {
   background-color: #fff !important;
   border-color: #e4e8e2 !important;
   color: #1b201b !important;
   box-shadow: 0 2px 9px #1720140a;
+}
+
+/* Nexo light workspace: cool slate canvas, crisp white surfaces and restrained lime. */
+html[data-theme='light'] {
+  color-scheme: light;
+  --nexo-bg: #f0f2f8;
+  --nexo-surface: #ffffff;
+  --nexo-surface-raised: #f7f9fc;
+  --nexo-border: #dfe5ef;
+  --nexo-text: #172033;
+  --nexo-muted: #748198;
+  --nexo-hover: #edf1f7;
+}
+html[data-theme='light'] body,
+html[data-theme='light'] .app-shell,
+html[data-theme='light'] .workspace,
+html[data-theme='light'] .page-content,
+html[data-theme='light'] .module-screen-shell,
+html[data-theme='light'] :is(.commercial-screen,.admin-screen,.work-screen,.ns-screen,.service-screen) {
+  background-color: #f0f2f8 !important;
+  color: #172033;
+  font-family: Inter, 'DM Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+html[data-theme='light'] .app-shell :is(.ns-metric-top,.ns-metric-note,.com-metric-copy,.hours-table-head,.com-panel-heading,.hours-table .work-empty-state) {
+  background: transparent !important;
+  box-shadow: none !important;
+}
+html[data-theme='light'] .app-shell :is(.ns-metric,.com-metric,.work-metric,.project-card,.hours-panel,.ns-panel,.ns-table-panel,.ns-ticket-stats article,.ns-integration-card,.drive-card,.pay-record,.pay-empty,.agenda-summary,.agenda-empty,.agenda-v2-empty,.attention-panel,.notification-panel,.settings-card,.settings-sidebar,.settings-main) {
+  border-color: #e0e5ee !important;
+  border-radius: 15px;
+  box-shadow: 0 5px 18px rgb(31 45 72 / 5%);
+}
+html[data-theme='light'] .app-shell :is(.work-button-primary,.com-primary,.ns-primary,.primary-button,.module-create-button,.admin-primary,.settings-save-button) {
+  background: #2863e8 !important;
+  border-color: #2863e8 !important;
+  color: #fff !important;
+  box-shadow: 0 5px 14px rgb(40 99 232 / 18%);
+}
+html[data-theme='light'] .app-shell :is(.work-button-primary,.com-primary,.ns-primary,.primary-button,.module-create-button,.admin-primary,.settings-save-button):hover:not(:disabled) {
+  background: #1d53ce !important;
+  border-color: #1d53ce !important;
+}
+html[data-theme='light'] .app-shell :is(.side-nav-link.active,.work-tabs button.active,.com-tabs button.active,.ns-filter-tabs button.selected) {
+  background: #eaf7c8 !important;
+  border-color: #eaf7c8 !important;
+  color: #26351c !important;
+}
+html[data-theme='light'] .app-shell :is(.work-tabs button.active,.com-tabs button.active) svg,
+html[data-theme='light'] .app-shell .side-nav-link.active svg { color: #4a8c35 !important; }
+html[data-theme='light'] .app-shell :is(button,input,select,textarea,a):focus-visible { outline-color: #80a9ff !important; }
+html[data-theme='light'] .app-shell :is(.work-empty-state,.ns-empty-history,.com-empty) {
+  background: #f8f9fc !important;
+  color: #718097 !important;
+  border-radius: 12px;
 }
 html[data-theme='light'] .app-shell :is(.attention-panel,.notification-panel,.quick-search-panel,.search-panel,.settings-panel,.settings-card,.settings-sidebar,.settings-main) {
   background-color: #fff !important;
@@ -1136,15 +1186,19 @@ html[data-theme='dark'] .side-nav-link.active:before { display: none; }
 html[data-theme='dark'] .nav-group-title { color: #8f998b !important; }
 
 html[data-theme='dark'] .app-shell :is(
-  [class*='-card'],[class*='-panel'],[class*='-surface'],[class*='-drawer'],[class*='-modal'],
-  [class*='-metric'],[class*='-empty'],[class*='-summary'],[class*='-toolbar'],[class*='-table'],
-  [class*='-column'],[class*='-popover'],[class*='-dropdown'],[class*='-menu'],[role='dialog']
+  .stat-card,.lead-card,.task-card,.alert-card,.settings-card,.ns-metric,.ns-panel,.ns-table-panel,
+  .ns-account-card,.ns-add-account,.ns-contact-panel,.ns-cash-panel,.ns-integration-card,.ns-ticket-stats article,
+  .com-metric,.com-panel,.com-pipeline-panel,.com-client-card,.com-client-main,.com-client-sidebar,.com-client-content,.com-service-card,
+  .work-metric,.work-empty,.work-empty-state,.agenda-summary,.agenda-empty,.agenda-grid-empty,.agenda-v2-empty,
+  .project-card,.project-kanban-column,.project-detail-modal,.hours-panel,.approval-card,.drive-card,.pay-record,.pay-empty,
+  .attention-panel,.notification-panel,.quick-search-panel,.search-panel,.settings-panel,.integration-overview,[role='dialog']
 ) {
   background-color: #131613 !important;
   border-color: #2a302a !important;
   color: #f1f3ef !important;
   box-shadow: 0 3px 14px #0005;
 }
+html[data-theme='dark'] .app-shell :is(.ns-metric-top,.ns-metric-note,.com-metric-copy,.hours-table-head,.com-panel-heading,.hours-table .work-empty-state) { background: transparent !important; box-shadow: none !important; }
 html[data-theme='dark'] .app-shell :is(h1,h2,h3,h4,p,label,small,strong,b,span,td,th,li,.eyebrow,.field-hint,.empty-state-copy) { color: #f1f3ef !important; }
 html[data-theme='dark'] .app-shell button span { color: inherit !important; }
 html[data-theme='dark'] .app-shell :is(p,small,.muted,.helper-text,.field-hint,.empty-state-copy,[class*='-muted'],[class*='-description'],[class*='-subtitle'],[class*='-hint']) { color: #a1a89f !important; }
@@ -1200,4 +1254,15 @@ html[data-theme='dark'] .app-shell .first-run-track { background: #242a22 !impor
 html[data-theme='dark'] .app-shell .first-run-track i { background: #b6ed66 !important; }
 html[data-theme='dark'] .app-shell .first-run-primary { background: #b6ed66 !important; color: #151b12 !important; }
 html[data-theme='dark'] .app-shell .first-run-step-number { background: #252e20 !important; color: #d2f39f !important; }
+
+/* Final theme tokens win over legacy per-screen button colors. */
+html[data-theme='light'] .app-shell :is(.work-button-primary,.com-primary,.ns-primary,.primary-button,.module-create-button,.admin-primary,.settings-save-button) { background:#2863e8!important;border-color:#2863e8!important;color:#fff!important;box-shadow:0 5px 14px rgb(40 99 232 / 18%); }
+html[data-theme='light'] .app-shell :is(.work-button-primary,.com-primary,.ns-primary,.primary-button,.module-create-button,.admin-primary,.settings-save-button):hover:not(:disabled) { background:#1d53ce!important;border-color:#1d53ce!important; }
+html[data-theme='light'] .app-shell :is(.ns-metric-top,.ns-metric-note,.com-metric-copy,.hours-table-head,.com-panel-heading,.hours-table .work-empty-state,.com-table-wrap) { background:transparent!important;box-shadow:none!important; }
+html[data-theme='light'] .app-shell .dashboard-data-error { display:flex;align-items:center;justify-content:space-between;gap:14px;margin:12px 0;padding:12px 14px;border:1px solid #f0d5d1;border-radius:12px;background:#fff5f3;color:#9c3c38;font-size:13px;line-height:1.5; }
+html[data-theme='light'] .app-shell .dashboard-data-error button { min-height:34px;padding:0 11px;border:1px solid #ebc3bd;border-radius:9px;background:#fff;color:#913d37;font:600 12px Inter,ui-sans-serif,system-ui,sans-serif;white-space:nowrap; }
+html[data-theme='light'] .app-shell .dashboard-data-error button:hover { background:#ffebe7;border-color:#e4a9a1; }
+html[data-theme='dark'] .app-shell .dashboard-data-error { display:flex;align-items:center;justify-content:space-between;gap:14px;margin:12px 0;padding:12px 14px;border:1px solid #654047;border-radius:12px;background:#2a1c21;color:#f1b0ae;font-size:13px;line-height:1.5; }
+html[data-theme='dark'] .app-shell .dashboard-data-error button { min-height:34px;padding:0 11px;border:1px solid #704950;border-radius:9px;background:#38252b;color:#ffd0cd;font:600 12px Inter,ui-sans-serif,system-ui,sans-serif;white-space:nowrap; }
+html[data-theme='dark'] .app-shell .dashboard-data-error button:hover { background:#482b32; }
 

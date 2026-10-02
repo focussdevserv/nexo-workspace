@@ -273,7 +273,7 @@
 .agenda-v2 .agenda-all-day-row>span{display:flex;align-items:center;padding-left:5px;color:#87938b;font-size:12px}
 .agenda-v2 .agenda-all-day-row>div{display:flex;align-items:center;gap:5px;min-width:0;padding:4px;border-left:1px solid #edf1ee}
 .agenda-v2 .agenda-grid-allday{max-width:100%;overflow:hidden;padding:5px 8px;border:0;border-radius:6px;background:#edf6ef;color:#34764b;font-size:12px;text-overflow:ellipsis;white-space:nowrap}
-.agenda-v2 .agenda-grid-empty{display:flex;align-items:center;gap:10px;margin:10px 0;padding:10px 12px;border:1px solid #e5eee7;border-radius:10px;background:linear-gradient(100deg,#f6faf7,#fff)}
+.agenda-v2 .agenda-grid-empty{box-sizing:border-box;display:flex;align-items:center;gap:10px;width:calc(100% - 58px);min-height:52px;margin:10px 0 10px 58px;padding:9px 12px;border:1px solid #e5eee7;border-radius:10px;background:linear-gradient(100deg,#f6faf7,#fff)}
 .agenda-v2 .agenda-grid-empty>span{display:grid;width:31px;height:31px;flex:none;place-items:center;border-radius:9px;background:#eaf5ed;color:#378052}
 .agenda-v2 .agenda-grid-empty>div{display:grid;gap:3px;min-width:0;flex:1}
 .agenda-v2 .agenda-grid-empty b{color:#31483a;font-size:12px}
@@ -296,7 +296,20 @@
 .agenda-v2 .agenda-grid-event>b{font-size:12px;line-height:1.35}
 .agenda-v2 .agenda-grid-event>span{overflow:hidden;max-width:100%;font-size:12px;text-overflow:ellipsis;white-space:nowrap}
 .agenda-v2 .agenda-time-grid.is-week .agenda-time-scroll{overflow-x:auto}
-@media(max-width:720px){.agenda-v2 .agenda-time-scroll{max-height:560px}.agenda-v2 .agenda-time-columns{grid-template-columns:repeat(7,minmax(120px,1fr))}.agenda-v2 .agenda-time-grid.is-day .agenda-time-columns{grid-template-columns:minmax(0,1fr)}.agenda-v2 .agenda-time-header,.agenda-v2 .agenda-all-day-row,.agenda-v2 .agenda-time-scroll{grid-template-columns:48px minmax(0,1fr)}.agenda-v2 .agenda-time-axis{padding-right:5px;font-size:12px}}
+@media(max-width:720px){.agenda-v2 .agenda-time-scroll{max-height:560px}.agenda-v2 .agenda-time-columns{grid-template-columns:repeat(7,minmax(120px,1fr))}.agenda-v2 .agenda-time-grid.is-day .agenda-time-columns{grid-template-columns:minmax(0,1fr)}.agenda-v2 .agenda-time-header,.agenda-v2 .agenda-all-day-row,.agenda-v2 .agenda-time-scroll{grid-template-columns:48px minmax(0,1fr)}.agenda-v2 .agenda-grid-empty{width:calc(100% - 48px);margin-left:48px}.agenda-v2 .agenda-time-axis{padding-right:5px;font-size:12px}}
+
+/* Hours page: keep the goal label legible inside its compact progress ring. */
+.hours-ring{width:68px;height:68px}
+.hours-ring:before{inset:7px}
+.hours-ring>div{gap:1px;white-space:nowrap}
+.hours-ring strong{font-size:14px;line-height:1.1}
+.hours-ring small{font-size:10px;line-height:1.15}
+.hours-total{min-width:0}
+.hours-table-head{display:grid;grid-template-columns:minmax(160px,1.6fr) minmax(100px,1fr) minmax(70px,.7fr) minmax(100px,1fr) minmax(140px,1.2fr) 54px;align-items:center;gap:12px;padding:0 12px;border-bottom:1px solid #e8ecf1;background:#f7f9fc;color:#748198;font-size:12px}
+.hours-table-head>span{min-width:0}
+.hours-table .work-empty-state{min-height:116px;display:grid;place-items:center;padding:20px;text-align:center;color:#748198;background:#fafbfd;font-size:13px}
+.hours-row{grid-template-columns:minmax(160px,1.6fr) minmax(100px,1fr) minmax(70px,.7fr) minmax(100px,1fr) minmax(140px,1.2fr) 54px;gap:12px}
+@media(max-width:760px){.hours-table-head{display:none}.hours-row{grid-template-columns:minmax(0,1fr) auto;grid-template-rows:auto auto;gap:7px;padding:10px 0}.hours-project{grid-column:1;grid-row:1}.hours-row>.task-owner{grid-column:2;grid-row:1}.hours-row>strong{grid-column:1;grid-row:2}.hours-bar{grid-column:2;grid-row:2;width:100px}.hours-last{display:none}}
 .agenda-v2 .agenda-time-grid.is-week{overflow-x:auto}
 .agenda-v2 .agenda-time-grid.is-week .agenda-time-header,.agenda-v2 .agenda-time-grid.is-week .agenda-all-day-row{grid-template-columns:58px repeat(7,minmax(96px,1fr));min-width:730px}
 .agenda-v2 .agenda-time-grid.is-week .agenda-time-scroll{min-width:730px;overflow-x:hidden}
