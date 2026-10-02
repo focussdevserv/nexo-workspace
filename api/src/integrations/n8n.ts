@@ -74,6 +74,19 @@ export const n8nAutomationTemplates = {
 
 export type N8nAutomationTemplateId = keyof typeof n8nAutomationTemplates;
 
+/** Map the UI's publish terminology to n8n's public API endpoint names. */
+export function n8nWorkflowActionEndpoint(action: 'publish' | 'unpublish') {
+  return action === 'publish' ? 'activate' : 'deactivate';
+}
+
+export function n8nWorkflowsEndpoint(cursor?: string) {
+  return `/workflows?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+}
+
+export function n8nProposalTaskMatchesSource(task: { automationKey?: unknown; sourceProposalId?: unknown }, proposalId: string) {
+  return task.automationKey === 'n8n:proposal' && String(task.sourceProposalId ?? '') === proposalId;
+}
+
 export function buildN8nAutomationWorkflow(input: {
   automationId: string;
   templateId: N8nAutomationTemplateId;

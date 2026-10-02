@@ -1,6 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isClientApprovalPending, portalApprovalRecord } from '../src/integrations/client-approvals.js';
+import { clientApprovalDecisionHasValidComment, clientPortalApprovalDecisionRecord, isClientApprovalPending, portalApprovalRecord } from '../src/integrations/client-approvals.js';
+
+test('client approval decision requires a meaningful comment for requested changes', () => {
+  assert.equal(clientApprovalDecisionHasValidComment('changes_requested', ''), false);
+  assert.equal(clientApprovalDecisionHasValidComment('changes_requested', '  ok '), false);
+  assert.equal(clientApprovalDecisionHasValidComment('changes_requested', ' Ajustar o título '), true);
+  assert.equal(clientApprovalDecisionHasValidComment('approved', ''), true);
+  assert.equal(clientApprovalDecisionHasValidComment('unknown', 'valid'), false);
+});
 
 test('public approval records only expose intended fields and shared Google Drive files', () => {
   const result = portalApprovalRecord('approval-1', {
@@ -27,4 +35,27 @@ test('approval status filter does not show completed states as pending', () => {
   assert.equal(isClientApprovalPending('Concluída'), false);
   assert.equal(isClientApprovalPending('Alterações solicitadas'), true);
   assert.equal(isClientApprovalPending('Aguardando'), true);
+  assert.equal(isClientApprovalPending('  Aguardando  '), true);
+  assert.equal(isClientApprovalPending('  Alterações solicitadas  '), true);
+  assert.equal(isClientApprovalPending('Retirada'), false);
+  assert.equal(isClientApprovalPending('Cancelada'), false);
+});
+
+test('portal decision preserves approval fields and stores the trimmed client comment', () => {
+  const original = { clientId: 'client-a', status: 'Aguardando', title: 'Layout', comments: [{ text: 'internal' }] };
+  const decided = clientPortalApprovalDecisionRecord(original, 'client-a', 'changes_requested', '  Ajustar o título  ', '2026-10-02T12:00:00.000Z');
+  assert.deepEqual(decided, {
+    ...original,
+    status: 'Alterações solicitadas',
+    clientComment: 'Ajustar o título',
+    decidedAt: '2026-10-02T12:00:00.000Z',
+  });
+});
+
+test('portal decision rejects a different or conflicting client and stale completed approval', () => {
+  const pending = { clientId: 'client-a', status: 'Aguardando' };
+  assert.equal(clientPortalApprovalDecisionRecord(pending, 'client-b', 'approved', '', 'now'), null);
+  assert.equal(clientPortalApprovalDecisionRecord({ ...pending, workspaceClientId: 'client-b' }, 'client-a', 'approved', '', 'now'), null);
+  assert.equal(clientPortalApprovalDecisionRecord({ ...pending, status: 'Aprovada' }, 'client-a', 'approved', '', 'now'), null);
+  assert.equal(clientPortalApprovalDecisionRecord(pending, 'client-a', 'changes_requested', 'ok', 'now'), null);
 });

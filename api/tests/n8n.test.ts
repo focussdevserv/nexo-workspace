@@ -1,6 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildN8nAutomationWorkflow, mapN8nCollections, n8nApiKeyFailureMessage, n8nApiValidationMessage, n8nAutomationTemplates } from '../src/integrations/n8n.ts';
+import { buildN8nAutomationWorkflow, mapN8nCollections, n8nApiKeyFailureMessage, n8nApiValidationMessage, n8nAutomationTemplates, n8nProposalTaskMatchesSource, n8nWorkflowActionEndpoint, n8nWorkflowsEndpoint } from '../src/integrations/n8n.ts';
+
+test('maps automation publish actions to n8n public API endpoints', () => {
+  assert.equal(n8nWorkflowActionEndpoint('publish'), 'activate');
+  assert.equal(n8nWorkflowActionEndpoint('unpublish'), 'deactivate');
+});
+
+test('builds n8n workflow pagination URLs with opaque cursors safely encoded', () => {
+  assert.equal(n8nWorkflowsEndpoint(), '/workflows?limit=100');
+  assert.equal(n8nWorkflowsEndpoint('next/+ cursor'), '/workflows?limit=100&cursor=next%2F%2B%20cursor');
+});
 
 test('distinguishes an invalid n8n API key from missing workflow scopes', () => {
   assert.match(n8nApiKeyFailureMessage(401), /chave.*ativa/i);
@@ -38,6 +48,13 @@ test('handles empty or malformed n8n list entries', () => {
   assert.deepEqual(mapN8nCollections([{}, 'invalid'], [null, {}]), { workflows: [], executions: [] });
 });
 
+test('proposal checklist tasks do not suppress the distinct n8n follow-up action', () => {
+  const proposalId = 'proposal-123';
+  assert.equal(n8nProposalTaskMatchesSource({ sourceProposalId: proposalId, title: 'Preparar homepage' }, proposalId), false);
+  assert.equal(n8nProposalTaskMatchesSource({ automationKey: 'n8n:proposal', sourceProposalId: proposalId }, proposalId), true);
+  assert.equal(n8nProposalTaskMatchesSource({ automationKey: 'n8n:proposal', sourceProposalId: 'other-proposal' }, proposalId), false);
+});
+
 test('creates authenticated webhook workflows without retaining execution data', () => {
   const workflow = buildN8nAutomationWorkflow({
     automationId: '9b68be20-4709-45f5-9b29-668b21e7fd12', templateId: 'new-lead-follow-up',
@@ -50,6 +67,7 @@ test('creates authenticated webhook workflows without retaining execution data',
   assert.equal(workflow.nodes[0]?.credentials.httpHeaderAuth.id, 'nexo-bridge-v1');
   assert.equal(workflow.nodes[1]?.parameters.url, 'https://focussdev.space/api/integrations/n8n/actions');
   assert.equal(workflow.nodes[1]?.credentials.httpHeaderAuth.id, 'nexo-bridge-v1');
+  assert.notEqual(workflow.active, true, 'new workflows must remain drafts until explicitly published');
   assert.equal(workflow.settings.saveDataSuccessExecution, 'none');
   assert.equal(workflow.settings.saveDataErrorExecution, 'none');
   assert.equal(workflow.settings.saveManualExecutions, false);

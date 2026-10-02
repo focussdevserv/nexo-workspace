@@ -25,6 +25,30 @@ export function portalApprovalRecord(id: string, data: ClientApprovalData) {
 }
 
 export function isClientApprovalPending(status: unknown) {
-  const normalized = String(status ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-  return !['aprovada', 'aprovado', 'concluida', 'concluido'].includes(normalized);
+  const normalized = String(status ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+  return ['aguardando', 'alteracoes solicitadas', 'ajustes solicitados'].includes(normalized);
+}
+
+export function clientApprovalDecisionHasValidComment(decision: unknown, comment: unknown) {
+  if (decision !== 'changes_requested') return decision === 'approved';
+  return typeof comment === 'string' && comment.trim().length >= 3;
+}
+
+export function clientPortalApprovalDecisionRecord(
+  data: ClientApprovalData,
+  clientId: string,
+  decision: 'approved' | 'changes_requested',
+  comment: string | undefined,
+  decidedAt: string,
+) {
+  const references = [data.clientId, data.workspaceClientId, data.clientRecordId]
+    .filter((value): value is string => typeof value === 'string' && value.length > 0);
+  if (!references.length || references.some((value) => value !== clientId) || !isClientApprovalPending(data.status)) return null;
+  if (!clientApprovalDecisionHasValidComment(decision, comment)) return null;
+  return {
+    ...data,
+    status: decision === 'approved' ? 'Aprovada' : 'Alterações solicitadas',
+    clientComment: comment?.trim() ?? '',
+    decidedAt,
+  };
 }

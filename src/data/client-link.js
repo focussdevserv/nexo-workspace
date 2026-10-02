@@ -1,11 +1,10 @@
 export function belongsToClient(record, client, legacyValue) {
   if (!record || !client) return false;
-  if (record.workspaceClientId != null && String(record.workspaceClientId).trim()) {
-    return String(record.workspaceClientId) === String(client.id);
-  }
-  if (record.clientId != null && String(record.clientId).trim()) {
-    return String(record.clientId) === String(client.id);
-  }
+  const workspaceClientId = record.workspaceClientId != null ? String(record.workspaceClientId).trim() : '';
+  if (workspaceClientId) return workspaceClientId === String(client.id);
+  const linkedClientIds = [record.clientId, record.clientRecordId]
+    .filter((value) => value != null && String(value).trim());
+  if (linkedClientIds.length) return linkedClientIds.every((id) => String(id) === String(client.id));
   const normalize = (value) => String(value || '')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')

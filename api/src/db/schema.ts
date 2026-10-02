@@ -18,9 +18,19 @@ export const users = pgTable('users', {
   permissions: jsonb('permissions').$type<WorkspacePermissions | null>().default(null),
   active: boolean('active').default(true).notNull(),
   inviteVersion: integer('invite_version').default(0).notNull(),
+  sessionVersion: integer('session_version').default(0).notNull(),
   notificationsReadAt: timestamp('notifications_read_at', { withTimezone: true }).defaultNow().notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [uniqueIndex('users_email_unique').on(table.email), index('users_organization_idx').on(table.organizationId)]);
+
+export const passwordResetTokens = pgTable('password_reset_tokens', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  tokenHash: text('token_hash').notNull().unique(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  usedAt: timestamp('used_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [index('password_reset_tokens_user_idx').on(table.userId), index('password_reset_tokens_expiry_idx').on(table.expiresAt)]);
 
 export const clients = pgTable('clients', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -66,6 +76,7 @@ export const billingOrders = pgTable('billing_orders', {
   statusDetail: text('status_detail'),
   mpOrderId: text('mp_order_id'),
   mpPaymentId: text('mp_payment_id'),
+  mercadoPagoAccountId: text('mercado_pago_account_id'),
   paymentDetails: jsonb('payment_details').$type<Record<string, unknown>>().default({}).notNull(),
   dueAt: timestamp('due_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
@@ -127,6 +138,7 @@ export const billingSubscriptions = pgTable('billing_subscriptions', {
   frequencyInterval: numeric('frequency_interval', { precision: 6, scale: 0, mode: 'number' }).notNull(),
   status: text('status').default('pending').notNull(),
   mpSubscriptionId: text('mp_subscription_id'),
+  mercadoPagoAccountId: text('mercado_pago_account_id'),
   checkoutUrl: text('checkout_url'),
   nextPaymentAt: timestamp('next_payment_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),

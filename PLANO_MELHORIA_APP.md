@@ -964,3 +964,221 @@ As migracoes 0000-0007 foram aplicadas em PostgreSQL temporario isolado. Login o
 - Auditoria visual confirmou textos compactos entre 9 e 12 px em várias telas. Adicionei tamanho mínimo de 13 px a parágrafos, rótulos, botões, textos auxiliares, células de tabela e campos dentro da área principal; títulos e números de destaque preservam sua escala.
 - No navegador autenticado, a tela Meu Dia mostrou controles e textos em 13 px. Em 390 px, a largura do documento foi 375 px, sem overflow horizontal. Lint e build passaram.
 
+## Revalidacao e correcoes de uso - 2026-10-02
+
+- Meu Dia: `Criar novo` agora abre os formulários de Lead e Cobranca em vez de apenas navegar; a cobranca reinicia os filtros e valores de uma cobranca anterior.
+- Caixa de entrada: `Criar tarefa de retorno` abre um formulario com prazo (proximo dia util por padrao), responsavel opcional e vínculo com o cliente quando email/telefone identificam um unico registro. Estados normalizados permitem reabrir atendimentos resolvidos. Validado no navegador sem criar tarefa.
+- Receitas/Despesas: editar, dar baixa e excluir agora localizam o lancamento pelo ID estavel, nao pelo codigo exibido que pode se repetir.
+- Tarefas: conclusao recorrente persiste a ocorrencia concluida e a seguinte juntas; dependencias que criariam ciclos sao recusadas.
+- Integracoes/Operacoes: Mercado Pago permite a primeira autorizacao OAuth antes de haver token de vendedor; respostas antigas do QR do WhatsApp sao ignoradas; falhas da lista GitHub mostram recuperacao em vez de parecer lista vazia.
+- CRM: chaves estaveis nas listas da ficha do cliente; selecao de recorrencia semanal e intervalo personalizado preservados.
+- Relatorios: valores como `1,234` e `1.234` agora sao interpretados como milhares, enquanto `1,23` continua sendo valor decimal brasileiro; separadores mistos seguem usando o ultimo separador como decimal.
+- Horas: registros manuais que terminam depois da meia-noite agora sao vinculados ao dia seguinte; o formulario explica a regra e rejeita intervalos invalidos.
+- Smoke mobile (390 px): 29 botoes/rotas laterais avaliados sem overflow horizontal; Agenda exigiu aguardar o chunk lazy e depois renderizou sem erro. Modal de retorno mediu 350 px de largura, totalmente dentro da viewport, sem erro no console.
+- Segunda passada: propostas aprovadas ou ja convertidas em contrato/projeto nao podem ser apagadas, evitando deixar contratos, projetos e tarefas sem historico de origem.
+- Meu Dia: a lista "Agenda de hoje" mostra compromissos por horario, cliente e estado; selecionar um abre o mesmo evento para edicao na Agenda. Sem eventos, oferece criar um com contexto correto.
+- Financeiro: filtros de cobrancas vencidas, proximos 7 dias e sem vencimento agora reconhecem `dueDate` legado e tratam datas sem horario como fim do dia local; datas invalidas nao entram nos filtros.
+- Sites e Integracoes: validacao de repositorio GitHub impede cadastros que a API recusaria; respostas atrasadas nao substituem o QR da sessao WhatsApp nem o resultado de uma consulta anterior ao GitHub.
+- CRM: conversao de lead e bloqueada para revisao quando email e telefone apontam para clientes diferentes, evitando associar o historico ao cliente errado.
+- Equipe e Configuracoes: a mesma validacao de proprietario/repositorio do GitHub e aplicada nos controles administrativos. Multa, juros, lembretes e preferencias de pagamento ainda sao configuracoes armazenadas, nao automatizacoes financeiras.
+- Validacao integrada atual: 200 testes frontend e 163 testes API passaram; lint, builds frontend/API e `git diff --check` passaram. Restam apenas avisos de conversao LF/CRLF no diff-check. Smoke Playwright confirmou a Agenda diaria em temas claro/escuro, viewport 390 px sem overflow, abrir o evento correto para edicao e zero erros no console.
+- Deploy pendente: producao segue na revisao `07782ac8a246ab96805b5f9377d50b9f7df8d5a8`; o workspace local esta em `0d54b7b222f19f1758831ce046fb89e04a6c15bb`, igual ao `main` remoto, mas com alteracoes nao commitadas. Com autenticacao GitHub explicitamente isolada para `focussdevserv`, confirmei que o repositorio Actions nao tem secrets configurados. Sem `COOLIFY_WEBHOOK` e `COOLIFY_TOKEN`, o workflow para antes de implantar. Nenhum login global foi trocado. O plano continua aberto ate os secrets serem configurados de forma segura e o deploy ser validado.
+
+
+## Continuidade da auditoria por módulo - 2026-10-02
+
+- Automações: a escolha de ações agora acompanha o gatilho selecionado; edição preserva ações legadas sem oferecê-las em novos rascunhos incompatíveis. Cinco testes específicos passaram.
+- Portal do cliente: solicitar ajuste exige comentário significativo antes de habilitar o envio; validação também permanece no handler.
+- Acesso ao workspace: tokens únicos de convite e recuperação são removidos da barra/histórico assim que a tela os captura, sem remover outros parâmetros. Recuperação por e-mail ainda requer `RESEND_API_KEY` e `RESEND_FROM_EMAIL`; a sessão da API continua com TTL de 8 horas.
+- Metas: mantidas metas manuais existentes e adicionada seleção de indicadores conectados a receita recebida, negócios ganhos, projetos entregues e horas registradas. Período semanal/mensal respeita fuso e início de semana do workspace. Falhas e falta de permissão não são exibidas como zero; demonstração local validada visualmente sem salvar novos dados.
+- Validação desta rodada: 210 testes frontend + 4 testes novos de métricas executados (todos passaram), 163 testes API, lint, build frontend, build API e diff-check passaram. A tela Metas e o formulário do novo indicador foram conferidos no navegador local.
+- Deploy: checagem no GitHub confirmou ausência dos secrets Actions `COOLIFY_WEBHOOK` e `COOLIFY_TOKEN`; a execução mais recente falhou ao aguardar publicação. Produção continua saudável na revisão `07782ac8a246ab96805b5f9377d50b9f7df8d5a8`, anterior ao worktree atual. Código local ainda contém alterações não commitadas; não houve publicação.
+- O plano global continua aberto; a próxima etapa é seguir módulo a módulo, executar validação funcional em cada fluxo e só encerrar após revisar o escopo completo e publicar com deploy confirmado.
+
+## Auditoria funcional por frentes - 2026-10-02 (continuação)
+
+- Financeiro: o indicador A receber agora exclui cobranças pagas, canceladas e estornadas, incluindo estados do Mercado Pago e equivalentes localizados.
+- Horas: filtros e períodos exportados respeitam o início semanal escolhido nas preferências do workspace, inclusive semanas iniciadas no domingo.
+- CRM/ficha do cliente: a aba Histórico reúne notas, eventos, finanças, projetos, tarefas, tickets, aprovações, contratos e arquivos, em ordem cronológica; registros sem data confiável não são inventados.
+- Sites/Monitoramento: cadastro separa nome de exibição e URL/domínio real; edição de ativos antigos preserva o endereço monitorado.
+- Relatórios: falha de uma fonte só bloqueia CSV da aba que efetivamente depende dela; as outras abas continuam exportáveis.
+- Sessão do workspace: login principal oferece "Manter conectado por 30 dias" (marcado por padrão); sem marcar, a sessão dura até 8 horas. Cookie continua HttpOnly/SameSite=Strict/Secure em produção. Sessões persistentes renovam a validade após autenticação quando restam 15 dias; convite e redefinição de senha também iniciam sessão persistente. Logout limpa o cookie; redefinição invalida sessões anteriores via sessionVersion.
+- Validação integrada depois destas mudanças: 219 testes frontend e 166 API passaram; lint, build Vite, TypeScript da API e diff-check passaram.
+- Deploy continua sem publicação: secrets Coolify do GitHub não estão configurados e a produção responde saudável na revisão antiga `07782ac8a246ab96805b5f9377d50b9f7df8d5a8`. O app permanece em auditoria; ainda há frentes do menu sem revisão funcional completa.
+
+## Auditoria funcional por módulo - 2026-10-02 (continuação)
+
+- Meu Dia: os cards de indicadores agora são botões acessíveis por teclado e abrem as áreas correspondentes; “Atrasadas” encaminha para Cobranças com o filtro de vencidas preservado.
+- CRM/ficha do cliente: editar dados de uma receita ou despesa pendente não registra mais uma baixa implícita; a data/status de recebimento ou pagamento só é gravada quando o usuário escolhe explicitamente o estado liquidado.
+- Caixa de entrada: marcar uma conversa do WhatsApp como lida agora persiste no workspace e não reaparece como não lida na sincronização seguinte.
+- Aprovações: decisões pendentes, ações e contagens reconhecem diferenças de caixa, acentuação e espaços nos status.
+- Configurações: página inicial pode ser definida para qualquer módulo navegável e é preservada na importação de preferências; o texto de Segurança descreve corretamente os prazos de 30 dias com “Manter conectado” e 8 horas sem essa opção.
+- Navegação: retorno do histórico para rota não permitida/desconhecida respeita a guarda de alterações não salvas antes de voltar ao Meu Dia.
+- Validação integrada desta rodada: 229 testes frontend e 166 testes API passaram; ESLint, build do frontend, compilação TypeScript da API e `git diff --check` passaram. Restam apenas avisos Git de conversão LF/CRLF.
+- Deploy continua pendente: os secrets `COOLIFY_WEBHOOK` e `COOLIFY_TOKEN` não estão configurados no GitHub Actions e a revisão de produção ainda é anterior às alterações locais. O plano segue aberto para revisar as áreas restantes e publicar quando a integração de deploy estiver configurada.
+
+## Auditoria funcional por módulo - 2026-10-02 (nova rodada)
+
+- Financeiro/ficha do cliente: se o Mercado Pago não retornar `expiration_date`, o servidor agora persiste como vencimento o fim do dia selecionado em São Paulo; a ficha formata vencimentos no mesmo fuso, sem avançar a data.
+- Equipe e acesso: e-mails de contas legadas são normalizados na renovação de convite, login e recuperação de senha, evitando que diferença de maiúsculas impeça o acesso.
+- Integrações: Google exibe recuperação OAuth/reautorização mesmo depois de falha ou escopos incompletos; a ação respeita estados pausados e indisponíveis.
+- Arquivos: renomear um arquivo vinculado agora atualiza o arquivo no Google Drive e só então sincroniza o workspace. A API confere vínculo, permissão, ID e limite de requisições; a ficha explica que cliente/projeto são metadados do workspace.
+- Texto/interface: corrigi sequências de UTF-8 interpretadas como Windows-1252 em Meu Dia, Comercial, Trabalho e uma mensagem de validação da API; a varredura reversível de `src` e `api` não encontrou ocorrências restantes.
+- Validação integrada: 232 testes frontend e 169 API passaram; ESLint e builds Vite/TypeScript passaram. `git diff --check` não reportou erros de whitespace; Git continua avisando conversão LF/CRLF em arquivos do worktree.
+- Deploy/autodeploy: consultei o repositório usando a credencial já guardada para `focussdevserv`, sem trocar a conta global. A lista de secrets Actions está vazia. A execução `36971438556` falhou porque `COOLIFY_WEBHOOK` e `COOLIFY_TOKEN` chegaram vazios ao workflow e a revisão de produção não mudou; o domínio/API seguem saudáveis na revisão `07782ac8a246ab96805b5f9377d50b9f7df8d5a8`. Não publiquei código local.
+- O plano continua aberto para os módulos restantes e para concluir o deploy quando as credenciais de automação forem configuradas de forma segura.
+
+## Validação transversal e correções por módulo - 2026-10-02 (continuação)
+
+- Agenda: ao receber um link para evento excluído/inexistente, a navegação agora consome o contexto depois de carregar os registros, evitando selecionar acidentalmente algo em uma navegação futura. Adicionado helper puro com 3 testes.
+- Assinaturas: o formulário de recorrência já permitia cobrança única/recorrente, cadência semanal ou mensal e data inicial; agora também aceita data final opcional. Datas são serializadas como calendário local de São Paulo e a API já valida que o fim seja posterior ao início.
+- Acessibilidade e interface: adicionei link para pular direto ao conteúdo principal e dimensões intrínsecas aos QR/logos que não tinham tamanho declarado, reduzindo saltos de layout.
+- Playwright local em modo de demonstração: percorri as 29 opções do menu em desktop e 390 px; todas renderizaram título/conteúdo, sem overflow horizontal de página. Os cartões do Meu Dia e o CRM abriram fluxos contextuais; o formulário de tarefa abriu sem salvar dados. Em 1440 px, os controles permanecem dentro da viewport; a faixa do pipeline CRM é intencionalmente rolável na horizontal.
+- Acessibilidade: conferi os controles das 29 telas em busca de botões sem texto, título ou nome acessível; nenhum encontrado. Console do navegador sem erros ou avisos durante a navegação.
+- Validação integrada atual: 245 testes frontend e 169 testes API passaram; ESLint, build Vite, compilação TypeScript e `git diff --check` passaram. O diff-check mostra apenas avisos de conversão LF/CRLF no Windows.
+- Estado do deploy permanece pendente: o workflow Coolify não tem `COOLIFY_WEBHOOK` nem `COOLIFY_TOKEN`; produção continua na revisão `07782ac8a246ab96805b5f9377d50b9f7df8d5a8`. O plano global segue aberto para continuar revisão funcional dos módulos e fazer deploy só após resolver a configuração externa com segurança.
+- Sites/Monitoramento: no modo de demonstração, verificar um ativo e abrir seu histórico agora usam handlers locais persistentes; o resultado informa claramente que é simulado e não consulta a internet. Checagem real continua no backend.
+- Validação após esta correção: 248 testes frontend e 169 API passaram; lint, builds frontend/API e diff-check passaram.
+
+## Auditoria de fluxos acionáveis - 2026-10-02 (continuação)
+
+- CRM/ficha: a associação reconhece `clientRecordId`; conflitos explícitos de ID não recorrem a nomes homônimos. A precedência de `workspaceClientId` sobre IDs legados foi mantida após um teste integrado da API apontar conflito; front e API passaram juntos.
+- Tickets: status em caixa/acentuação e aliases legados são normalizados; status desconhecidos continuam visíveis na edição, e salvar sem mudança não cria atividade de histórico falsa.
+- Arquivos: MIME/extensão vencem categoria visual antiga conflitante; DOCX/Google Docs entram no filtro Documentos, SVG segue imagem e ZIP permanece arquivo. Dados de exemplo agora correspondem às extensões. Playwright confirmou o filtro e excluiu ZIP dos resultados de Documentos.
+- Relatórios: gráfico de receita não é escondido quando falha uma fonte alheia aos dados do gráfico. Playwright percorreu quatro abas e confirmou exportação CSV `relatorio-month-financeiro.csv`.
+- Monitoramento e Meu Dia: a checagem local simulada foi exercitada e seu histórico apareceu com marca de simulação; textos visíveis sem acentuação em Monitoramento e Meu Dia foram corrigidos.
+- Execução de tarefa: em demonstração local, tarefa semanal vinculada ao cliente/projeto foi criada e localizada na lista; depois foi excluída e conferi que o registro não permaneceu. Metas: formulário aberto e cancelado sem salvar.
+- Validação integral após as alterações: 253 testes frontend e 169 API passaram; ESLint, build Vite, compilação TypeScript e `git diff --check` passaram. A produção continua sem publicação enquanto os secrets de Coolify do GitHub Actions não forem configurados.
+- Revisão final da relação de cliente: o teste integrado da API mostrou que `workspaceClientId` precisa prevalecer sobre `clientId` legado quando coexistem. Ajustei a ordem sem permitir fallback por nome em conflito; os testes frontend/API correspondentes passaram em conjunto.
+- Smoke Playwright final: as 29 rotas do menu renderizaram título e conteúdo em 1440 px e 390 px, sem overflow; navegação, filtros de arquivos, abas e exportação de Relatórios foram exercitados. Console: zero erros e zero warnings; os testes de gravação foram feitos somente no modo local e limpos antes de encerrar.
+
+## Auditoria funcional por módulo - 2026-10-02 (continuação)
+
+- Assinaturas: a API agora aceita as datas ISO com fuso de São Paulo que o formulário envia; formatos inválidos continuam rejeitados.
+- Agenda/Calendar: editar participantes valida os endereços antes de salvar; e-mails inválidos deixam de ser descartados silenciosamente durante a sincronização.
+- CRM/ficha do cliente: editar receita/despesa já paga preserva a data histórica da baixa e só registra timestamp ao liquidar uma pendência explicitamente.
+- Privacidade e identidade do produto: a política não diz mais que Gmail/Drive talvez não existam; explica que dependem de autorização e que o Drive acessa somente arquivos autorizados. Exportações comerciais levam o nome Focusshub.
+- Validação transversal desta rodada: 255 testes frontend e 170 API passaram; ESLint, build Vite, compilação TypeScript da API e `git diff --check` passaram. Permanecem avisos esperados de conversão LF/CRLF do Git no Windows.
+- Nenhum deploy foi feito. A automação Coolify do GitHub Actions segue sem `COOLIFY_WEBHOOK` e `COOLIFY_TOKEN`; produção continua sem receber as alterações locais.
+- Metas/Relatórios: metas de horas recorrem a segundos/duração quando os campos de horas e minutos estão vazios; zero explícito continua valendo como zero.
+- Portal/Aprovações: status com espaços externos agora são normalizados igual na tela e na atualização atômica da API, evitando botão habilitado seguido de erro 409.
+- Validação após estas correções: 256 testes frontend e 171 API passaram; ESLint, builds Vite/TypeScript e `git diff --check` passaram.
+- Login/recuperação: revalidei captura e limpeza dos tokens de convite/reset, recuperação do e-mail e autenticação após redefinição; 5 testes focados e ESLint passaram, sem falha reproduzível nesta revisão.
+- Sites/Monitoramento: falha agendada de DNS/URL agora atualiza o ativo para offline, registra o horário da tentativa e limpa medições/SSL antigos, sem apagar seus demais metadados. 4 testes focados e build da API passaram.
+- Clicksign/n8n: revisei notificações de assinatura, envelopes, webhooks, criação/ativação de workflows e idempotência; não encontrei falha reproduzível nova e não alterei arquivos nesta frente.
+
+## Continuação da conclusão funcional e visual - 2026-10-02
+
+- Login, convite e recuperação: layout responsivo com painel de identidade Focusshub no desktop e formulário compacto com marca no mobile. Paleta preta/lima/branca, sem o brilho radial anterior; tema claro/escuro conferido em screenshots locais.
+- CRM/pipeline: editor de oportunidade aguarda confirmação da persistência e mantém o rascunho aberto quando o salvamento falha; evita envios simultâneos.
+- Financeiro: formulário originado pela ficha aguarda a resolução do cliente selecionado e não salva vínculo nulo enquanto a lista carrega ou se o ID for inválido.
+- Arquivos/Drive: ficha relaciona cliente e projeto com registros reais, salva IDs e bloqueia projeto pertencente a outro cliente; registros legados por nome continuam reconhecidos.
+- Inspeção Playwright do login: 1440 px e 390 px, claro/escuro; sem overflow horizontal. Uma falha de console é a resposta ausente da API no ambiente local, pois somente o servidor Vite foi iniciado para a inspeção visual.
+- Validação integral: 264 testes frontend e 171 API passaram; ESLint, builds Vite e TypeScript da API e `git diff --check` passaram.
+- Deploy permanece pendente. O repositório ainda tem alterações locais não publicadas e não possui segredo Coolify configurado localmente nem no GitHub Actions; produção continua na revisão anterior registrada acima.
+
+## Revisão cruzada por agentes - 2026-10-02
+
+- Meu Dia: a aba “Todas” passa a incluir tarefas concluídas mesmo com a preferência global de ocultá-las; essa preferência não substitui o filtro escolhido na página. Testes de regressão e ESLint passaram.
+- Financeiro/ledger: saldo inicial de contas agora é validado na API em centavos, aceitando zero e valores negativos válidos e rejeitando precisão excessiva ou overflow que fariam movimentos futuros falhar.
+- Tickets: no instante exato do vencimento, o ticket já é contado como vencido e recebe o estado “Vencido agora”. Testes cobrem estado, rótulo e contador.
+- Sites e domínios: editar ativo legado sem URL não transforma o nome de exibição em endereço monitorado; domínio sem esquema é normalizado para HTTPS e URLs incompatíveis com o monitor são bloqueadas.
+- Validação integrada depois desta rodada: 269 testes frontend e 172 API passaram; ESLint, build Vite, compilação TypeScript da API e `git diff --check` passaram. Permanecem somente avisos de conversão LF/CRLF do Git no Windows.
+- Nenhum commit ou deploy foi feito. O bloqueio de publicação permanece: secrets `COOLIFY_WEBHOOK` e `COOLIFY_TOKEN` ausentes no GitHub Actions e no ambiente local; produção ainda está na revisão anterior registrada neste plano.
+- Equipe/Atendimento: membros com permissão de suporte agora podem ler, marcar como lida e enviar mensagens pela caixa Hostinger conectada. Configuração e remoção da integração ficaram restritas à pessoa proprietária; testes também cobrem o bloqueio para administradores.
+- Revalidação da API após este ajuste: 173 testes passaram, build TypeScript da API passou e `git diff --check` passou (avisos LF/CRLF esperados do Windows).
+- Portal do cliente: a validação de comentário para pedidos de ajuste agora também é aplicada na API pública, não apenas na tela; envios diretos sem pelo menos 3 caracteres são recusados. Teste focal 4/4.
+- Suíte completa após a correção: 269 testes frontend e 174 API passaram; ESLint, builds Vite/TypeScript e `git diff --check` passaram. Segue sem deploy por falta de credenciais Coolify nos secrets do repositório.
+- CRM/ficha do cliente: datas de lançamento em formato civil `YYYY-MM-DD` não são mais convertidas para o dia anterior ao montar o histórico no fuso `America/Sao_Paulo`; timestamps completos mantêm data e hora. 17 testes focados, ESLint e diff-check passaram.
+- Cobranças/Assinaturas: vencimentos e próximas cobranças agora são exibidos no fuso `America/Sao_Paulo`, em vez do fuso do navegador, evitando avanço de um dia em dispositivos em fusos adiantados. 10 testes focados passaram.
+- Validação integrada depois dessas correções: 273 testes frontend, 174 testes API, ESLint, builds Vite/TypeScript e `git diff --check` passaram; deploy continua pendente pelos 0 secrets de Actions e ausência de credenciais Coolify locais.
+- Revisão de serviços do repositório: deploy usa Docker Compose/Coolify via GitHub Actions e dependências npm; não há configuração de Vercel, Wrangler/Cloudflare, Supabase ou Railway. `git pull`/`push` usam a SSH deploy key isolada do repositório e foram verificados.
+- Permissões Google Drive: membros com `support.read` podem listar os arquivos; editar metadados exige `support.read` e `support.write`; overrides continuam aplicados e ações de OAuth/compartilhamento permanecem restritas. 12 testes de autorização passaram.
+- UI guidelines: `lang="pt-BR"`, link para conteúdo principal, imagens com dimensões e texto alternativo, suporte a movimento reduzido, `color-scheme` por tema e foco visível; nenhuma regra `transition: all` ou `outline: none` sem substituição foi encontrada. Em mobile (390 px do Playwright / 375 px úteis), Integrações renderizou sem overflow e CTAs ocuparam a largura do cartão.
+- Tema mobile: a meta `theme-color` acompanha os fundos reais (#f5f6f2 claro, #111412 escuro); Playwright confirmou a troca do meta e do color-scheme em cada alternância.
+- Validação completa mais recente: 273 testes frontend e 175 API passaram; ESLint, build Vite, build TypeScript da API e `git diff --check` passaram. Playwright em Integrações: console 0 erros e 0 warnings.
+- Autenticação de deploy revalidada sem mudar conta global: `git ls-remote origin HEAD` e `git push --dry-run origin HEAD:refs/heads/main` funcionam com `core.sshCommand` local e a chave `id_ed25519_nexo_workspace`; SSH confirmou a deploy key de `focussdevserv/nexo-workspace`. A leitura feita com a conta GitHub isolada `focussdevserv` confirmou 0 secrets de Actions. Não há variáveis Coolify de processo/usuário/máquina, arquivo `.env` local ou janela Coolify aberta; resta configurar credenciais de deploy antes de publicar.
+
+- Retificação da validação integrada mais recente: foram **273 testes frontend e 175 testes API** (não 174); lint, build do frontend, build TypeScript da API e diff-check passaram. Auditoria segue em execução por módulos, sem deploy por ausência dos secrets Coolify no GitHub Actions.
+
+- Agenda: corrigida a apresentação de compromissos editados para dia inteiro; a grade agora respeita o indicador allDay, mesmo com horários antigos no registro. Testes focados 6/6 e lint passaram.
+- Mensagens do Financeiro: removida codificação corrompida (máximo) nas respostas de validação de saldo da API.
+- Revisão adicional de recorrência financeira: não foi encontrada falha reproduzível; cálculo mensal preserva o dia âncora e valida datas/limites.
+
+- Tickets: as ações de linha agora localizam o chamado pelo ID do registro, evitando falha ou seleção errada quando códigos se repetem; fallback mantém compatibilidade com dados antigos. 11 testes focados passaram.
+- Arquivos/Drive: documentos nativos sem tamanho informado deixam de aparecer como 0 MB; tamanho explicitamente igual a zero continua válido. 2 testes focados passaram.
+
+- Validação integrada após correções de Agenda, Tickets e Drive: 280 testes frontend e 175 testes API passaram; ESLint, build Vite, build TypeScript da API e diff-check passaram. Deploy segue pendente por falta das credenciais Coolify no GitHub Actions.
+
+- CRM/ficha de contato: remoção agora funciona também para contatos legados sem ID; registros com ID seguem usando correspondência exata. Contatos não encontrados continuam sendo recusados. 23 testes focados do CRM passaram.
+
+- Smoke visual local do CRM mobile em 375 px: sem overflow horizontal da página (375/375 px), console 0 erros/0 avisos; navegação testada com dados fictícios locais.
+
+- CRM/Contratos: o salvamento agora persiste o texto editado; depois de enviado a Clicksign, o documento fica bloqueado para edicao. 7 testes focados passaram.
+
+- WhatsApp/Atendimento: botoes de vinculo, QR e controle de sessao agora ficam apenas para owner, conforme as regras da API; admins continuam vendo sessao e atendendo conversas conectadas sem receber 403 em loop. Teste focado 1/1 passou.
+- Metas: negocios ganhos agora contam pela data de conversao/fechamento, depois atualizacao e, para registros legados, criacao. Regressoes focadas cobrem conversoes recentes e antigas; 25 testes de metas/relatorios/navegacao passaram.
+
+- Validacao mais recente incluindo todas as correcoes desta rodada: 286 testes frontend e 175 testes API passaram; ESLint, build Vite, build TypeScript da API e git diff --check passaram.
+
+- Cobranças/Assinaturas: o campo de data final agora impede selecionar o mesmo dia de início, evitando o erro no envio; o limite mínimo segue corretamente para o próximo dia mesmo na virada do mês/ano. Testes focados 4/4 passaram.
+
+- Meu Dia: o indicador de projetos ativos agora conta estados ativos reconhecidos e ignora projetos aguardando cliente, a fazer, arquivados ou com status desconhecido; aliases legados normalizados continuam válidos. 10 testes da dashboard passaram.
+
+- Validacao integrada da rodada ate Cobranças/Assinaturas e Meu Dia: 289 testes frontend e 175 testes API passaram; ESLint, build Vite, build TypeScript da API e diff-check passaram.
+
+- Caixa de entrada: busca agora encontra conversas por e-mail e telefone; telefones são comparados também sem pontuação e exigem ao menos quatro dígitos. Testes focados 4/4 passaram.
+
+- Projetos: tarefas legadas sem projectId deixam de ser duplicadas entre projetos homonimos; nome so vincula quando a correspondencia e unica ou o cliente resolve a ambiguidade. 7 testes focados passaram.
+
+- Horas: o editor usa a duracao em segundos gravada, em vez de arredondar horas e alterar o tempo ao salvar sem mudanca. Entradas curtas e timestamps continuam consistentes. 13 testes focados passaram.
+
+- Validacao integrada mais recente, incluindo Caixa de entrada, Projetos e Horas: 295 testes frontend e 175 testes API passaram; ESLint, Vite, build TypeScript da API e git diff --check passaram.
+
+- Tarefas: dependencias agora reconhecem a tarefa anterior como concluida se qualquer campo de estado valido (status ou state) registrar conclusao; corrige registros legados inconsistentes. Testes focados 14/14 passaram.
+
+- Configuracoes: importar preferencias agora pede confirmacao se havia edicoes nao salvas; cancelar mantem o estado, e o seletor de arquivo e liberado para tentar outro arquivo. Testes focados 5/5 passaram.
+
+- Aprovações/Portal: a decisao agora bloqueia e relê a aprovação dentro da transação, revalidando status e cliente antes de gravar. Evita corrida que sobrescrevia metadados recentes ou aceitava vínculo alterado; API: 177 testes passaram.
+
+- Catálogo de Serviços: parser de preços agora trata corretamente separadores brasileiros de milhar/centavos; um serviço de R$ 2.500,00 passa a preencher contratos e cálculos de média/margem sem virar NaN. 9 testes focados passaram.
+
+- Notificacoes: clicar em avisos de tarefas, eventos e clientes agora abre o registro correspondente, nao apenas a tela do modulo; inclui alerta do browser e tipo legado client. Testes focados 5/5 passaram.
+
+- Conta/Equipe: suspensao e reemissao de convite invalidam cookies antigos; aceitar convite assina sessao com a versao persistida, inclusive apos revogacoes legadas. Regressao especifica; API 178/178 e build passaram.
+
+- Validacao integrada apos Catalogo, Notificacoes, Configuracoes, Aprovações e revogacao de sessao: 301 testes frontend e 178 testes API passaram; lint, build Vite, TypeScript API e diff-check passaram.
+
+- Sites/Monitoramento: checagens manuais agora mantem estado ocupado independente por ativo; concluir a consulta de um nao reabilita prematuramente outro nem permite duplicar chamada. 6 testes focados passaram.
+
+- Leads/Conversao: converter lead ganho que ja corresponde a cliente existente agora vincula o servico vendido sem apagar servicos anteriores ou duplicar itens; normaliza nome/IDs e mantem idempotencia. Testes focados 8/8 e build API passaram.
+
+- Financeiro/Contas: excluir movimentacao avulsa agora recalcula saldo em centavos e arquiva movimento/saldo na mesma transacao; evita ledger divergente. Transferencias pareadas nao aceitam exclusao unilateral. API 181/181 e build passaram.
+
+- Validacao integrada mais recente: 302 testes frontend e 181 testes API passaram; ESLint, build Vite, build TypeScript da API e git diff --check passaram.
+
+- Automacoes/n8n: deduplicacao da tarefa de proposta aceita agora distingue tarefa da automacao do checklist padrao do projeto; replay continua idempotente sem perder o acompanhamento prometido. 12 testes n8n/entrega e build API passaram.
+
+- Google Drive/upload: endpoint agora valida suporte.write antes de enviar ao provedor e, com taskId, exige permissao de escrita/escopo da tarefa. Bloqueia anexo fora do escopo. API 182/182 passou.
+
+- Relatorios/Financeiro: data de pagamento efetivo agora usa a aprovacao do provedor e permanece estavel entre refreshes/webhooks; registros legados usam paidAt persistido ou updatedAt anterior. Relatorios usam paidAt. API 188/188, relatorios 16/16 e builds passaram.
+
+- Validacao integrada final desta rodada: 303 testes frontend e 188 testes API passaram; ESLint, build Vite, build TypeScript da API e git diff --check passaram.
+
+- Checagem de producao apos as alteracoes: health respondeu status ok e banco conectado; revisao ainda 07782ac8a246ab96805b5f9377d50b9f7df8d5a8, anterior ao worktree. Deploy segue bloqueado pelos secrets Coolify ausentes.
+
+- Meu Dia: filtros de tarefas agora priorizam qualquer campo que indique conclus?o, evitando que registros legados com status conflitantes apare?am como pendentes. Arquivos/Drive: membros com escopo selecionado precisam escolher cliente ou projeto autorizado antes do envio ou v?nculo, e o registro persiste esse v?nculo; evita upload remoto ?rf?o.
+- Auditoria visual local: 29 rotas do menu renderizaram em viewport de 375 px, nos temas claro e escuro, sem overflow horizontal; console sem erros e sem avisos.
+- Valida??o integrada desta rodada: 306 testes frontend e 188 API passaram; ESLint, build Vite, build TypeScript da API e git diff --check passaram. Deploy ainda n?o foi executado: os secrets COOLIFY_WEBHOOK e COOLIFY_TOKEN continuam ausentes no GitHub Actions.
+
+- CRM/ficha financeira: cobran?as com status de provedor `paid`, `cancelled` ou `canceled` agora deixam de ser contadas como abertas; os normalizadores compartilhados tratam tamb?m r?tulos locais. Testes focados 15/15.
+- Login/recupera??o: os modos de recuperar senha acompanham voltar/avan?ar do navegador e removem tokens sens?veis ao retornar ao login. Testes de helper/navega??o 6/6.
+- Sites/Monitoramento: excluir um ativo agora remove as agendas de checagem vinculadas (IDs num?ricos e texto), antes de remover o ativo; evita agenda ?rf? no worker. Testes 6/6.
+- Textos de interface: corrigidos acentos substitu?dos por `?` em mensagens de Atendimento, Monitoramento, Arquivos e Configura??es.
+- Valida??o integrada: 308 testes frontend e 188 API passaram; ESLint, build Vite, build TypeScript da API e git diff --check passaram. Deploy ainda indispon?vel pelos secrets Coolify ausentes.
+
+- Atendimento/WhatsApp: ao trocar de conversa, a resposta agora usa primeiro a sess?o ativa vinculada ao contato; sess?o pausada n?o preserva indevidamente o n?mero selecionado na conversa anterior. Testes focados 21/21.
+- Portal do cliente: mensagens compostas apenas por espa?os s?o bloqueadas e o conte?do enviado ? aparado; evita chamadas que a API recusaria. Testes focados 7/7.
+- Metas: receita recebida usa `paidAt`/`paymentDetails.paidAt` para cobran?as e `settledAt` para receitas manuais antes de `updatedAt`/`date`; testes de Metas/Relat?rios 23/23.
+- Marca: mensagens de erro e e-mails voltados ao usu?rio da API agora identificam o app como Focusshub; nomes de protocolo e cabe?alhos internos permanecem compat?veis.
+- Valida??o integrada atual: 313 testes frontend e 188 API passaram; ESLint, build Vite, build TypeScript da API e `git diff --check` passaram. Segue sem deploy pelos secrets Coolify ausentes no GitHub Actions.

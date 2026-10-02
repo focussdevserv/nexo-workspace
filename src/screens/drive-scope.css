@@ -1,0 +1,39 @@
+.drive-scope-picker {
+  display: grid;
+  grid-template-columns: minmax(180px, .7fr) minmax(220px, 1fr);
+  align-items: center;
+  gap: 6px 12px;
+  margin: 0 0 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--w-line, #e9edf1);
+  border-radius: 11px;
+  background: var(--w-white, #fff);
+  color: var(--w-ink, #18212f);
+  font-size: 12px;
+  font-weight: 600;
+}
+.drive-scope-picker select {
+  min-width: 0;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--w-line, #e9edf1);
+  border-radius: 8px;
+  background: var(--w-white, #fff);
+  color: inherit;
+}
+.drive-scope-picker small {
+  grid-column: 2;
+  color: var(--w-muted, #818b9a);
+  font-size: 11px;
+  font-weight: 400;
+}
+html[data-theme='dark'] .drive-scope-picker,
+html[data-theme='dark'] .drive-scope-picker select {
+  background: #171c24;
+  border-color: #303846;
+  color: #eef2f8;
+}
+@media (max-width: 620px) {
+  .drive-scope-picker { grid-template-columns: 1fr; }
+  .drive-scope-picker small { grid-column: 1; }
+}

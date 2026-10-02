@@ -27,16 +27,18 @@ export function nextRecurringTask(tasks, task, now = new Date()) {
   const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   const hasDueDate = /^\d{4}-\d{2}-\d{2}$/.test(String(task.due || ''));
   let due = hasDueDate ? task.due : today;
-  const anchorDay = Number((hasDueDate ? task.due : today).slice(8, 10));
+  const anchorDay = Number(task.recurrenceAnchorDay) || Number((hasDueDate ? task.due : today).slice(8, 10));
   do { due = nextDate(due, recurrence, anchorDay); } while (due <= today);
   return {
     ...task,
     id: globalThis.crypto?.randomUUID?.() || `recurring-task-${Date.now()}-${sequence + 1}`,
     due,
+    state: 'A fazer',
     status: 'A fazer',
     recurrence,
     recurrenceId,
     recurrenceSequence: sequence + 1,
+    recurrenceAnchorDay: anchorDay,
     checklist: (task.checklist || []).map((item) => typeof item === 'string' ? { title: item, done: false } : { ...item, done: false }),
     comments: [],
     attachment: '',
@@ -48,8 +50,9 @@ export function nextRecurringTask(tasks, task, now = new Date()) {
 export function completeTaskOccurrence(tasks, taskId, now = new Date()) {
   const task = tasks.find((item) => String(item.id) === String(taskId));
   if (!task) return { tasks, occurrence: null };
-  const reopening = completedStatuses.has(normalized(task.status || task.state));
-  const updated = tasks.map((item) => String(item.id) === String(taskId) ? { ...item, status: reopening ? 'A fazer' : 'Concluída' } : item);
+  const reopening = [task.status, task.state].some((value) => completedStatuses.has(normalized(value)));
+  const nextStatus = reopening ? 'A fazer' : 'Concluída';
+  const updated = tasks.map((item) => String(item.id) === String(taskId) ? { ...item, state: nextStatus, status: nextStatus } : item);
   const occurrence = reopening ? null : nextRecurringTask(updated, task, now);
   return { tasks: occurrence ? [...updated, occurrence] : updated, occurrence };
 }

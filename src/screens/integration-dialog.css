@@ -20,3 +20,22 @@
 .ns-integration-modal>footer button{display:inline-flex;align-items:center;justify-content:center;gap:6px}
 @media(max-width:600px){.ns-integration-modal>footer{display:grid;grid-template-columns:1fr}.ns-integration-modal>footer button{min-height:40px}}
 .ns-hostinger-setup{display:grid;gap:11px;margin-bottom:12px}.ns-hostinger-setup>label{display:grid;gap:6px;color:#4d5b6f;font-size:12px;font-weight:700}.ns-hostinger-setup input{width:100%;min-height:40px;padding:8px 10px;border:1px solid #dce2e9;border-radius:8px;background:#fff;color:#273548;font:500 14px 'DM Sans',sans-serif}.ns-hostinger-setup>small{color:#687588;font-size:12px;line-height:1.5}.ns-hostinger-setup>button{justify-self:start;min-height:38px}
+.integration-test-result.disconnected,.integration-test-result.not_configured{border-color:#f0dfbe;background:#fffaf0}
+.integration-test-result.disconnected>span,.integration-test-result.not_configured>span{color:#8b642c}
+.ns-integration-test-history{display:grid;gap:9px;margin-top:12px;padding:11px 12px;border:1px solid #e4e9ef;border-radius:9px;background:#fbfcfd}
+.ns-integration-test-history>div{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.ns-integration-test-history>div>b{color:#34445a;font-size:12px}
+.ns-integration-test-history>div>small,.ns-integration-test-history time{color:#748194;font-size:10px}
+.ns-integration-test-history ol{display:grid;gap:5px;max-height:150px;overflow:auto;margin:0;padding:0;list-style:none}
+.ns-integration-test-history li{display:flex;align-items:center;gap:7px;min-width:0;color:#536174;font-size:11px}
+.ns-integration-test-history time{margin-left:auto;white-space:nowrap}
+.ns-integration-test-history p{margin:0;color:#748194;font-size:11px}
+.ns-integration-test-history .history-status{width:7px;height:7px;flex:0 0 7px;border-radius:50%;background:#c78a39}
+.ns-integration-test-history .history-status.connected{background:#30a361}
+.ns-integration-test-history .history-status.error{background:#d64b4b}
+.integration-setup-content>.ns-integration-credential-steps{margin:9px 0 12px;padding:11px 12px;border:1px solid #e0e8d9;border-radius:9px;background:#f7faf4;color:#64715e;font-size:12px;line-height:1.55}
+.integration-setup-content>.ns-integration-credential-steps b{color:#33452e}
+html[data-theme='dark'] .ns-integration-test-history{border-color:#343c47;background:#1e252e}
+html[data-theme='dark'] .ns-integration-test-history>div>b,html[data-theme='dark'] .ns-integration-test-history li{color:#d8e0e9}
+html[data-theme='dark'] .integration-setup-content>.ns-integration-credential-steps{border-color:#3c4c3b;background:#222d24;color:#bdcbbb}
+html[data-theme='dark'] .integration-setup-content>.ns-integration-credential-steps b{color:#d9ead3}

@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { isWorkspaceRequestAllowed } from '../src/security/authorization.ts';
+import { canChangeProjectArchiveState, isWorkspaceRequestAllowed } from '../src/security/authorization.ts';
+
+test('members can edit projects but cannot archive or reopen them', () => {
+  assert.equal(canChangeProjectArchiveState('member', 'Em andamento', 'Concluído'), true);
+  assert.equal(canChangeProjectArchiveState('member', 'Em andamento', 'Arquivado'), false);
+  assert.equal(canChangeProjectArchiveState('member', 'Arquivado', 'Em andamento'), false);
+  assert.equal(canChangeProjectArchiveState('member', 'arquivado', 'Arquivado'), true);
+  assert.equal(canChangeProjectArchiveState('admin', 'Em andamento', 'Arquivado'), true);
+  assert.equal(canChangeProjectArchiveState('owner', 'Arquivado', 'Em andamento'), true);
+});
 
 test('owners retain access to all workspace routes', () => {
   assert.equal(isWorkspaceRequestAllowed('owner', 'DELETE', '/api/billing/orders/1'), true);
@@ -41,12 +50,38 @@ test('members can work on delivery and respond through connected inbox channels'
   assert.equal(isWorkspaceRequestAllowed('member', 'POST', '/api/integrations/google/gmail/thread-1/reply'), true);
 });
 
+test('members can read, mark, and send Hostinger inbox mail under support access only', () => {
+  assert.equal(isWorkspaceRequestAllowed('member', 'GET', '/api/integrations/hostinger/inbox'), true);
+  assert.equal(isWorkspaceRequestAllowed('member', 'POST', '/api/integrations/hostinger/message-1/read'), true);
+  assert.equal(isWorkspaceRequestAllowed('member', 'POST', '/api/integrations/hostinger/send'), true);
+  assert.equal(isWorkspaceRequestAllowed('member', 'GET', '/api/integrations/hostinger/inbox', { support: { read: false, write: false } }), false);
+  assert.equal(isWorkspaceRequestAllowed('member', 'POST', '/api/integrations/hostinger/send', { support: { read: true, write: false } }), false);
+  assert.equal(isWorkspaceRequestAllowed('member', 'POST', '/api/integrations/hostinger/message-1/read', { support: { read: true, write: false } }), false);
+  assert.equal(isWorkspaceRequestAllowed('member', 'POST', '/api/integrations/hostinger/configure', { support: { read: true, write: true } }), false);
+  assert.equal(isWorkspaceRequestAllowed('admin', 'POST', '/api/integrations/hostinger/configure'), false);
+  assert.equal(isWorkspaceRequestAllowed('admin', 'DELETE', '/api/integrations/hostinger/connection'), false);
+  assert.equal(isWorkspaceRequestAllowed('owner', 'POST', '/api/integrations/hostinger/configure'), true);
+});
+
+test('Google Drive file browsing and metadata edits follow support permissions', () => {
+  assert.equal(isWorkspaceRequestAllowed('member', 'GET', '/api/integrations/google/drive/files?pageToken=next'), true);
+  assert.equal(isWorkspaceRequestAllowed('member', 'PATCH', '/api/integrations/google/drive/file-123/metadata', { support: { read: true, write: true } }), true);
+  assert.equal(isWorkspaceRequestAllowed('member', 'POST', '/api/integrations/google/drive/upload', { support: { read: true, write: true } }), true);
+  assert.equal(isWorkspaceRequestAllowed('member', 'POST', '/api/integrations/google/drive/upload', { support: { read: true, write: false } }), false);
+  assert.equal(isWorkspaceRequestAllowed('member', 'PATCH', '/api/workspace/tasks/task-123', { delivery: { read: true, write: true } }), true);
+  assert.equal(isWorkspaceRequestAllowed('member', 'PATCH', '/api/workspace/tasks/task-123', { delivery: { read: true, write: false } }), false);
+  assert.equal(isWorkspaceRequestAllowed('member', 'GET', '/api/integrations/google/drive/files', { support: { read: false, write: false } }), false);
+  assert.equal(isWorkspaceRequestAllowed('member', 'PATCH', '/api/integrations/google/drive/file-123/metadata', { support: { read: true, write: false } }), false);
+  assert.equal(isWorkspaceRequestAllowed('admin', 'GET', '/api/integrations/google/drive/files', { support: { read: false, write: false } }), false);
+  assert.equal(isWorkspaceRequestAllowed('member', 'POST', '/api/integrations/google/drive/file-123/share-for-portal', { support: { read: true, write: true } }), false);
+});
+
 test('members cannot access billing, settings, identity, or integration controls', () => {
   for (const [method, path] of [
     ['GET', '/api/workspace/finance-accounts'], ['POST', '/api/workspace/revenues'],
     ['PATCH', '/api/workspace/clients/123'], ['DELETE', '/api/workspace/contracts/123'],
     ['GET', '/api/integrations/status'], ['POST', '/api/integrations/google/authorize'],
-    ['POST', '/api/billing/orders'], ['GET', '/api/team/users'],
+    ['POST', '/api/billing/orders'], ['POST', '/api/billing/orders/00000000-0000-4000-8000-000000000000/cancel'], ['GET', '/api/team/users'],
   ] as const) assert.equal(isWorkspaceRequestAllowed('member', method, path), false, `${method} ${path}`);
 });
 

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildGoogleRawMessage, decodeGoogleDriveUpload, decodeGoogleMailAttachments, googleMailAddresses, googleThreadBelongsToAllowedContacts, mapGoogleMailMessage } from '../src/integrations/google-mail.js';
-import { buildGoogleAuthorizationUrl } from '../src/integrations/google-oauth.js';
+import { buildGoogleAuthorizationUrl, googleOAuthStateRecordIsActive } from '../src/integrations/google-oauth.js';
 
 test('limits scoped Gmail threads to assigned contacts and the connected account', () => {
   const emails = googleMailAddresses(['Ana <ANA@example.com>, suporte@example.com', null, 'invalid']);
@@ -53,6 +53,14 @@ test('encodes proposal mail as RFC 2045 multipart UTF-8 Gmail raw message', () =
   assert.match(message, /Content-Type: text\/html; charset="UTF-8"/);
   assert.match(message, /Content-Type: text\/plain; charset="UTF-8"/);
   assert.ok(message.includes(Buffer.from('Olá, cliente!').toString('base64')));
+});
+
+test('Google OAuth callbacks require the issued state row and cannot replay a consumed callback', () => {
+  const issued = { callbackState: 'signed-state', cookieState: 'signed-state', expectedNonce: 'issued-once', recordNonce: 'issued-once', recordExpiresAt: Date.now() + 60_000, recordActive: true };
+  assert.equal(googleOAuthStateRecordIsActive(issued), true);
+  assert.equal(googleOAuthStateRecordIsActive({ ...issued, recordActive: false }), false);
+  assert.equal(googleOAuthStateRecordIsActive({ ...issued, recordNonce: 'other-state' }), false);
+  assert.equal(googleOAuthStateRecordIsActive({ ...issued, cookieState: undefined }), false);
 });
 
 test('encodes Gmail attachments as safe multipart MIME parts', () => {

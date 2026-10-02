@@ -31,3 +31,12 @@ export function buildClientFromLead(lead: LeadConversionSource, now = new Date()
     leadId: lead.id,
   };
 }
+
+export function mergeLeadServiceIntoClient<T extends { services?: unknown }>(client: T, lead: Pick<LeadConversionSource, 'service'>): T {
+  const service = String(lead.service ?? '').trim();
+  if (!service) return client;
+  const services = Array.isArray(client.services) ? client.services.map((item) => String(item ?? '').trim()).filter(Boolean) : [];
+  const normalize = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('pt-BR');
+  if (services.some((item) => normalize(item) === normalize(service))) return client;
+  return { ...client, services: [...services, service] };
+}

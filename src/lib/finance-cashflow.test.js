@@ -1,6 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildCashflowMonths, filterFinanceRecords, financeRecordsCsv, isFinanceRecordOverdue } from './finance-cashflow.js';
+import { buildCashflowMonths, filterFinanceRecords, financeRecordActionKey, financeRecordsCsv, isFinanceReceivableOpen, isFinanceRecordOverdue } from './finance-cashflow.js';
+
+test('uses immutable workspace IDs for finance actions even when display codes collide', () => {
+  const records = [
+    { id: 'record-a', code: 'REC-12345' },
+    { id: 'record-b', code: 'REC-12345' },
+  ];
+  const actionKey = financeRecordActionKey(records[1]);
+  assert.equal(actionKey, 'record-b');
+  assert.equal(records.find((record) => financeRecordActionKey(record) === actionKey), records[1]);
+  assert.equal(financeRecordActionKey({ code: 'LEGACY-1' }), 'LEGACY-1');
+});
 
 test('separates settled cashflow from due-date forecasts and moves overdue items to the current month', () => {
   const now = new Date(2026, 2, 15, 10);
@@ -35,6 +46,16 @@ test('classifies past-due pending income and expenses as overdue without changin
   assert.equal(isFinanceRecordOverdue({ status: 'Recebida', dueDate: '2026-03-14' }, today), false);
   assert.equal(isFinanceRecordOverdue({ status: 'Pendente', dueDate: '2026-03-15' }, today), false);
   assert.equal(isFinanceRecordOverdue({ status: 'Pendente' }, today), false);
+});
+
+test('excludes Mercado Pago and localized settled or canceled statuses from receivables', () => {
+  assert.equal(isFinanceReceivableOpen({ status: 'paid' }), false);
+  assert.equal(isFinanceReceivableOpen({ status: 'cancelled' }), false);
+  assert.equal(isFinanceReceivableOpen({ status: 'refunded' }), false);
+  assert.equal(isFinanceReceivableOpen({ status: 'Recebida' }), false);
+  assert.equal(isFinanceReceivableOpen({ status: 'Paga' }), false);
+  assert.equal(isFinanceReceivableOpen({ status: 'pending' }), true);
+  assert.equal(isFinanceReceivableOpen({ status: 'Aguardando pagamento' }), true);
 });
 
 test('filters finance records by category and due month, falling back to transaction date', () => {

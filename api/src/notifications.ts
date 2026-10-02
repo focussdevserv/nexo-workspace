@@ -19,6 +19,22 @@ const titlePairs: Record<string, [string, string]> = {
   billing_subscription: ['Assinatura criada', 'Assinatura atualizada'],
 };
 
+export function normalizeBrowserNotificationPreferences(value: unknown) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  const clock = (candidate: unknown, fallback: string) => typeof candidate === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(candidate) ? candidate : fallback;
+  return {
+    taskDue: source.taskDue !== false,
+    overdue: source.overdue !== false,
+    newLead: source.newLead !== false,
+    proposal: source.proposal !== false,
+    payment: source.payment !== false,
+    browser: source.browser === true,
+    quietHours: source.quietHours === true,
+    quietStart: clock(source.quietStart, '20:00'),
+    quietEnd: clock(source.quietEnd, '08:00'),
+  };
+}
+
 export function notificationAccessPath(entityType: string) {
   if (entityType === 'billing_order') return '/api/billing/orders';
   if (entityType === 'billing_subscription') return '/api/billing/subscriptions';

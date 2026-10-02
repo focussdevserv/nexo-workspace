@@ -1,4 +1,4 @@
-name: Validate and deploy Nexo
+name: Validate and deploy Focusshub
 
 on:
   push:
@@ -45,11 +45,11 @@ jobs:
       - name: Install API dependencies
         run: npm ci --prefix api
 
+      - name: Run frontend and API tests
+        run: npm test
+
       - name: Build API
         run: npm run api:build
-
-      - name: Run API tests
-        run: npm --prefix api test
 
       - name: Detect runtime changes
         id: runtime_changes
@@ -134,10 +134,12 @@ jobs:
       - name: Explain missing Coolify secrets
         if: ${{ env.COOLIFY_WEBHOOK == '' || env.COOLIFY_TOKEN == '' }}
         run: |
+          set -euo pipefail
           {
-            echo '## Verifying Coolify Git deployment'
-            echo 'Coolify trigger secrets are absent. Waiting for the Git repository deployment and checking revision manifests on the production domain.'
+            echo '## Waiting for Coolify Git auto-deploy'
+            echo 'Direct Coolify webhook credentials are absent. The revision was recorded on main, so production verification will wait for the configured Git deployment.'
           } >> "$GITHUB_STEP_SUMMARY"
+          echo 'No direct webhook credentials; waiting for the Coolify Git auto-deploy.'
 
       - name: Queue Coolify deployment
         if: ${{ env.COOLIFY_WEBHOOK != '' && env.COOLIFY_TOKEN != '' }}

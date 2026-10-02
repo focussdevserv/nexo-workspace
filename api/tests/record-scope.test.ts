@@ -10,6 +10,8 @@ test('selected client and project scopes include only linked records', () => {
   assert.equal(recordMatchesWorkspaceScope('projects', 'project-b', {}, scope), true);
   assert.equal(recordMatchesWorkspaceScope('projects', 'project-x', { clientId: 'client-a' }, scope), true);
   assert.equal(recordMatchesWorkspaceScope('tasks', 'task-a', { projectId: 'project-b' }, scope), true);
+  assert.equal(recordMatchesWorkspaceScope('tasks', 'task-x', { projectId: 'project-x' }, scope), false);
+  assert.equal(recordMatchesWorkspaceScope('tasks', 'task-unlinked', {}, scope), false);
   assert.equal(recordMatchesWorkspaceScope('tickets', 'ticket-a', { workspaceClientId: 'client-a' }, scope), true);
   assert.equal(recordMatchesWorkspaceScope('tickets', 'ticket-x', { client: 'Same visible name' }, scope), false);
 });

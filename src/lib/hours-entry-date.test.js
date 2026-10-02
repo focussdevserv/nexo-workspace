@@ -1,0 +1,35 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { formatHoursEntryEnd, hoursDateRange, hoursEntryLocalDate } from './hours-entry-date.js';
+
+test('classifies timestamped hours in the workspace timezone, independent of browser timezone', () => {
+  assert.equal(hoursEntryLocalDate({ endedAt: '2026-10-03T02:00:00.000Z' }, 'America/Sao_Paulo'), '2026-10-02');
+  assert.equal(hoursEntryLocalDate({ endedAt: '2026-10-03T02:00:00.000Z' }, 'Asia/Tokyo'), '2026-10-03');
+});
+
+test('preserves date-only manual entries and falls back to the start time', () => {
+  assert.equal(hoursEntryLocalDate({ date: '2026-10-02', endedAt: '2026-10-03T01:00:00.000Z' }), '2026-10-02');
+  assert.equal(hoursEntryLocalDate({ startedAt: '2026-10-03T02:00:00.000Z' }, 'America/Sao_Paulo'), '2026-10-02');
+  assert.equal(hoursEntryLocalDate({ endedAt: 'invalid' }), '');
+});
+
+test('hours date ranges follow the workspace calendar near UTC midnight', () => {
+  const instant = new Date('2026-10-02T01:30:00.000Z');
+  assert.deepEqual(hoursDateRange('Esta semana', instant, 'America/Sao_Paulo'), ['2026-09-28', '2026-10-01']);
+  assert.deepEqual(hoursDateRange('Semana passada', instant, 'America/Sao_Paulo'), ['2026-09-21', '2026-09-27']);
+  assert.deepEqual(hoursDateRange('Este mês', instant, 'America/Sao_Paulo'), ['2026-10-01', '2026-10-01']);
+  assert.deepEqual(hoursDateRange('Esta semana', instant, 'Asia/Tokyo'), ['2026-09-28', '2026-10-02']);
+});
+
+test('hours date ranges honor a Sunday workspace week start', () => {
+  const instant = new Date('2026-10-04T15:00:00.000Z');
+  assert.deepEqual(hoursDateRange('Esta semana', instant, 'America/Sao_Paulo', 'sunday'), ['2026-10-04', '2026-10-04']);
+  assert.deepEqual(hoursDateRange('Semana passada', instant, 'America/Sao_Paulo', 'sunday'), ['2026-09-27', '2026-10-03']);
+});
+
+test('last hour display uses the workspace timezone', () => {
+  const instant = '2026-10-03T02:00:00.000Z';
+  assert.match(formatHoursEntryEnd(instant, 'America/Sao_Paulo'), /02\/10\/2026, 23:00/);
+  assert.match(formatHoursEntryEnd(instant, 'Asia/Tokyo'), /03\/10\/2026, 11:00/);
+  assert.equal(formatHoursEntryEnd('invalid', 'America/Sao_Paulo'), '—');
+});

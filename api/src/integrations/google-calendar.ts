@@ -11,6 +11,14 @@ type GoogleCalendarEvent = {
   conferenceData?: { entryPoints?: Array<{ entryPointType?: unknown; uri?: unknown }> };
 };
 
+/**
+ * Google Calendar PATCH leaves omitted fields unchanged. Keep attendees in the
+ * payload even when the list is empty so a user can remove every guest.
+ */
+export function googleCalendarAttendeesPayload(attendees: string[]) {
+  return { attendees: attendees.map((email) => ({ email })) };
+}
+
 function dateAndTime(value: string, timeZone: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return null;

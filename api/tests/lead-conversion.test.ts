@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildClientFromLead } from '../src/crm/lead-conversion.js';
+import { buildClientFromLead, mergeLeadServiceIntoClient } from '../src/crm/lead-conversion.js';
 
 test('converts a company opportunity into a linked client with contact and service data', () => {
   const client = buildClientFromLead({ id: 'lead-1', name: 'Ana Silva', company: 'Acme', email: ' ANA@ACME.COM ', phone: '+55 11 90000-0000', service: 'Site', source: 'Indicacao', value: 'R$ 2.500,00', notes: 'Briefing feito' }, new Date('2026-10-01T12:00:00Z'));
@@ -14,4 +14,13 @@ test('converts a company opportunity into a linked client with contact and servi
 
 test('uses the lead contact name when no company was supplied', () => {
   assert.equal(buildClientFromLead({ id: 'lead-2', name: 'Bruno' }).name, 'Bruno');
+});
+
+test('links a won lead service to an existing client without duplicates or losing existing services', () => {
+  const client = { name: 'Acme', services: ['SEO', 'Site'] };
+  assert.deepEqual(mergeLeadServiceIntoClient(client, { service: 'Consultoria' }), {
+    name: 'Acme', services: ['SEO', 'Site', 'Consultoria'],
+  });
+  assert.equal(mergeLeadServiceIntoClient(client, { service: 'site' }), client);
+  assert.equal(mergeLeadServiceIntoClient(client, { service: '' }), client);
 });

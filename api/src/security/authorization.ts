@@ -5,6 +5,12 @@ export type ModulePermission = { read?: boolean; write?: boolean; delete?: boole
 export type WorkspaceRecordScope = { mode: 'all' | 'selected'; clientIds: string[]; projectIds: string[] };
 export type WorkspacePermissions = Partial<Record<PermissionModule, ModulePermission>> & { scope?: WorkspaceRecordScope };
 
+export function canChangeProjectArchiveState(role: WorkspaceRole, currentStatus: unknown, nextStatus: unknown) {
+  if (role !== 'member') return true;
+  const archived = (status: unknown) => String(status ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase() === 'arquivado';
+  return archived(currentStatus) === archived(nextStatus);
+}
+
 function moduleForPath(path: string): PermissionModule | null {
   const resource = path.match(/^\/api\/workspace\/([a-z-]+)(?:\/|$)/)?.[1];
   if (resource && ['clients', 'leads', 'companies', 'contacts', 'proposals', 'services', 'contracts'].includes(resource)) return 'crm';
@@ -19,7 +25,11 @@ function moduleForPath(path: string): PermissionModule | null {
   if (path.startsWith('/api/integrations/github/')) return 'sites';
   if (path.startsWith('/api/billing/')) return 'finance';
   if (path.startsWith('/api/integrations/google/calendar/')) return 'delivery';
-  if (path.startsWith('/api/integrations/google/gmail') || path.startsWith('/api/integrations/google/drive/upload') || path.startsWith('/api/integrations/waha/')) return 'support';
+  if (path.startsWith('/api/integrations/google/gmail') || path === '/api/integrations/google/drive/files'
+    || path.startsWith('/api/integrations/google/drive/upload') || /^\/api\/integrations\/google\/drive\/[^/]+\/metadata$/.test(path)
+    || path.startsWith('/api/integrations/waha/')
+    || path === '/api/integrations/hostinger/inbox' || path === '/api/integrations/hostinger/send'
+    || /^\/api\/integrations\/hostinger\/[^/]+\/read$/.test(path)) return 'support';
   if (path.startsWith('/api/integrations/n8n/')) return 'automations';
   if (path.startsWith('/api/integrations/')) return 'integrations';
   return null;
@@ -28,6 +38,7 @@ function moduleForPath(path: string): PermissionModule | null {
 function roleBaseline(role: WorkspaceRole, verb: string, path: string) {
   if (role === 'admin') {
     if (/^\/api\/integrations\/[^/]+\/(?:test|connection)$/.test(path)) return false;
+    if (path === '/api/integrations/hostinger/configure') return false;
     if (path.startsWith('/api/integrations/waha/sessions')) return verb === 'GET' && path === '/api/integrations/waha/sessions';
     if (path.startsWith('/api/integrations/google/authorize') || path === '/api/integrations/google/disconnect') return false;
     return true;
@@ -51,6 +62,10 @@ function roleBaseline(role: WorkspaceRole, verb: string, path: string) {
   if (verb === 'DELETE' && /^\/api\/integrations\/google\/calendar\/events\/[^/]+$/.test(path)) return true;
   if (verb === 'POST' && /^\/api\/integrations\/google\/gmail\/[^/]+\/(?:reply|read)$/.test(path)) return true;
   if (verb === 'POST' && path === '/api/integrations/google/gmail/send') return true;
+  if (verb === 'GET' && path === '/api/integrations/hostinger/inbox') return true;
+  if (verb === 'POST' && (path === '/api/integrations/hostinger/send' || /^\/api\/integrations\/hostinger\/[^/]+\/read$/.test(path))) return true;
+  if (verb === 'GET' && path === '/api/integrations/google/drive/files') return true;
+  if (verb === 'PATCH' && /^\/api\/integrations\/google\/drive\/[^/]+\/metadata$/.test(path)) return true;
   if (verb === 'GET' && path === '/api/integrations/waha/sessions') return true;
   if (verb === 'POST' && path === '/api/integrations/google/drive/upload') return true;
   if (verb === 'POST' && path === '/api/integrations/waha/send') return true;

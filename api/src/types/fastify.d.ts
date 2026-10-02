@@ -14,7 +14,7 @@ declare module 'fastify' {
 
 declare module '@fastify/jwt' {
   interface FastifyJWT {
-    payload: { sub: string; organizationId: string; role: 'owner' | 'admin' | 'member'; permissions?: WorkspacePermissions | null; purpose?: string; nonce?: string; inviteVersion?: number; clientRecordId?: string; version?: number };
-    user: { sub: string; organizationId: string; role: 'owner' | 'admin' | 'member'; permissions?: WorkspacePermissions | null; purpose?: string; nonce?: string; inviteVersion?: number; clientRecordId?: string; version?: number };
+    payload: { sub: string; organizationId: string; role: 'owner' | 'admin' | 'member'; permissions?: WorkspacePermissions | null; purpose?: string; nonce?: string; inviteVersion?: number; sessionVersion?: number; clientRecordId?: string; version?: number; rememberMe?: boolean };
+    user: { sub: string; organizationId: string; role: 'owner' | 'admin' | 'member'; permissions?: WorkspacePermissions | null; purpose?: string; nonce?: string; inviteVersion?: number; sessionVersion?: number; clientRecordId?: string; version?: number; rememberMe?: boolean };
   }
 }

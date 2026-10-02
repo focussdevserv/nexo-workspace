@@ -1,5 +1,22 @@
 const GOOGLE_AUTHORIZATION_ENDPOINT = 'https://accounts.google.com/o/oauth2/v2/auth';
 
+export function googleOAuthStateRecordIsActive(input: {
+  callbackState?: string;
+  cookieState?: string;
+  expectedNonce?: string;
+  recordNonce?: unknown;
+  recordExpiresAt?: unknown;
+  recordActive: boolean;
+  now?: number;
+}) {
+  return input.recordActive
+    && Boolean(input.callbackState)
+    && input.callbackState === input.cookieState
+    && Boolean(input.expectedNonce)
+    && input.recordNonce === input.expectedNonce
+    && Number(input.recordExpiresAt) > (input.now ?? Date.now());
+}
+
 export function buildGoogleAuthorizationUrl(input: {
   clientId: string;
   redirectUri: string;

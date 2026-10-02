@@ -9,6 +9,17 @@ export function isFinanceRecordOverdue(record, today = new Date()) {
   return pendingStatuses.has(status) && /^\d{4}-\d{2}-\d{2}$/.test(dueDate) && dueDate < todayKey;
 }
 
+export function isFinanceReceivableOpen(record) {
+  const status = String(record?.status || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  return !settledStatuses.has(status) && !cancelledStatuses.has(status);
+}
+
+// Workspace IDs are the stable identity for actions. Display codes can be duplicated
+// in older/manual records, so never use a code as the primary edit/delete key.
+export function financeRecordActionKey(record) {
+  return record?.id ?? record?.code ?? '';
+}
+
 export function filterFinanceRecords(records, { category = 'Todos', period = 'Todos', clientId = 'Todos', today = new Date() } = {}) {
   const year = today.getFullYear();
   const month = today.getMonth();

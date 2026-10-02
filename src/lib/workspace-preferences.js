@@ -1,9 +1,19 @@
 import { useEffect, useState } from 'react';
+import { DEFAULT_CALENDAR_TIME_ZONE, normalizeCalendarTimeZone, normalizeWeekStart } from './calendar-preferences.js';
 
 const storageKey = 'nexo.workspace.preferences.v1';
 const themePreferenceKey = 'nexo.workspace.theme-preference.v1';
-const defaultPreferences = Object.freeze({ compact: false, darkMode: false, showCompleted: false, confirmDelete: true, startPage: 'Meu Dia' });
-const startPages = new Set(['Meu Dia', 'Agenda', 'Tarefas', 'CRM', 'Projetos']);
+const defaultPreferences = Object.freeze({ compact: false, darkMode: false, showCompleted: false, confirmDelete: true, startPage: 'Meu Dia', timezone: DEFAULT_CALENDAR_TIME_ZONE, weekStart: 'monday' });
+// Keep this list aligned with the app's navigable modules. A saved start page
+// must survive normalization, otherwise the preference silently falls back.
+export const workspaceStartPages = Object.freeze([
+  'Meu Dia', 'Agenda', 'Tarefas', 'Caixa de entrada', 'Aprovações',
+  'CRM', 'Leads', 'Pipeline', 'Clientes', 'Empresas', 'Contatos', 'Propostas', 'Serviços', 'Contratos',
+  'Projetos', 'Horas', 'Arquivos', 'WhatsApp', 'Tickets', 'Sites', 'Domínios', 'Hospedagens',
+  'Repositórios', 'Monitoramento', 'Financeiro', 'Receitas', 'Despesas', 'Contas', 'Cobranças',
+  'Assinaturas', 'Portal do cliente', 'Equipe', 'Automações', 'Integrações', 'Relatórios', 'Metas', 'Configurações',
+]);
+const startPages = new Set(workspaceStartPages);
 
 function applyWorkspaceTheme(darkMode) {
   if (typeof document === 'undefined') return;
@@ -20,6 +30,16 @@ export function normalizeWorkspacePreferences(value) {
     showCompleted: typeof source.showCompleted === 'boolean' ? source.showCompleted : defaultPreferences.showCompleted,
     confirmDelete: typeof source.confirmDelete === 'boolean' ? source.confirmDelete : defaultPreferences.confirmDelete,
     startPage: startPages.has(source.startPage) ? source.startPage : defaultPreferences.startPage,
+    timezone: normalizeCalendarTimeZone(source.timezone),
+    weekStart: normalizeWeekStart(source.weekStart),
+  };
+}
+
+export function workspacePreferencesFromSettings(settings) {
+  return {
+    ...(settings?.preferences || {}),
+    timezone: settings?.workspace?.timezone,
+    weekStart: settings?.workspace?.weekStart,
   };
 }
 

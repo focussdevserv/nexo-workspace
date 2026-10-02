@@ -56,6 +56,8 @@
 @media(max-width:900px){.ns-screen .ns-integration-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.integration-overview-stats{padding-left:0}}
 @media(max-width:600px){.ns-screen .ns-integration-grid{grid-template-columns:1fr}.integration-overview{padding:15px}.integration-overview-copy{align-items:flex-start;flex-wrap:wrap}.integration-overview-copy>div{flex-basis:calc(100% - 62px)}.integration-overview-copy>.ns-integration-refresh{margin-left:58px}.integration-overview-stats{grid-template-columns:1fr}.integration-overview-stats article{min-height:47px}}
 .integration-overview-stats article.has-attention>b{color:#a76714}
+.ns-screen .ns-integration-method{display:block;min-height:30px;margin-top:-3px;color:#526f49;font-size:12px;line-height:1.4;font-weight:650}
+html[data-theme='dark'] .ns-screen .ns-integration-method{color:#b8d8ae}
 
 /* Clear distinction between OAuth consent and server-side API credentials. */
 .ns-screen .ns-integration-actions{flex-wrap:wrap;justify-content:flex-start;gap:8px}

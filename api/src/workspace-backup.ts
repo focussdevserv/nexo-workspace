@@ -31,14 +31,14 @@ const billingOrder = z.object({
   id: uuid, clientId: uuid.nullable(), workspaceClientId: uuid.nullable(), clientName: z.string().min(1).max(180),
   payerEmail: z.string().email().max(254), description: z.string().min(1).max(250), amount: z.number().finite().nonnegative().max(1_000_000), method: z.enum(['pix', 'boleto', 'credit_card', 'debit_card']),
   status: z.string().min(1).max(40), statusDetail: z.string().max(200).nullable(), mpOrderId: z.string().max(200).nullable(),
-  mpPaymentId: z.string().nullable(), paymentDetails: safeRecord, dueAt: nullableTimestamp,
+  mpPaymentId: z.string().nullable(), mercadoPagoAccountId: z.string().max(100).nullable().optional(), paymentDetails: safeRecord, dueAt: nullableTimestamp,
   createdAt: timestamp, updatedAt: timestamp,
 }).strict();
 
 const billingSubscription = z.object({
   id: uuid, clientId: uuid.nullable(), workspaceClientId: uuid.nullable(), clientName: z.string().min(1).max(180),
   payerEmail: z.string().email().max(254), description: z.string().min(1).max(250), amount: z.number().finite().nonnegative().max(1_000_000), frequency: z.enum(['days', 'months']),
-  frequencyInterval: z.number().int().positive().max(366), status: z.string().min(1).max(40), mpSubscriptionId: z.string().max(200).nullable(),
+  frequencyInterval: z.number().int().positive().max(366), status: z.string().min(1).max(40), mpSubscriptionId: z.string().max(200).nullable(), mercadoPagoAccountId: z.string().max(100).nullable().optional(),
   checkoutUrl: z.string().max(2048).nullable(), nextPaymentAt: nullableTimestamp, createdAt: timestamp, updatedAt: timestamp,
 }).strict();
 
@@ -103,13 +103,13 @@ export function buildWorkspaceBackup(input: BackupInput): WorkspaceBackup {
   const billingOrders = input.billingOrders.map((row) => {
     if (!isSafeWorkspaceData(row.paymentDetails)) excludedRecords += 1;
     return {
-    ...pick(row, ['id', 'clientId', 'workspaceClientId', 'clientName', 'payerEmail', 'description', 'amount', 'method', 'status', 'statusDetail', 'mpOrderId', 'mpPaymentId', 'paymentDetails']),
+    ...pick(row, ['id', 'clientId', 'workspaceClientId', 'clientName', 'payerEmail', 'description', 'amount', 'method', 'status', 'statusDetail', 'mpOrderId', 'mpPaymentId', 'mercadoPagoAccountId', 'paymentDetails']),
     paymentDetails: isSafeWorkspaceData(row.paymentDetails) ? row.paymentDetails : {},
     dueAt: iso(row.dueAt), createdAt: iso(row.createdAt), updatedAt: iso(row.updatedAt),
     };
   });
   const billingSubscriptions = input.billingSubscriptions.map((row) => ({
-    ...pick(row, ['id', 'clientId', 'workspaceClientId', 'clientName', 'payerEmail', 'description', 'amount', 'frequency', 'frequencyInterval', 'status', 'mpSubscriptionId', 'checkoutUrl']),
+    ...pick(row, ['id', 'clientId', 'workspaceClientId', 'clientName', 'payerEmail', 'description', 'amount', 'frequency', 'frequencyInterval', 'status', 'mpSubscriptionId', 'mercadoPagoAccountId', 'checkoutUrl']),
     nextPaymentAt: iso(row.nextPaymentAt), createdAt: iso(row.createdAt), updatedAt: iso(row.updatedAt),
   }));
   return workspaceBackupSchema.parse({

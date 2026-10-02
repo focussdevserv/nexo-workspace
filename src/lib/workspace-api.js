@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { handleLocalDemoRequest, isLocalDemoActive } from './local-demo.js';
 
 const inFlightGetRequests = new Map();
 const recentGetResponses = new Map();
@@ -13,6 +14,7 @@ const workspaceResourceLabels = {
 };
 
 export async function apiRequest(path, options = {}) {
+  if (isLocalDemoActive()) return handleLocalDemoRequest(path, options);
   const isGet = (options.method || 'GET').toUpperCase() === 'GET';
   const requestKey = `${mutationEpoch}:${path}`;
   if (isGet) {

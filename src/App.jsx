@@ -4,7 +4,7 @@ import {
   Activity, ArrowDownRight, ArrowRight, ArrowUpRight, Bell, BriefcaseBusiness,
   CalendarDays, Check, CheckSquare, ChevronDown, ChevronRight, CircleDollarSign,
   Clock3, FileText, FolderKanban, House, Inbox, Instagram, LayoutDashboard,
-  Mail, MessageCircle, Menu, MoreVertical, Paperclip, Phone, Plus, Search, Send,
+  LogOut, Mail, MessageCircle, Menu, MoreVertical, Paperclip, Phone, Plus, Search, Send,
   Settings, Sparkles, Sun, Moon, Users, Video, X,
 } from 'lucide-react';
 const CommercialScreen = lazy(() => import('./screens/CommercialScreens.jsx'));
@@ -17,6 +17,19 @@ import PublicLegalPage from './screens/PublicLegalPages.jsx';
 import { apiRequest, fetchAllRecords } from './lib/workspace-api.js';
 import { mergeServerWorkspacePreferences, publishWorkspacePreferences, readCachedWorkspacePreferences, rememberWorkspaceThemePreference, useWorkspacePreferences } from './lib/workspace-preferences.js';
 import { purgeFictitiousLocalData } from './lib/demo-data.js';
+import { exitLocalDemo, isLocalDemoActive, resetLocalDemo } from './lib/local-demo.js';
+import { completeTaskOccurrence } from './lib/task-recurrence.js';
+import { shouldRefreshDashboardOnNavigation } from './lib/dashboard-navigation.js';
+import { dashboardCreateContext } from './lib/dashboard-create-context.js';
+import { dashboardEventNavigationContext } from './lib/dashboard-event-navigation.js';
+import { dashboardMetricNavigation } from './lib/dashboard-metric-navigation.js';
+import { notificationNavigationTarget } from './lib/notification-navigation.js';
+import { filterDashboardTasks } from './lib/dashboard-task-filter.js';
+import { filterDashboardActiveProjects } from './lib/dashboard-active-projects.js';
+import { calendarDateInTimeZone, calendarDateKeyForValue, calendarDateKeyInTimeZone, calendarTimeInTimeZone } from './lib/calendar-preferences.js';
+import { isWithinWorkspaceQuietHours, shouldSendActivityBrowserAlert, taskReminderCandidates } from './lib/browser-alerts.js';
+import { dispatchBeforeWorkspaceNavigation, workspaceRouteDestination } from './lib/navigation-guards.js';
+import { logoutWorkspace } from './lib/workspace-session.js';
 import './screens/forms-polish.css';
 import './screens/buttons-polish.css';
 import './screens/onboarding.css';
@@ -95,11 +108,14 @@ function navigationPermissionModule(page) {
   return null;
 }
 function roleCanOpenPage(role, page, permissions = null) {
+  if (!['owner', 'admin', 'member'].includes(role)) return false;
   if (page === navGroups[7]?.items[0]?.label) return role === 'owner';
   if (role === 'owner') return true;
   const module = navigationPermissionModule(page);
+  const modulePermissions = module && permissions?.[module];
   const explicitRead = module && permissions?.[module]?.read;
   if (typeof explicitRead === 'boolean') return explicitRead;
+  if (modulePermissions) return false;
   return role !== 'member' || memberWorkspacePages.has(page);
 }
 function storedWorkspaceUser() { try { return JSON.parse(sessionStorage.getItem('nexo.api.user') || 'null'); } catch { return null; } }
@@ -195,7 +211,9 @@ function amountValue(value) { return Number(String(value || '').replace(/[^\d,]/
 function workspacePageSlug(label) { return label.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''); }
 function workspacePageFromPath(pathname) {
   if (!pathname.startsWith('/app/')) return null;
-  const slug = decodeURIComponent(pathname.slice('/app/'.length)).replace(/\/+$/, '');
+  let slug;
+  try { slug = decodeURIComponent(pathname.slice('/app/'.length)).replace(/\/+$/, ''); }
+  catch { return null; }
   return [...allWorkspacePageLabels].find((label) => workspacePageSlug(label) === slug) || null;
 }
 
@@ -209,10 +227,13 @@ function isCompletedTask(task) {
 
 function WorkspaceShell() {
   const currentUser = storedWorkspaceUser();
+  const localDemo = isLocalDemoActive();
   const preferences = useWorkspacePreferences();
   useEffect(() => {
     document.documentElement.dataset.theme = preferences.darkMode ? 'dark' : 'light';
     document.documentElement.style.colorScheme = preferences.darkMode ? 'dark' : 'light';
+    const themeColor = document.querySelector('meta[name="theme-color"]');
+    themeColor?.setAttribute('content', preferences.darkMode ? '#111412' : '#f5f6f2');
   }, [preferences.darkMode]);
   const hadExplicitPageAtStartup = useRef(Boolean(workspacePageFromPath(window.location.pathname) || savedWorkspacePage()));
   const didNavigateAtStartup = useRef(false);
@@ -228,6 +249,7 @@ function WorkspaceShell() {
       return roleCanOpenPage(role, startPage, user?.permissions) ? startPage : 'Meu Dia';
     } catch { return 'Meu Dia'; }
   });
+  const previousDashboardPage = useRef(activeNav);
   const pageTitle = activeNav;
   useEffect(() => {
     document.title = `Focusshub · ${pageTitle}`;
@@ -240,58 +262,95 @@ function WorkspaceShell() {
   const [filter, setFilter] = useState('Todos');
   const [taskFilter, setTaskFilter] = useState('Todas');
   const [tasks, setTasks] = useState([]);
-  const [dashboardRecords, setDashboardRecords] = useState({ leads: [], projects: [], events: [], proposals: [], bills: [] });
+  const [dashboardRecords, setDashboardRecords] = useState({ leads: [], projects: [], events: [], proposals: [], bills: [], inbox: [] });
+  const [dashboardRestrictedSources, setDashboardRestrictedSources] = useState([]);
+  const [dashboardFailedSources, setDashboardFailedSources] = useState([]);
+  const [dashboardLoading, setDashboardLoading] = useState(true);
+  const dashboardRefreshId = useRef(0);
+  const [updatingTaskIds, setUpdatingTaskIds] = useState(() => new Set());
   const [dashboardError, setDashboardError] = useState('');
   const [chatOpen, setChatOpen] = useState(true);
   const [chatExpanded, setChatExpanded] = useState(false);
   const [notificationOpen, setNotificationOpen] = useState(false);
   const [notificationItems, setNotificationItems] = useState([]);
+  const [notificationPreferences, setNotificationPreferences] = useState({});
   const [notificationUnread, setNotificationUnread] = useState(0);
   const [notificationLoading, setNotificationLoading] = useState(true);
   const [notificationError, setNotificationError] = useState('');
+  const seenActivityNotifications = useRef(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
   const [toast, setToast] = useState('');
-  const [now, setNow] = useState(() => new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }));
-  const dashboardDate = useMemo(() => new Intl.DateTimeFormat('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date()), []);
+  const [now, setNow] = useState(() => calendarTimeInTimeZone(new Date(), preferences.timezone));
+  const dashboardDate = new Intl.DateTimeFormat('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', timeZone: preferences.timezone }).format(new Date());
   const sourceLeads = dashboardRecords.leads;
   const dashboardLeads = sourceLeads.map((item) => ({ ...item, company: item.company || item.client || 'Empresa não informada', color: item.color || item.tone || 'blue', initials: item.initials || item.name?.split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase(), note: item.note || item.notes || item.service || 'Sem observações cadastradas', action: item.action || 'Abrir oportunidade', actionType: item.actionType || 'blue' }));
   const dashboardProjects = dashboardRecords.projects;
   const dashboardBills = dashboardRecords.bills;
   const closedBillStatuses = new Set(['paga', 'cancelada', 'paid', 'approved', 'processed', 'cancelled', 'canceled', 'refunded']);
   const openBills = dashboardBills.filter((bill) => !closedBillStatuses.has(String(bill.status || '').toLowerCase()));
-  const today = new Date();
-  const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  const today = calendarDateInTimeZone(new Date(), preferences.timezone);
+  const todayIso = calendarDateKeyInTimeZone(new Date(), preferences.timezone);
   const nextMonthDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 30);
   const nextMonthIso = `${nextMonthDate.getFullYear()}-${String(nextMonthDate.getMonth() + 1).padStart(2, '0')}-${String(nextMonthDate.getDate()).padStart(2, '0')}`;
-  const todayEvents = dashboardRecords.events.filter((event) => String(event.date || event.startsAt || '').slice(0, 10) === todayIso).sort((a, b) => String(a.time || a.startsAt || '').localeCompare(String(b.time || b.startsAt || '')));
-  const dueDate = (bill) => String(bill.dueAt || bill.due || '').slice(0, 10);
+  const eventStartTime = (event) => event.time || (event.startsAt ? calendarTimeInTimeZone(event.startsAt, preferences.timezone) : '');
+  const todayEvents = dashboardRecords.events.filter((event) => calendarDateKeyForValue(event.date || event.startsAt, preferences.timezone) === todayIso).sort((a, b) => eventStartTime(a).localeCompare(eventStartTime(b)));
+  const minutesOfDay = (time) => { const [hours, minutes] = String(time || '').split(':').map(Number); return Number.isFinite(hours) && Number.isFinite(minutes) ? hours * 60 + minutes : -1; };
+  const currentMinutes = minutesOfDay(now);
+  const activeTodayEvent = todayEvents.find((event) => { const start = minutesOfDay(eventStartTime(event)); return start >= 0 && currentMinutes >= start && currentMinutes < start + (Number(event.durationMinutes ?? event.duration) || 60); });
+  const upcomingTodayEvent = todayEvents.find((event) => minutesOfDay(eventStartTime(event)) > currentMinutes);
+  const highlightedTodayEvent = activeTodayEvent || upcomingTodayEvent;
+  const dueDate = (bill) => calendarDateKeyForValue(bill.dueAt || bill.due, preferences.timezone);
   const overdueBills = openBills.filter((bill) => (dueDate(bill) && dueDate(bill) < todayIso) || ['vencida', 'atrasada', 'overdue'].includes(String(bill.status || '').toLowerCase()));
   const upcomingBills = openBills.filter((bill) => dueDate(bill) && dueDate(bill) >= todayIso && dueDate(bill) <= nextMonthIso);
   const upcomingAmount = upcomingBills.reduce((sum, bill) => sum + Number(bill.amount || amountValue(bill.value)), 0);
-  const activeProjects = dashboardProjects.filter((project) => !['Concluído', 'Concluída', 'Concluida', 'completed'].includes(project.status));
+  const activeProjects = filterDashboardActiveProjects(dashboardProjects);
+  const dashboardRestricted = (source) => dashboardRestrictedSources.includes(source);
+  const restrictedWorkspaceModules = [...new Set(dashboardRestrictedSources.map((source) => ({ leads: 'CRM', projects: 'Projetos', tasks: 'Tarefas', events: 'Agenda', proposals: 'CRM', bills: 'Financeiro' })[source]).filter(Boolean))];
+  const deliveryPermission = currentUser?.permissions?.delivery;
+  const canEditTasks = currentUser?.role === 'owner' || (deliveryPermission ? deliveryPermission.write === true : true);
 
   useEffect(() => {
     let active = true;
     apiRequest('/api/workspace/preferences').then((result) => {
       if (!active) return;
+      setNotificationPreferences(result.data?.notifications || {});
       const next = publishWorkspacePreferences(mergeServerWorkspacePreferences(result.data));
       if (!hadExplicitPageAtStartup.current && !didNavigateAtStartup.current && roleCanOpenPage(currentUser?.role, next.startPage, currentUser?.permissions)) setActiveNav(next.startPage);
     }).catch(() => {});
-    return () => { active = false; };
+    const updateNotifications = (event) => setNotificationPreferences(event.detail && typeof event.detail === 'object' ? event.detail : {});
+    window.addEventListener('nexo:workspace-notifications', updateNotifications);
+    return () => { active = false; window.removeEventListener('nexo:workspace-notifications', updateNotifications); };
   }, [currentUser?.role]);
 
   const refreshDashboard = useCallback(async () => {
-    try {
-      const isMember = storedWorkspaceUser()?.role === 'member';
-      const [leads, projects, loadedTasks, events, proposals, bills] = await Promise.all([
-        isMember ? Promise.resolve([]) : fetchAllRecords('/api/workspace/leads'), fetchAllRecords('/api/workspace/projects'), fetchAllRecords('/api/workspace/tasks'),
-        fetchAllRecords('/api/workspace/events'), isMember ? Promise.resolve([]) : fetchAllRecords('/api/workspace/proposals'), isMember ? Promise.resolve([]) : fetchAllRecords('/api/billing/orders'),
-      ]);
-      setDashboardRecords({ leads, projects, events, proposals, bills });
-      setTasks(loadedTasks.map((task) => ({ ...task, state: task.state || task.status || 'Pendente', company: task.company || task.client || '', time: task.time || '', detail: task.description || task.detail || '' })));
-      setDashboardError('');
-    } catch (error) { setDashboardError(error.message || 'Não foi possível atualizar o resumo.'); }
-  }, []);
+    const refreshId = ++dashboardRefreshId.current;
+    setDashboardLoading(true);
+    const isMember = storedWorkspaceUser()?.role === 'member';
+    const sources = [
+      { key: 'leads', load: isMember ? Promise.resolve([]) : fetchAllRecords('/api/workspace/leads') },
+      { key: 'projects', load: fetchAllRecords('/api/workspace/projects') },
+      { key: 'tasks', load: fetchAllRecords('/api/workspace/tasks') },
+      { key: 'events', load: fetchAllRecords('/api/workspace/events') },
+      { key: 'proposals', load: isMember ? Promise.resolve([]) : fetchAllRecords('/api/workspace/proposals') },
+      { key: 'bills', load: isMember ? Promise.resolve([]) : fetchAllRecords('/api/billing/orders') },
+      { key: 'inbox', load: localDemo ? fetchAllRecords('/api/workspace/inbox') : Promise.resolve([]) },
+    ];
+    const results = await Promise.all(sources.map(async ({ key, load }) => {
+      try { return { key, records: await load }; }
+      catch (error) { return { key, error }; }
+    }));
+    if (refreshId !== dashboardRefreshId.current) return;
+    const permissionFailures = results.filter(({ error }) => error && (error.code === 'forbidden' || error.details?.status === 403));
+    const otherFailures = results.filter(({ key, error }) => error && !permissionFailures.some((failure) => failure.key === key));
+    setDashboardRestrictedSources(permissionFailures.map(({ key }) => key));
+    setDashboardFailedSources(otherFailures.map(({ key }) => key));
+    const next = Object.fromEntries(results.map(({ key, records }) => [key, records || []]));
+    setDashboardRecords(next);
+    setTasks((next.tasks || []).map((task) => ({ ...task, state: task.state || task.status || 'Pendente', company: task.company || task.client || '', time: task.time || '', detail: task.description || task.detail || '' })));
+    setDashboardError(otherFailures[0]?.error?.message || '');
+    setDashboardLoading(false);
+  }, [localDemo]);
 
   const refreshNotifications = useCallback(async () => {
     try {
@@ -302,6 +361,25 @@ function WorkspaceShell() {
     } catch (error) { setNotificationError(error.message || 'Não foi possível carregar as notificações.'); }
     finally { setNotificationLoading(false); }
   }, []);
+
+  const navigateToPage = (page, context = null) => {
+    const user = storedWorkspaceUser();
+    if (!allWorkspacePageLabels.has(page)) return false;
+    if (!roleCanOpenPage(user?.role, page, user?.permissions)) { notify(`Seu perfil não tem permissão para abrir ${page}.`); return false; }
+    if (!dispatchBeforeWorkspaceNavigation(window, page, context)) return false;
+    didNavigateAtStartup.current = true;
+    setActiveNav(page);
+    setNavigationContext(context);
+    setMobileMenuOpen(false);
+    setSearchOpen(false);
+    setCreateOpen(false);
+    return true;
+  };
+
+  const openDashboardMetric = (metric) => {
+    const destination = dashboardMetricNavigation(metric);
+    if (destination) navigateToPage(destination.page, destination.context || null);
+  };
 
   const markNotificationsRead = async () => {
     try {
@@ -324,15 +402,82 @@ function WorkspaceShell() {
         return;
       }
     }
-    setActiveNav(item.page);
+    const target = notificationNavigationTarget(item);
+    navigateToPage(target.page, target.context);
     setNotificationOpen(false);
   };
 
   useEffect(() => {
+    if (notificationLoading || notificationError) return;
+    const items = notificationItems.filter((item) => typeof item?.id === 'string');
+    if (seenActivityNotifications.current === null) {
+      seenActivityNotifications.current = new Set(items.map((item) => item.id));
+      return;
+    }
+    const seen = seenActivityNotifications.current;
+    const unseen = items.filter((item) => !seen.has(item.id));
+    if (!unseen.length) return;
+    const options = { permission: typeof window.Notification === 'undefined' ? 'unsupported' : window.Notification.permission, visible: document.visibilityState === 'visible', now: new Date(), timeZone: preferences.timezone };
+    if (notificationPreferences.browser === true && options.permission === 'granted' && !options.visible && isWithinWorkspaceQuietHours(options.now, notificationPreferences, options.timeZone)) return;
+    for (const item of unseen) seen.add(item.id);
+    if (localDemo || typeof window.Notification === 'undefined') return;
+    for (const item of unseen) {
+      if (!shouldSendActivityBrowserAlert(item, notificationPreferences, options)) continue;
+      try {
+        const notice = new window.Notification(item.title || 'Focusshub', { body: item.detail || 'Há uma nova atualização no workspace.', tag: `focusshub-${item.id}` });
+        notice.onclick = () => {
+          window.focus();
+          window.dispatchEvent(new CustomEvent('nexo:navigate', { detail: notificationNavigationTarget(item) }));
+          notice.close();
+        };
+      } catch { /* Browser delivery can be unavailable even after permission was granted. */ }
+    }
+  }, [notificationItems, notificationLoading, notificationError, notificationPreferences, preferences.timezone, localDemo]);
+
+  useEffect(() => {
+    if (localDemo || !tasks.length || typeof window.Notification === 'undefined') return undefined;
+    const storageKey = `focusshub.task-browser-alerts.${currentUser?.id || 'workspace'}`;
+    let seen = new Set();
+    try { const stored = JSON.parse(localStorage.getItem(storageKey) || '[]'); if (Array.isArray(stored)) seen = new Set(stored.filter((key) => typeof key === 'string')); } catch { /* Keep this session functional if storage is disabled. */ }
+    const sendDueReminders = () => {
+      const candidates = taskReminderCandidates(tasks, notificationPreferences, { permission: window.Notification.permission, now: new Date(), timeZone: preferences.timezone });
+      for (const candidate of candidates) {
+        if (seen.has(candidate.key)) continue;
+        if (document.visibilityState === 'visible') continue;
+        try {
+          const notice = new window.Notification(candidate.title, { body: candidate.body, tag: `focusshub-${candidate.key}` });
+          notice.onclick = () => {
+            window.focus();
+            window.dispatchEvent(new CustomEvent('nexo:navigate', { detail: { page: candidate.page, context: { taskId: candidate.taskId } } }));
+            notice.close();
+          };
+          seen.add(candidate.key);
+          try { localStorage.setItem(storageKey, JSON.stringify([...seen].slice(-500))); } catch { /* Notification still displays in this session. */ }
+        } catch { /* Browser delivery can be unavailable even after permission was granted. */ }
+      }
+    };
+    sendDueReminders();
+    document.addEventListener('visibilitychange', sendDueReminders);
+    const reminderTimer = window.setInterval(sendDueReminders, 60_000);
+    return () => {
+      document.removeEventListener('visibilitychange', sendDueReminders);
+      window.clearInterval(reminderTimer);
+    };
+  }, [tasks, notificationPreferences, preferences.timezone, localDemo, currentUser?.id]);
+
+  useEffect(() => {
     refreshDashboard();
-    const clock = window.setInterval(() => setNow(new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })), 60_000);
+    const updateWorkspaceClock = () => setNow(calendarTimeInTimeZone(new Date(), preferences.timezone));
+    updateWorkspaceClock();
+    const clock = window.setInterval(updateWorkspaceClock, 60_000);
     return () => window.clearInterval(clock);
-  }, [refreshDashboard]);
+  }, [refreshDashboard, preferences.timezone]);
+
+  useEffect(() => {
+    const previousPage = previousDashboardPage.current;
+    previousDashboardPage.current = activeNav;
+    if (shouldRefreshDashboardOnNavigation(previousPage, activeNav, didNavigateAtStartup.current)) refreshDashboard();
+  }, [activeNav, refreshDashboard]);
 
   useEffect(() => {
     refreshNotifications();
@@ -358,21 +503,28 @@ function WorkspaceShell() {
     const restoreRoute = () => {
       const page = workspacePageFromPath(window.location.pathname);
       const user = storedWorkspaceUser();
-      if (page && roleCanOpenPage(user?.role, page, user?.permissions)) setActiveNav(page);
-      else { window.history.replaceState({ nexo: true }, '', '/app/meu-dia'); setActiveNav('Meu Dia'); }
+      const canOpenPage = Boolean(page && roleCanOpenPage(user?.role, page, user?.permissions));
+      const destination = workspaceRouteDestination(page, canOpenPage);
+      if (!dispatchBeforeWorkspaceNavigation(window, destination)) {
+        window.history.pushState({ nexo: true }, '', `/app/${workspacePageSlug(activeNav)}`);
+        return;
+      }
+      didNavigateAtStartup.current = true;
+      if (!canOpenPage) window.history.replaceState({ nexo: true }, '', `/app/${workspacePageSlug(destination)}`);
+      setActiveNav(destination);
     };
     window.addEventListener('popstate', restoreRoute);
     return () => window.removeEventListener('popstate', restoreRoute);
-  }, []);
+  }, [activeNav]);
 
   useEffect(() => {
-    const navigate = (event) => { const detail = typeof event.detail === 'string' ? { page: event.detail, context: null } : event.detail; const user = storedWorkspaceUser(); if (detail?.page && allWorkspacePageLabels.has(detail.page) && roleCanOpenPage(user?.role, detail.page, user?.permissions)) { didNavigateAtStartup.current = true; setActiveNav(detail.page); setNavigationContext(detail.context || null); setMobileMenuOpen(false); } };
+    const navigate = (event) => { const detail = typeof event.detail === 'string' ? { page: event.detail, context: null } : event.detail; if (detail?.page) navigateToPage(detail.page, detail.context || null); };
     window.addEventListener('nexo:navigate', navigate);
     return () => window.removeEventListener('nexo:navigate', navigate);
   }, []);
 
   useEffect(() => {
-    const closeMenu = (event) => { if (event.key === 'Escape') setMobileMenuOpen(false); };
+    const closeMenu = (event) => { if (event.key === 'Escape') { setMobileMenuOpen(false); setSearchOpen(false); setCreateOpen(false); setNotificationOpen(false); } };
     window.addEventListener('keydown', closeMenu);
     return () => window.removeEventListener('keydown', closeMenu);
   }, []);
@@ -386,19 +538,18 @@ function WorkspaceShell() {
   const visibleLeads = useMemo(() => {
     if (filter === 'Todos') return dashboardLeads;
     return dashboardLeads.filter((lead) => lead.source === filter);
-  }, [filter, sourceLeads]);
+  }, [filter, dashboardLeads]);
 
   const visibleNavGroups = navGroups.map((group) => ({ ...group, items: group.items.filter((item) => roleCanOpenPage(currentUser?.role, item.label, currentUser?.permissions)) })).filter((group) => group.items.length > 0);
   const initials = (currentUser?.name || '').trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase();
-  const dateChip = new Intl.DateTimeFormat('pt-BR', { weekday: 'short', day: '2-digit', month: 'short' }).format(today);
+  const dateChip = new Intl.DateTimeFormat('pt-BR', { weekday: 'short', day: '2-digit', month: 'short', timeZone: preferences.timezone }).format(new Date());
+  const createActions = currentUser?.role === 'member' ? [['Tarefa', 'Tarefas', 'task'], ['Reunião', 'Agenda', 'event']] : [['Lead', 'Leads', 'lead'], ['Projeto', 'Projetos', 'project'], ['Tarefa', 'Tarefas', 'task'], ['Reunião', 'Agenda', 'event'], ['Cobrança', 'Cobranças', 'billing']];
+  const availableCreateActions = createActions.filter(([, page]) => roleCanOpenPage(currentUser?.role, page, currentUser?.permissions));
 
-  const todaysTasks = useMemo(() => tasks.filter((task) => String(task.dueAt || task.dueDate || task.due || '').slice(0, 10) === todayIso), [tasks, todayIso]);
+  const todaysTasks = useMemo(() => tasks.filter((task) => calendarDateKeyForValue(task.dueAt || task.dueDate || task.due, preferences.timezone) === todayIso), [tasks, todayIso, preferences.timezone]);
   const visibleTasks = useMemo(() => {
-    if (taskFilter === 'Em andamento') return todaysTasks.filter((task) => normalizedTaskStatus(task) === 'em andamento');
-    if (taskFilter === 'Pendente') return todaysTasks.filter((task) => ['pendente', 'a fazer', 'aberta', 'novo'].includes(normalizedTaskStatus(task)));
-    if (taskFilter === 'Concluída') return todaysTasks.filter(isCompletedTask);
-    return preferences.showCompleted ? todaysTasks : todaysTasks.filter((task) => !isCompletedTask(task));
-  }, [taskFilter, todaysTasks, preferences.showCompleted]);
+    return filterDashboardTasks(todaysTasks, taskFilter);
+  }, [taskFilter, todaysTasks]);
 
   const notify = (message) => {
     setToast(message);
@@ -412,11 +563,13 @@ function WorkspaceShell() {
     try {
       const records = await fetchAllRecords('/api/workspace/settings');
       const existing = records.find((record) => record.key === 'workspace-preferences');
+      const { timezone, weekStart, ...personalPreferences } = nextPreferences;
       const data = {
         key: 'workspace-preferences',
         settings: {
           ...(existing?.settings || {}),
-          preferences: { ...(existing?.settings?.preferences || {}), ...nextPreferences },
+          workspace: { ...(existing?.settings?.workspace || {}), timezone, weekStart },
+          preferences: { ...(existing?.settings?.preferences || {}), ...personalPreferences },
         },
       };
       if (existing?.id) {
@@ -428,59 +581,96 @@ function WorkspaceShell() {
   };
 
   const toggleTask = async (id) => {
-    const task = tasks.find((item) => item.id === id);
+    if (updatingTaskIds.has(id)) return;
+    const task = tasks.find((item) => String(item.id) === String(id));
     if (!task) return;
-    const state = isCompletedTask(task) ? 'Pendente' : 'Concluída';
-    try { const result = await apiRequest(`/api/workspace/tasks/${id}`, { method: 'PATCH', body: JSON.stringify({ data: { state, status: state } }) }); setTasks((current) => current.map((item) => item.id === id ? { ...item, ...result.data, state } : item)); }
-    catch (error) { setDashboardError(error.message || 'Não foi possível atualizar a tarefa.'); }
+    const reopening = isCompletedTask(task);
+    const state = reopening ? 'Pendente' : 'Conclu\u00edda';
+    const transition = completeTaskOccurrence(tasks, id);
+    const occurrence = reopening ? null : transition.occurrence;
+    setUpdatingTaskIds((current) => new Set(current).add(id));
+    try {
+      const result = await apiRequest(`/api/workspace/tasks/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ data: { state, status: state } }) });
+      const savedTask = { ...task, ...result.data, state, status: state };
+      setTasks((current) => current.map((item) => String(item.id) === String(id) ? savedTask : item));
+      if (occurrence) {
+        try {
+          const { id: _id, createdAt: _createdAt, updatedAt: _updatedAt, ...data } = occurrence;
+          const nextResult = await apiRequest('/api/workspace/tasks', { method: 'POST', body: JSON.stringify({ data: { ...data, state: 'A fazer', status: 'A fazer' } }) });
+          setTasks((current) => current.some((item) => String(item.recurrenceId || item.id) === String(occurrence.recurrenceId) && Number(item.recurrenceSequence || 1) === Number(occurrence.recurrenceSequence)) ? current : [{ ...occurrence, ...nextResult.data }, ...current]);
+          notify(`Tarefa conclu\u00edda. Pr\u00f3xima ocorr\u00eancia criada para ${new Date(`${occurrence.due}T12:00:00`).toLocaleDateString('pt-BR')}.`);
+        } catch (error) {
+          setDashboardError(`Tarefa concluida, mas a proxima ocorrencia nao foi criada. Abra Tarefas e crie a proxima data manualmente. ${error.message || ''}`.trim());
+        }
+      }
+    } catch (error) {
+      setDashboardError(error.message || 'Nao foi possivel atualizar a tarefa.');
+    } finally {
+      setUpdatingTaskIds((current) => { const next = new Set(current); next.delete(id); return next; });
+    }
   };
 
-  const handleLeadAction = (lead) => { const destination = /proposta/i.test(lead.action) ? 'Propostas' : /reunião|agendar|apresentação/i.test(lead.action) ? 'Agenda' : 'Pipeline'; setActiveNav(destination); notify(`${lead.name} · abrindo ${destination.toLowerCase()}`); };
+  const handleLeadAction = (lead) => { const destination = /proposta/i.test(lead.action) ? 'Propostas' : /reunião|agendar|apresentação/i.test(lead.action) ? 'Agenda' : 'Pipeline'; if (navigateToPage(destination)) notify(`${lead.name} · abrindo ${destination.toLowerCase()}`); };
+
+  const handleLogout = async () => {
+    if (loggingOut) return;
+    setLoggingOut(true);
+    try {
+      await logoutWorkspace({ request: apiRequest, storage: sessionStorage });
+      window.location.assign('/');
+    } catch (error) {
+      notify(error.message || 'Não foi possível encerrar a sessão. Tente novamente.');
+      setLoggingOut(false);
+    }
+  };
 
   return (
     <div className={"app-shell " + (preferences.compact ? 'is-compact' : '')}>
+      <a className="skip-link" href="#main-content">Pular para o conteúdo principal</a>
       <aside id="workspace-mobile-navigation" className={`side-nav ${mobileMenuOpen ? 'mobile-open' : ''}`} aria-label="Navegação principal">
-        <button className="side-brand" aria-label="Focusshub início" onClick={() => { didNavigateAtStartup.current = true; setActiveNav('Meu Dia'); setMobileMenuOpen(false); }}>
+        <button className="side-brand" aria-label="Focusshub início" onClick={() => navigateToPage('Meu Dia')}>
           <span className="brand-glyph"><i /><b /><em /></span><strong>Focusshub</strong>
         </button>
         <nav className="side-nav-scroll">
           {visibleNavGroups.map((group) => <div className="nav-group" key={group.label}>
             <span className="nav-group-title">{group.label}</span>
-            {group.items.map(({ label, icon: Icon }) => { const selected = label === 'CRM' ? commercialPages.has(activeNav) : activeNav === label; return <button key={label} className={`side-nav-link ${selected ? 'active' : ''}`} onClick={() => { didNavigateAtStartup.current = true; setActiveNav(label); setMobileMenuOpen(false); }} aria-current={selected ? 'page' : undefined} aria-label={label} title={label}>
+            {group.items.map(({ label, icon: Icon }) => { const selected = label === 'CRM' ? commercialPages.has(activeNav) : activeNav === label; return <button key={label} className={`side-nav-link ${selected ? 'active' : ''}`} onClick={() => navigateToPage(label)} aria-current={selected ? 'page' : undefined} aria-label={label} title={label}>
               <Icon size={16} strokeWidth={1.8} /><span>{label}</span>
             </button>; })}
           </div>)}
         </nav>
-        <button className="profile-shortcut" onClick={() => { didNavigateAtStartup.current = true; setActiveNav(currentUser?.role === 'member' ? 'Meu Dia' : 'Configura\u00e7\u00f5es'); }}><Avatar initials={initials || '—'} color="teal" online /><span><b>{currentUser?.name || currentUser?.email || 'Minha conta'}</b><small>{currentUser?.organizationName || 'Workspace'}</small></span><ChevronDown size={14} /></button>
+        <button className="profile-shortcut" onClick={() => navigateToPage(currentUser?.role === 'member' ? 'Meu Dia' : 'Configura\u00e7\u00f5es')}><Avatar initials={initials || '—'} color="teal" online /><span><b>{currentUser?.name || currentUser?.email || 'Minha conta'}</b><small>{currentUser?.organizationName || 'Workspace'}</small></span><ChevronDown size={14} /></button>
+        {!localDemo && <button className="side-nav-link" type="button" onClick={handleLogout} disabled={loggingOut} aria-label="Sair da conta" title="Sair da conta"><LogOut size={16} strokeWidth={1.8} /><span>{loggingOut ? 'Encerrando sessão...' : 'Sair da conta'}</span></button>}
       </aside>
 
       <section className="workspace">
         <header className="topbar">
           <div className="day-strip">
             <div className="strip-title"><span className="strip-caption">{activeNav}</span><span className="date-chip"><CalendarDays size={13} /> {dateChip}</span></div>
-            <div className={`strip-event ${todayEvents.length ? 'strip-current' : 'strip-idle'}`}><span className="time-pin">{now}</span><strong>{todayEvents[0]?.title || todayEvents[0]?.name || "Agenda livre"}</strong><span className="strip-empty">{todayEvents[0]?.time || (todayEvents[0]?.startsAt ? new Date(todayEvents[0].startsAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : "Sem compromissos marcados.")}</span></div>
+            <div className={`strip-event ${highlightedTodayEvent ? 'strip-current' : 'strip-idle'}`}><span className="time-pin">{activeTodayEvent ? 'Em andamento' : highlightedTodayEvent ? 'Próximo' : 'Agora'}{!highlightedTodayEvent && ` ${now}`}</span><strong>{highlightedTodayEvent?.title || highlightedTodayEvent?.name || "Agenda livre"}</strong>{!highlightedTodayEvent && <span className="strip-empty">Sem compromissos marcados.</span>}</div>
           </div>
           {mobileMenuOpen && <button className="mobile-nav-backdrop" type="button" aria-label="Fechar menu" onClick={() => setMobileMenuOpen(false)} />}
-          <div className="top-actions"><button className="icon-button mobile-menu-toggle" aria-label="Abrir menu" aria-expanded={mobileMenuOpen} aria-controls="workspace-mobile-navigation" onClick={() => setMobileMenuOpen((open) => !open)}><Menu size={19} /></button><button className="icon-button" aria-label="Buscar" aria-expanded={searchOpen} onClick={() => { setSearchOpen((open) => !open); setSearchQuery(''); }}><Search size={19} /></button><button className="icon-button theme-toggle-button" type="button" aria-label={preferences.darkMode ? 'Ativar modo claro' : 'Ativar modo escuro'} title={preferences.darkMode ? 'Ativar modo claro' : 'Ativar modo escuro'} onClick={toggleTheme}>{preferences.darkMode ? <Sun size={19} /> : <Moon size={19} />}</button><button className="icon-button notification-button" aria-label={`Notificações${notificationUnread ? `, ${notificationUnread} não lidas` : ''}`} aria-expanded={notificationOpen} aria-haspopup="dialog" onClick={() => { setNotificationOpen((open) => !open); refreshNotifications(); }}><Bell size={19} />{notificationUnread > 0 && <span className="notification-count">{notificationUnread > 99 ? '99+' : notificationUnread}</span>}</button><Avatar initials={initials || "—"} color="teal" online />{notificationOpen && <section className="notification-panel" role="dialog" aria-label="Central de notificações"><header><div><b>Notificações</b><span>{notificationUnread ? `${notificationUnread} não lidas` : 'Atualizadas com os dados do workspace'}</span></div><button type="button" className="notification-mark-read" onClick={markNotificationsRead} disabled={!notificationUnread}>Marcar como lidas</button></header>{notificationError ? <div className="notification-state error" role="alert"><span>{notificationError}</span><button type="button" onClick={refreshNotifications}>Tentar novamente</button></div> : notificationLoading ? <div className="notification-state">Carregando notificações...</div> : notificationItems.length === 0 ? <div className="notification-state"><Bell size={21} /><b>Tudo em dia</b><span>Quando houver atualizações em clientes, projetos, tarefas ou cobranças, elas aparecerão aqui.</span></div> : <div className="notification-list">{notificationItems.map((item) => <button type="button" className={`notification-item ${item.unread ? 'unread' : ''}`} key={item.id} onClick={() => openNotification(item)}><span className="notification-item-dot" /><span className="notification-item-copy"><b>{item.title}</b><span>{item.detail}</span><small>{new Date(item.createdAt).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}</small></span><ArrowRight size={15} /></button>)}</div>}</section>}{searchOpen && <div className="quick-search-panel"><label><Search size={15} /><input autoFocus value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Buscar no Focusshub" /></label>{navGroups.flatMap((group) => group.items).filter((item) => !searchQuery || item.label.toLocaleLowerCase('pt-BR').includes(searchQuery.toLocaleLowerCase('pt-BR'))).slice(0, 8).map((item) => <button type="button" key={item.label} onClick={() => { setActiveNav(item.label); setMobileMenuOpen(false); setSearchOpen(false); }}>{item.label}<ArrowRight size={14} /></button>)}</div>}</div>
+          <div className="top-actions"><button className="icon-button mobile-menu-toggle" aria-label="Abrir menu" aria-expanded={mobileMenuOpen} aria-controls="workspace-mobile-navigation" onClick={() => setMobileMenuOpen((open) => !open)}><Menu size={19} /></button><button className="icon-button" aria-label="Buscar" aria-expanded={searchOpen} onClick={() => { setSearchOpen((open) => !open); setSearchQuery(''); }}><Search size={19} /></button><button className="icon-button theme-toggle-button" type="button" aria-label={preferences.darkMode ? 'Ativar modo claro' : 'Ativar modo escuro'} title={preferences.darkMode ? 'Ativar modo claro' : 'Ativar modo escuro'} onClick={toggleTheme}>{preferences.darkMode ? <Sun size={19} /> : <Moon size={19} />}</button><button className="icon-button notification-button" aria-label={`Notificações${notificationUnread ? `, ${notificationUnread} não lidas` : ''}`} aria-expanded={notificationOpen} aria-haspopup="dialog" onClick={() => { setNotificationOpen((open) => !open); refreshNotifications(); }}><Bell size={19} />{notificationUnread > 0 && <span className="notification-count">{notificationUnread > 99 ? '99+' : notificationUnread}</span>}</button><Avatar initials={initials || "—"} color="teal" online />{notificationOpen && <section className="notification-panel" role="dialog" aria-label="Central de notificações"><header><div><b>Notificações</b><span>{notificationUnread ? `${notificationUnread} não lidas` : 'Atualizadas com os dados do workspace'}</span></div><button type="button" className="notification-mark-read" onClick={markNotificationsRead} disabled={!notificationUnread}>Marcar como lidas</button></header>{notificationError ? <div className="notification-state error" role="alert"><span>{notificationError}</span><button type="button" onClick={refreshNotifications}>Tentar novamente</button></div> : notificationLoading ? <div className="notification-state">Carregando notificações...</div> : notificationItems.length === 0 ? <div className="notification-state"><Bell size={21} /><b>Tudo em dia</b><span>Quando houver atualizações em clientes, projetos, tarefas ou cobranças, elas aparecerão aqui.</span></div> : <div className="notification-list">{notificationItems.map((item) => <button type="button" className={`notification-item ${item.unread ? 'unread' : ''}`} key={item.id} onClick={() => openNotification(item)}><span className="notification-item-dot" /><span className="notification-item-copy"><b>{item.title}</b><span>{item.detail}</span><small>{new Date(item.createdAt).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}</small></span><ArrowRight size={15} /></button>)}</div>}</section>}{searchOpen && <div className="quick-search-panel"><label><Search size={15} /><input autoFocus value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Buscar no Focusshub" /></label>{navGroups.flatMap((group) => group.items).filter((item) => roleCanOpenPage(currentUser?.role, item.label, currentUser?.permissions) && (!searchQuery || item.label.toLocaleLowerCase('pt-BR').includes(searchQuery.toLocaleLowerCase('pt-BR')))).slice(0, 8).map((item) => <button type="button" key={item.label} onClick={() => navigateToPage(item.label)}>{item.label}<ArrowRight size={14} /></button>)}</div>}</div>
         </header>
 
-        <div className="page-content">
+        {localDemo && <div className="local-demo-banner" role="status"><span><Sparkles size={15}/><b>Modo de demonstração local</b><small>Dados fictícios salvos só neste navegador. Nenhum serviço externo ou cobrança real é acionado.</small></span><div><button type="button" onClick={() => { resetLocalDemo(); window.location.reload(); }}>Restaurar exemplos</button><button type="button" onClick={() => { exitLocalDemo(); window.location.assign('/'); }}>Sair da demonstração</button></div></div>}
+        <div className="page-content" id="main-content" tabIndex={-1}>
           {activeNav === 'Meu Dia' ? <main className="dashboard-view">
           <div className="welcome-row">
             <div><p className="eyebrow">{dashboardDate.toLocaleUpperCase('pt-BR')}</p><h1>Meu dia</h1><p className="welcome-subtitle">Aqui está o que merece sua atenção hoje.</p></div>
-            <div className="dashboard-create-wrap"><button className="primary-button" aria-expanded={createOpen} onClick={() => setCreateOpen((open) => !open)}><Plus size={17} /> Criar novo <ChevronDown size={15} /></button>{createOpen && <div className="dashboard-create-menu" role="menu">{(currentUser?.role === 'member' ? [['Tarefa', 'Tarefas'], ['Reuniao', 'Agenda']] : [['Lead', 'Leads'], ['Projeto', 'Projetos'], ['Tarefa', 'Tarefas'], ['Reuniao', 'Agenda'], ['Cobranca', 'Cobr\u00e7as']]).map(([label, page]) => <button type="button" role="menuitem" key={page} onClick={() => { setActiveNav(page); setCreateOpen(false); }}>{label}<ArrowRight size={14} /></button>)}</div>}</div>
+            <div className="dashboard-create-wrap"><button className="primary-button" aria-expanded={createOpen} aria-haspopup="menu" onClick={() => setCreateOpen((open) => !open)}><Plus size={17} /> Criar novo <ChevronDown size={15} /></button>{createOpen && <div className="dashboard-create-menu" role="menu">{availableCreateActions.map(([label, page, action]) => <button type="button" role="menuitem" key={page} onClick={() => { const intentId = globalThis.crypto?.randomUUID?.() || `dashboard-create-${Date.now()}`; navigateToPage(page, dashboardCreateContext(action, intentId)); }}>{label}<ArrowRight size={14} /></button>)}</div>}</div>
           </div>
 
-          {currentUser?.role !== 'member' && <FirstRunSetup notify={notify} onNavigate={(page, context) => { if (roleCanOpenPage(currentUser?.role, page, currentUser?.permissions)) { setActiveNav(page); setNavigationContext(context || null); } }} />}
+          {currentUser?.role !== 'member' && !localDemo && <FirstRunSetup notify={notify} onNavigate={(page, context) => navigateToPage(page, context)} />}
           {currentUser?.role === 'member' ? <section className="stats-grid" aria-label="Resumo">
-            <StatCard title="Projetos" value={String(activeProjects.length)} change="" detail="em andamento" icon={FolderKanban} tone="blue" />
-            <StatCard title="Tarefas de hoje" value={String(todaysTasks.filter((task) => !isCompletedTask(task)).length)} change="" detail="pendentes" icon={CheckSquare} tone="green" />
-            <StatCard title="Eventos de hoje" value={String(todayEvents.length)} change="" detail="na agenda" icon={CalendarDays} tone="blue" />
+            <StatCard title="Projetos" value={dashboardRestricted('projects') ? '—' : dashboardLoading ? '…' : String(activeProjects.length)} change="" detail={dashboardRestricted('projects') ? 'sem acesso a Projetos' : 'em andamento'} icon={FolderKanban} tone="blue" onClick={() => openDashboardMetric('projects')} />
+            <StatCard title="Tarefas de hoje" value={dashboardRestricted('tasks') ? '—' : dashboardLoading ? '…' : String(todaysTasks.filter((task) => !isCompletedTask(task)).length)} change="" detail={dashboardRestricted('tasks') ? 'sem acesso a Tarefas' : 'pendentes'} icon={CheckSquare} tone="green" onClick={() => openDashboardMetric('tasks')} />
+            <StatCard title="Eventos de hoje" value={dashboardRestricted('events') ? '—' : dashboardLoading ? '…' : String(todayEvents.length)} change="" detail={dashboardRestricted('events') ? 'sem acesso à Agenda' : 'na agenda'} icon={CalendarDays} tone="blue" onClick={() => openDashboardMetric('events')} />
           </section> : <section className="stats-grid" aria-label="Resumo">
-            <StatCard title="Leads" value={String(sourceLeads.length)} change="" detail="oportunidades no pipeline" icon={Users} tone="green" />
-            <StatCard title="Projetos" value={String(activeProjects.length)} change="" detail="em andamento" icon={FolderKanban} tone="blue" />
-            <StatCard title="A receber" value={upcomingAmount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} change="" detail="proximos 30 dias" icon={CircleDollarSign} tone="green" />
-            <StatCard title="Atrasadas" value={String(overdueBills.length)} change="" detail="cobrancas em atraso" icon={Clock3} tone="red" negative />
+            <StatCard title="Leads" value={dashboardRestricted('leads') ? '—' : dashboardLoading ? '…' : String(sourceLeads.length)} change="" detail={dashboardRestricted('leads') ? 'sem acesso ao CRM' : 'oportunidades no pipeline'} icon={Users} tone="green" onClick={() => openDashboardMetric('leads')} />
+            <StatCard title="Projetos" value={dashboardRestricted('projects') ? '—' : dashboardLoading ? '…' : String(activeProjects.length)} change="" detail={dashboardRestricted('projects') ? 'sem acesso a Projetos' : 'em andamento'} icon={FolderKanban} tone="blue" onClick={() => openDashboardMetric('projects')} />
+            <StatCard title="A receber" value={dashboardRestricted('bills') ? '—' : dashboardLoading ? '…' : upcomingAmount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} change="" detail={dashboardRestricted('bills') ? 'sem acesso ao Financeiro' : 'próximos 30 dias'} icon={CircleDollarSign} tone="green" onClick={() => openDashboardMetric('receivables')} />
+            <StatCard title="Atrasadas" value={dashboardRestricted('bills') ? '—' : dashboardLoading ? '…' : String(overdueBills.length)} change="" detail={dashboardRestricted('bills') ? 'sem acesso ao Financeiro' : 'cobranças em atraso'} icon={Clock3} tone="red" negative onClick={() => openDashboardMetric('overdue')} />
           </section>}
 
           <section className={`dashboard-grid ${chatOpen ? '' : 'chat-closed'}`}>
@@ -491,35 +681,51 @@ function WorkspaceShell() {
               <div className="section-title-group"><h2>Leads novos</h2><span className="count-pill">{dashboardLeads.length} cadastrados</span></div>
               <div className="lead-filters" role="tablist" aria-label="Filtrar leads">
                 {['Todos', 'Site', 'Indicação', 'Instagram', 'Tráfego pago'].map((item) => <button key={item} role="tab" aria-selected={filter === item} className={filter === item ? 'selected' : ''} onClick={() => setFilter(item)}>{item}</button>)}
-                <button className="filter-more" onClick={() => setActiveNav('Leads')}>Ver todos <ChevronRight size={13} /></button>
+                <button className="filter-more" onClick={() => navigateToPage('Leads')}>Ver todos <ChevronRight size={13} /></button>
               </div>
             </div>
             <div className="lead-grid">
               {visibleLeads.slice(0, 4).map((lead) => <LeadCard key={lead.id} lead={lead} onAction={() => handleLeadAction(lead)} onMore={() => handleLeadAction({ ...lead, action: 'Abrir oportunidade' })} />)}
-              {visibleLeads.length === 0 && <div className="empty-filter">Nenhum lead nesta origem por enquanto.</div>}
+              {visibleLeads.length === 0 && <div className="empty-filter">{dashboardRestricted('leads') ? 'Seu perfil nao tem leitura de CRM.' : dashboardLoading ? 'Carregando leads...' : dashboardFailedSources.includes('leads') ? 'Nao foi possivel carregar os leads. Tente atualizar.' : 'Nenhum lead nesta origem por enquanto.'}</div>}
             </div>
             </section>
             )}
             <div className="tasks-area">
-              <div className="section-heading task-heading"><div className="section-title-group"><h2>Tarefas de hoje</h2><span className="count-pill">{todaysTasks.filter((task) => !isCompletedTask(task)).length} abertas hoje</span></div><div className="task-tabs">{['Todas', 'Em andamento', 'Pendente', 'Concluída'].map((item) => <button key={item} className={taskFilter === item ? 'selected' : ''} aria-pressed={taskFilter === item} onClick={() => setTaskFilter(item)}>{item}</button>)}</div></div>
+              <div className="section-heading task-heading"><div className="section-title-group"><h2>Tarefas de hoje</h2><span className="count-pill">{dashboardLoading ? 'Carregando...' : `${todaysTasks.filter((task) => !isCompletedTask(task)).length} abertas hoje`}</span></div><div className="task-tabs">{['Todas', 'Em andamento', 'Pendente', 'Concluída'].map((item) => <button key={item} className={taskFilter === item ? 'selected' : ''} aria-pressed={taskFilter === item} onClick={() => setTaskFilter(item)}>{item}</button>)}<button className="task-view-all" onClick={() => navigateToPage('Tarefas')}>Ver todas <ChevronRight size={13}/></button></div></div>
               <div className="task-grid">
-              {visibleTasks.slice(0, 4).map((task) => <TaskCard key={task.id} task={task} onToggle={() => toggleTask(task.id)} onOpen={() => { setNavigationContext({ taskId: task.id }); setActiveNav('Tarefas'); }} />)}
-                {visibleTasks.length === 0 && <div className="empty-filter">Nenhuma tarefa com vencimento hoje. Crie uma tarefa ou consulte todas em Tarefas.</div>}
+              {visibleTasks.slice(0, 3).map((task) => <TaskCard key={task.id} task={task} canToggle={canEditTasks && !dashboardRestricted('tasks') && !dashboardLoading} busy={updatingTaskIds.has(task.id)} onToggle={() => toggleTask(task.id)} onOpen={() => navigateToPage('Tarefas', { taskId: task.id })} />)}
+                {visibleTasks.length === 0 && <div className="empty-filter">{dashboardRestricted('tasks') ? 'Seu perfil nao tem leitura de Tarefas.' : dashboardLoading ? 'Carregando tarefas de hoje...' : dashboardFailedSources.includes('tasks') ? 'Nao foi possivel carregar as tarefas. Tente atualizar.' : 'Nenhuma tarefa com vencimento hoje. Crie uma tarefa ou consulte todas em Tarefas.'}</div>}
               </div>
             </div>
             </div>
             {chatOpen && <aside className={`attention-panel ${chatExpanded ? 'expanded' : ''}`} aria-label="Painel de atendimento">
               <div className="attention-header"><div><span className="online-dot" /><h2>Atendimento</h2><span className="online-label">Online agora</span></div><div className="panel-controls"><button aria-label="Expandir atendimento" onClick={() => setChatExpanded(!chatExpanded)}><ArrowUpRight size={16} /></button><button aria-label="Fechar atendimento" onClick={() => setChatOpen(false)}><X size={16} /></button></div></div>
-              <div className="attention-empty"><Inbox size={24} /><b>Nenhuma conversa registrada</b><span>Abra a caixa de entrada para continuar o atendimento.</span><button onClick={() => setActiveNav("Caixa de entrada")}>Abrir caixa de entrada</button></div>
-            </aside>}
+              {localDemo && dashboardRecords.inbox.length ? <div className="attention-demo-list"><span className="attention-demo-label">Conversas de demonstração</span>{dashboardRecords.inbox.slice(0, 3).map((message) => <button type="button" className="attention-demo-message" key={message.id} onClick={() => navigateToPage('Caixa de entrada')}><span className="attention-demo-avatar">{message.name?.split(/\s+/).map((part) => part[0]).slice(0, 2).join('')}</span><span><b>{message.name}</b><small>{message.text}</small></span><time>{message.time}</time></button>)}<button className="attention-demo-open" onClick={() => navigateToPage('Caixa de entrada')}>Abrir caixa de entrada <ChevronRight size={14}/></button></div> : <div className="attention-empty"><Inbox size={24} /><b>Nenhuma conversa registrada</b><span>Abra a caixa de entrada para continuar o atendimento.</span><button onClick={() => navigateToPage('Caixa de entrada')}>Abrir caixa de entrada</button></div>}
+            </aside>}{!chatOpen && <button type="button" className="attention-reopen" onClick={() => setChatOpen(true)}><Inbox size={16} /> Reabrir atendimento</button>}
           </section>
 
-          {dashboardError && <div className="dashboard-data-error" role="alert"><span>{dashboardError}</span><button type="button" onClick={refreshDashboard}>Tentar novamente</button></div>}
+          <section className="dashboard-agenda" aria-labelledby="dashboard-agenda-title">
+            <div className="dashboard-agenda-heading">
+              <div><h2 id="dashboard-agenda-title">Agenda de hoje</h2><span className="count-pill">{dashboardLoading ? 'Carregando…' : `${todayEvents.length} ${todayEvents.length === 1 ? 'compromisso' : 'compromissos'}`}</span></div>
+              <button type="button" onClick={() => navigateToPage('Agenda')}>Abrir agenda <ArrowRight size={15} /></button>
+            </div>
+            {dashboardRestricted('events') ? <p className="dashboard-agenda-empty">Seu perfil não tem acesso à Agenda.</p> : dashboardLoading ? <p className="dashboard-agenda-empty" aria-live="polite">Carregando compromissos…</p> : dashboardFailedSources.includes('events') ? <div className="dashboard-agenda-error" role="alert">Não foi possível carregar os compromissos. <button type="button" onClick={refreshDashboard} disabled={dashboardLoading}>Tentar novamente</button></div> : todayEvents.length ? <ol className="dashboard-agenda-list">{todayEvents.slice(0, 5).map((event, index) => {
+              const context = dashboardEventNavigationContext(event);
+              const startTime = eventStartTime(event) || 'Horário não definido';
+              const eventMinutes = minutesOfDay(eventStartTime(event));
+              const phase = event === activeTodayEvent ? 'Em andamento' : eventMinutes < 0 ? 'Sem horário' : eventMinutes < currentMinutes ? 'Concluído' : 'Próximo';
+              return <li key={event.id || `${event.title}-${index}`}><button type="button" className={`dashboard-agenda-event ${phase === 'Em andamento' ? 'is-current' : ''}`} onClick={() => context ? navigateToPage('Agenda', context) : navigateToPage('Agenda')} aria-label={`Abrir ${event.title || event.name || 'compromisso'} na Agenda`}><time>{startTime}</time><span className="dashboard-agenda-copy"><b>{event.title || event.name || 'Compromisso'}</b><small>{event.client || event.project || event.type || 'Compromisso da equipe'}</small></span><span className={`dashboard-agenda-phase ${phase === 'Em andamento' ? 'is-current' : ''}`}>{phase}</span><ChevronRight size={16} /></button></li>;
+            })}</ol> : <div className="dashboard-agenda-empty"><CalendarDays size={18} /><span>Nenhum compromisso para hoje.</span><button type="button" onClick={() => navigateToPage('Agenda', dashboardCreateContext('event', globalThis.crypto?.randomUUID?.() || `dashboard-event-${Date.now()}`))}>Agendar evento <ArrowRight size={14} /></button></div>}
+            {todayEvents.length > 5 && <p className="dashboard-agenda-more">+ {todayEvents.length - 5} compromissos. <button type="button" onClick={() => navigateToPage('Agenda')}>Ver todos</button></p>}
+          </section>
+
+          {restrictedWorkspaceModules.length > 0 && <div className="dashboard-access-note" role="status">Parte do resumo foi ocultada pelo seu perfil: {restrictedWorkspaceModules.join(', ')}. Os indicadores afetados aparecem como “—”.</div>}
+          {dashboardError && <div className="dashboard-data-error" role="alert"><span>{dashboardError}</span><button type="button" disabled={dashboardLoading} onClick={refreshDashboard}>{dashboardLoading ? 'Atualizando...' : 'Tentar novamente'}</button></div>}
 
           <section className={`bottom-alerts ${chatOpen ? '' : 'chat-closed'}`}>
-            {currentUser?.role !== 'member' && <button className="alert-card" onClick={() => { setNavigationContext({ filter: 'overdue' }); setActiveNav('Cobranças'); }}><span className="alert-icon red-bg"><CircleDollarSign size={18} /></span><span><b>Cobranças vencidas</b><small>{overdueBills.length ? `${overdueBills.length} aguardando pagamento` : 'Nenhuma cobrança vencida'}</small></span><span className="alert-count red-count">{overdueBills.length}</span><ChevronRight size={17} /></button>}
-            {currentUser?.role !== 'member' && <button className="alert-card" onClick={() => setActiveNav('Propostas')}><span className="alert-icon blue-bg"><FileText size={18} /></span><span><b>Propostas pendentes</b><small>{dashboardRecords.proposals.filter((item) => !['Aprovada', 'Recusada', 'accepted', 'rejected'].includes(item.status)).length ? 'Aguardando retorno de clientes' : 'Nenhuma proposta pendente'}</small></span><span className="alert-count blue-count">{dashboardRecords.proposals.filter((item) => !['Aprovada', 'Recusada', 'accepted', 'rejected'].includes(item.status)).length}</span><ChevronRight size={17} /></button>}
-            <button className="alert-card" onClick={() => setActiveNav('Agenda')}><span className="alert-icon blue-bg"><CalendarDays size={18} /></span><span><b>Eventos de hoje</b><small>{todayEvents.length ? `${todayEvents.length} compromisso${todayEvents.length === 1 ? '' : 's'} na agenda` : 'Nenhum compromisso agendado'}</small></span><span className="alert-count blue-count">{todayEvents.length}</span><ChevronRight size={17} /></button>
+            {currentUser?.role !== 'member' && <button className="alert-card" onClick={() => { navigateToPage('Cobranças', { filter: 'overdue' }); }}><span className="alert-icon red-bg"><CircleDollarSign size={18} /></span><span><b>Cobranças vencidas</b><small>{dashboardRestricted('bills') ? 'Seu perfil não tem acesso ao Financeiro' : overdueBills.length ? `${overdueBills.length} aguardando pagamento` : 'Nenhuma cobrança vencida'}</small></span><span className="alert-count red-count">{dashboardRestricted('bills') ? '—' : overdueBills.length}</span><ChevronRight size={17} /></button>}
+            {currentUser?.role !== 'member' && <button className="alert-card" onClick={() => navigateToPage('Propostas')}><span className="alert-icon blue-bg"><FileText size={18} /></span><span><b>Propostas pendentes</b><small>{dashboardRestricted('proposals') ? 'Seu perfil não tem leitura de CRM' : dashboardRecords.proposals.filter((item) => !['Aprovada', 'Recusada', 'accepted', 'rejected'].includes(item.status)).length ? 'Aguardando retorno de clientes' : 'Nenhuma proposta pendente'}</small></span><span className="alert-count blue-count">{dashboardRestricted('proposals') ? '—' : dashboardRecords.proposals.filter((item) => !['Aprovada', 'Recusada', 'accepted', 'rejected'].includes(item.status)).length}</span><ChevronRight size={17} /></button>}
+            <button className="alert-card" onClick={() => navigateToPage('Agenda')}><span className="alert-icon blue-bg"><CalendarDays size={18} /></span><span><b>Eventos de hoje</b><small>{dashboardRestricted('events') ? 'Seu perfil não tem leitura da Agenda' : todayEvents.length ? `${todayEvents.length} compromisso${todayEvents.length === 1 ? '' : 's'} na agenda` : 'Nenhum compromisso agendado'}</small></span><span className="alert-count blue-count">{dashboardRestricted('events') ? '—' : todayEvents.length}</span><ChevronRight size={17} /></button>
           </section>
           </main> : <Sentry.ErrorBoundary fallback={ModuleErrorFallback} key={activeNav}><ModuleScreen page={activeNav} navigationContext={navigationContext} onNavigationContextConsumed={() => setNavigationContext(null)} /></Sentry.ErrorBoundary>}
         </div>
@@ -536,8 +742,9 @@ export default function App() {
   return <WorkspaceAccess><WorkspaceShell /></WorkspaceAccess>;
 }
 
-function StatCard({ title, value, change, detail, icon: Icon, tone, negative = false }) {
-  return <article className="stat-card"><span className={`stat-icon ${tone}`}><Icon size={19} strokeWidth={1.9} /></span><div className="stat-content"><span className="stat-title">{title}</span><strong>{value}</strong><span className="stat-foot"><span className={negative ? 'change negative' : 'change'}>{negative ? <ArrowUpRight size={13} /> : <ArrowUpRight size={13} />}{change}</span><small>{detail}</small></span></div></article>;
+function StatCard({ title, value, change, detail, icon: Icon, tone, negative = false, onClick }) {
+  const contents = <><span className={`stat-icon ${tone}`}><Icon size={19} strokeWidth={1.9} /></span><div className="stat-content"><span className="stat-title">{title}</span><strong>{value}</strong><span className="stat-foot"><span className={negative ? 'change negative' : 'change'}><ArrowUpRight size={13} />{change}</span><small>{detail}</small></span></div></>;
+  return onClick ? <button type="button" className="stat-card stat-card-link" onClick={onClick} aria-label={`${title}: ${value}. ${detail}. Abrir detalhes`}>{contents}</button> : <article className="stat-card">{contents}</article>;
 }
 
 function LeadCard({ lead, onAction, onMore }) {
@@ -545,11 +752,11 @@ function LeadCard({ lead, onAction, onMore }) {
   return <article className="lead-card"><div className="lead-card-top"><Avatar initials={lead.initials} color={lead.color} /><button className="more-button" aria-label={`Abrir oportunidade de ${lead.name}`} onClick={onMore}><MoreVertical size={17} /></button></div><h3>{lead.name}</h3><p className="lead-company">{lead.company}</p><span className={`source-tag ${lead.icon}`}><SourceIcon size={12} />{lead.source}</span><p className="lead-service">{lead.service}</p><p className="lead-note">{lead.note}</p><button className={`lead-action ${lead.actionType}`} onClick={onAction}>{lead.action}<span><ArrowRight size={15} /></span></button></article>;
 }
 
-function TaskCard({ task, onToggle, onOpen }) {
+function TaskCard({ task, onToggle, onOpen, canToggle = true, busy = false }) {
   const done = isCompletedTask(task);
   return <article className={`task-card ${task.featured ? 'featured' : ''} ${done ? 'done' : ''}`}>
     <div className="task-time"><span>{task.time}</span><span className="today-pill">Hoje</span><div className="task-avatar-stack"><Avatar initials={task.initials} color={task.initials === 'MS' ? 'rose' : task.initials === 'TM' ? 'amber' : 'blue'} small />{task.featured && <Avatar initials="GS" color="teal" small />}</div></div>
     <button className="task-title-button" onClick={onOpen}><h3>{task.title}</h3></button><p className="task-company"><BriefcaseBusiness size={13} />{task.company}</p><p className="task-detail">{task.detail}</p>
-    <div className="task-card-footer"><button className={`task-state ${done ? 'completed' : task.featured ? 'in-progress' : ''}`} onClick={onToggle}>{done ? <Check size={13} /> : <Clock3 size={13} />}{task.state}</button><button className="task-open" aria-label={`Abrir ${task.title}`} onClick={onOpen}><ChevronRight size={19} /></button></div>
+    <div className="task-card-footer"><button className={`task-state ${done ? 'completed' : task.featured ? 'in-progress' : ''}`} disabled={!canToggle || busy} title={busy ? 'Salvando atualizacao...' : !canToggle ? 'Seu perfil pode ver a tarefa, mas não pode alterá-la.' : undefined} onClick={onToggle}>{done ? <Check size={13} /> : <Clock3 size={13} />}{busy ? 'Salvando...' : task.state}</button><button className="task-open" aria-label={`Abrir ${task.title}`} onClick={onOpen}><ChevronRight size={19} /></button></div>
   </article>;
 }

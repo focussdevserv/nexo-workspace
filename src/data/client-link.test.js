@@ -12,3 +12,15 @@ test('ticket links use client ID and do not leak to a homonymous client', () => 
   assert.equal(belongsToClient(ticket, { id: 'client-one', name: 'Acme' }, ticket.client), true);
   assert.equal(belongsToClient(ticket, { id: 'client-two', name: 'Acme' }, ticket.client), false);
 });
+
+test('client profile recognizes all persisted client link fields', () => {
+  const client = { id: 'client-a', name: 'Acme' };
+  for (const field of ['workspaceClientId', 'clientId', 'clientRecordId']) {
+    assert.equal(belongsToClient({ [field]: 'client-a', client: 'Different name' }, client), true, field);
+    assert.equal(belongsToClient({ [field]: 'client-b', client: 'Acme' }, client), false, field);
+  }
+});
+
+test('conflicting client link IDs never fall back to a matching name', () => {
+  assert.equal(belongsToClient({ clientId: 'client-a', clientRecordId: 'client-b', client: 'Acme' }, { id: 'client-a', name: 'Acme' }), false);
+});

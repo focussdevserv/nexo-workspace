@@ -338,3 +338,203 @@
 .work-empty-state button:hover{border-color:#b7c895;background:#f8fbf2}
 @media(max-width:720px){.hours-heading-actions{width:100%;flex-wrap:wrap;justify-content:flex-start}.hours-heading-actions .hours-search{width:100%;min-width:0;order:-1}.approval-search-row{margin:8px 0}.approval-search{width:100%}.work-empty-state{flex-wrap:wrap}}
 @media(max-width:720px){.hours-row{grid-template-columns:minmax(0,1fr) auto;grid-template-rows:auto auto auto;gap:7px;padding:9px 0}.hours-row-actions{grid-column:2;grid-row:3}.hours-row-actions button{width:44px;height:44px}.hours-row>.task-owner{grid-column:2;grid-row:1}.hours-row>strong{grid-column:1;grid-row:2}.hours-bar{grid-column:2;grid-row:2;width:100px}.hours-edit-modal{max-height:calc(100dvh - 32px);overflow:auto;padding:18px}}
+
+/* Keep the agenda search as one unified control; the global input reset otherwise restores a second border. */
+html[data-theme] .app-shell .work-screen .agenda-toolbar-new .agenda-search>input,
+html[data-theme] .app-shell .work-screen .agenda-v2 .agenda-search>input {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  outline: 0 !important;
+}
+
+/* The global form reset uses :not() selectors with high specificity, so scope this override under #root. */
+html[data-theme] #root .app-shell .work-screen .agenda-search>input {
+  height: 100%;
+  min-height: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+/* Keep the Hours labels and records on the same tracks so dates and row actions never collide. */
+@media (min-width: 981px) {
+  .work-screen .hours-table-head,
+  .work-screen .hours-row {
+    grid-template-columns: minmax(175px, 1.55fr) minmax(100px, .9fr) minmax(65px, .65fr) minmax(140px, 1.15fr) minmax(132px, 1.15fr) 68px;
+    gap: 8px;
+    padding-inline: 8px;
+  }
+  .work-screen .hours-table-head { background: var(--nexo-surface-raised, #f0f2ed); border-color: var(--nexo-border, #e2e7df); }
+  .work-screen .hours-last { white-space: normal; overflow-wrap: anywhere; line-height: 1.35; font-variant-numeric: tabular-nums; }
+  .work-screen .hours-row-actions { min-width: 0; }
+}
+@media (min-width: 981px) {
+  .work-screen .hours-bar small { display: none; }
+}
+html[data-theme='dark'] .work-screen :is(.status-pendente,.status-pending,.status-aguardando,.status-em-analise,.status-em-revisao) { background:#383123 !important; color:#f1d491 !important; }
+html[data-theme='dark'] .work-screen :is(.status-pendente,.status-pending,.status-aguardando,.status-em-analise,.status-em-revisao) i { background:#d8b35f !important; }
+html[data-theme='dark'] .work-screen .work-avatar { border-color:#39433b !important; background:#29342c !important; color:#c6f542 !important; }
+html[data-theme='dark'] .work-screen .work-avatar:nth-child(2) { background:#302b3b !important; color:#d6b8ff !important; }
+
+/* File cards use purposeful type surfaces instead of an empty gray slab. */
+.work-screen .file-art {
+  border: 1px solid #e2e8dc;
+  border-radius: 11px;
+  background: #eff5e9;
+  color: #46643c;
+}
+.work-screen .file-art.file-PDF { background: #f3f0e8; color: #77623a; border-color: #e8e1d1; }
+.work-screen .file-art.file-Imagem { background: #eaf4eb; color: #377c4e; border-color: #d8e9db; }
+.work-screen .file-art.file-Documento { background: #edf1f5; color: #516b7d; border-color: #dce4ea; }
+html[data-theme='dark'] .work-screen .file-art {
+  border-color: #39463b !important;
+  background: #242d25 !important;
+  color: #c6f542 !important;
+}
+html[data-theme='dark'] .work-screen .file-art.file-PDF { background: #302d23 !important; color: #e2c677 !important; border-color: #4d452d !important; }
+html[data-theme='dark'] .work-screen .file-art.file-Imagem { background: #223128 !important; color: #9bdda9 !important; border-color: #38513d !important; }
+html[data-theme='dark'] .work-screen .file-art.file-Documento { background: #282e2c !important; color: #bccdc1 !important; border-color: #414b45 !important; }
+html[data-theme='dark'] .work-screen .agenda-v2 .agenda-v2-side { background: var(--nexo-surface-raised, #242a25) !important; border-color: var(--nexo-border) !important; }
+html[data-theme='dark'] .work-screen .agenda-v2-stats>div { background: var(--nexo-surface-raised, #242a25) !important; border-color: var(--nexo-border) !important; }
+html[data-theme='dark'] .work-screen .agenda-v2 .agenda-time-header { background: var(--nexo-surface-raised, #242a25) !important; border-color: var(--nexo-border) !important; }
+html[data-theme='dark'] .work-screen .agenda-v2 .agenda-time-column { background-image: repeating-linear-gradient(to bottom, transparent 0, transparent calc(var(--hour-height) - 1px), #353d36 calc(var(--hour-height) - 1px), #353d36 var(--hour-height)) !important; }
+html[data-theme='dark'] .work-screen .agenda-v2 .agenda-time-column.is-today { background-color: #171c18 !important; }
+html[data-theme='dark'] #root .app-shell .work-screen .agenda-v2 .agenda-time-date.selected { background: #242a25 !important; color: #e8eee8 !important; border-color: #353d36 !important; }
+
+@media(max-width:760px){.approval-info{min-width:0}.approval-project{min-width:0}.approval-title-line h3{min-width:0;flex:1}.approval-title-line>.status-pill{flex:0 1 auto;min-width:0;max-width:100%;white-space:normal;text-align:center}}
+
+@media(max-width:760px){.approval-project{min-width:0;max-width:100%;overflow:hidden;white-space:nowrap}.approval-title-line{min-width:0;flex-wrap:wrap}.approval-title-line h3{min-width:0;flex:1 0 100%;overflow-wrap:anywhere}.approval-title-line>.status-pill{flex:0 0 auto;white-space:nowrap}}
+
+/* Keep work-module controls aligned and readable when labels or data are long. */
+.work-screen .row-more:focus-visible,
+.work-screen .work-view-toggle button:focus-visible,
+.work-screen .agenda-toolbar-new button:focus-visible {
+  outline: 3px solid #78a3ff;
+  outline-offset: 2px;
+}
+.work-screen .work-button:disabled,
+.work-screen .drive-drop button:disabled {
+  cursor: not-allowed;
+  opacity: .58;
+}
+.work-screen .task-detail-attachment {
+  align-items: center;
+  flex-wrap: wrap;
+  border-top: 1px solid #edf0f4;
+  margin-top: 8px;
+}
+.work-screen .task-detail-attachment label {
+  min-width: min(100%, 280px);
+}
+.work-screen .task-detail-attachment input[type=file] {
+  max-width: min(100%, 340px);
+  color: #738091;
+}
+.work-screen .task-detail-attachment small {
+  max-width: 100%;
+  line-height: 1.5;
+}
+.work-screen .hours-heading-actions {
+  min-width: 0;
+}
+.work-screen .hours-heading-actions .work-button {
+  flex: none;
+}
+.work-screen .hours-row-actions button:focus-visible {
+  outline-offset: 1px;
+}
+.work-screen .drive-load-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border: 1px solid #f0d7d4;
+  border-radius: 11px;
+  background: #fff7f6;
+  color: #8c3d36;
+  font-size: 13px;
+}
+.work-screen .drive-load-error strong { font-weight: 650; }
+.work-screen .drive-load-error > span { min-width: 0; flex: 1 1 240px; overflow-wrap: anywhere; color: #9b6661; }
+.work-screen .drive-drop { transition: border-color .16s ease, background .16s ease; }
+.work-screen .drive-drop:focus-within { border-color: #92c77a; background: #f4faef; }
+.work-screen .drive-drop button:disabled { cursor: not-allowed; opacity: .58; }
+html[data-theme='dark'] .work-screen .drive-load-error { border-color: #613a3a; background: #2b1b1c; color: #ffc1ba; }
+html[data-theme='dark'] .work-screen .drive-load-error > span { color: #d6a09a; }
+html[data-theme='dark'] .work-screen .drive-drop:focus-within { border-color: #63874e; background: #1d291b; }
+.work-screen .drive-browser {
+  margin: 0 0 16px;
+  padding: 14px;
+  border: 1px solid var(--w-line);
+  border-radius: 12px;
+  background: var(--w-white);
+}
+.work-screen .drive-browser > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 11px;
+}
+.work-screen .drive-browser > header > div { display: grid; gap: 4px; min-width: 0; }
+.work-screen .drive-browser > header b { font-size: 13px; }
+.work-screen .drive-browser > header small { color: var(--w-muted); font-size: 12px; line-height: 1.5; }
+.work-screen .drive-browser > header code { color: #4e7f37; font-size: 11px; }
+.work-screen .drive-browser-error-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.work-screen .drive-browser-list { display: grid; gap: 6px; }
+.work-screen .drive-browser-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid var(--w-line);
+  border-radius: 9px;
+  background: var(--w-white);
+}
+.work-screen .drive-browser-row > div { display: grid; gap: 3px; min-width: 0; flex: 1; }
+.work-screen .drive-browser-row > div b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.work-screen .drive-browser-row > div small { color: var(--w-muted); font-size: 11px; }
+.work-screen .drive-browser-row .work-button { flex: none; }
+.work-screen .drive-browser-empty { padding: 20px 12px; border: 1px dashed var(--w-line); border-radius: 9px; color: var(--w-muted); text-align: center; font-size: 12px; line-height: 1.5; }
+.work-screen .drive-browser-more { display: flex; margin: 10px auto 0; }
+.work-screen .drive-refresh-spin { animation: work-drive-spin .9s linear infinite; }
+@keyframes work-drive-spin { to { transform: rotate(360deg); } }
+@media (max-width: 760px) {
+  .work-screen .drive-browser-row { flex-wrap: wrap; }
+  .work-screen .drive-browser-row > div { flex-basis: calc(100% - 42px); }
+  .work-screen .drive-browser-row > .work-button { flex: 1 1 auto; }
+}
+html[data-theme='dark'] .work-screen .drive-browser { border-color: var(--nexo-border); background: var(--nexo-surface); }
+html[data-theme='dark'] .work-screen .drive-browser-row { border-color: var(--nexo-border); background: var(--nexo-surface-raised, #17202d); }
+html[data-theme='dark'] .work-screen .drive-browser > header code { color: #a9df82; }
+@media (max-width: 600px) {
+  .work-screen .task-detail-attachment label,
+  .work-screen .task-detail-attachment input[type=file] {
+    width: 100%;
+    max-width: 100%;
+  }
+  .work-screen .task-detail-modal > footer .work-button {
+    flex: 1 1 auto;
+  }
+}
+.hours-manual-fields{display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:10px}
+.hours-manual-fields label{display:grid;gap:6px;color:var(--w-ink);font-size:13px;font-weight:650}
+.hours-manual-modal input[type="date"],.hours-manual-modal input[type="time"]{width:100%;min-width:0;min-height:42px;padding:0 9px;border:1px solid var(--w-line);border-radius:8px;background:var(--w-white);color:var(--w-ink);font:inherit}
+@media(max-width:520px){.hours-manual-fields{grid-template-columns:1fr 1fr}.hours-manual-fields label:first-child{grid-column:1/-1}}
+
+.work-data-error{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 12px;padding:11px 13px;border:1px solid #f0d7d4;border-radius:10px;background:#fff7f6;color:#9b3b35;font-size:12px;line-height:1.5}.work-data-error button{flex:none;min-height:30px;padding:0 10px;border:1px solid #e8c6c2;border-radius:8px;background:#fff;color:#8b302b;font-size:12px;font-weight:600}.work-data-error button:hover{background:#fff0ee}.work-load-state{display:flex;align-items:center;justify-content:center;min-height:86px;margin-bottom:12px;border:1px solid var(--w-line);border-radius:12px;background:var(--w-white);color:var(--w-muted);font-size:12px}
+html[data-theme='dark'] .work-data-error{border-color:#613a3a;background:#2b1b1c;color:#ffc1ba}html[data-theme='dark'] .work-data-error button{border-color:#704141;background:#321f20;color:#ffd1cb}html[data-theme='dark'] .work-load-state{border-color:var(--nexo-border);background:var(--nexo-surface);color:var(--nexo-muted)}
+@media(max-width:850px){.project-toolbar>.work-tabs{overflow:visible;flex-wrap:wrap}}
