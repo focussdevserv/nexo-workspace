@@ -188,6 +188,7 @@
 .agenda-v2 .agenda-mode button{height:31px;padding:0 12px;border-radius:7px;color:#697970;font-size:12px}
 .agenda-v2 .agenda-mode button.active{background:#26784b;color:white;box-shadow:0 3px 8px #26784b2a}
 .agenda-v2 .agenda-search{height:38px;min-width:190px;border:1px solid #e3eae5;border-radius:9px;background:white}
+.agenda-v2 .agenda-search input{width:100%;height:100%;min-width:0;min-height:0!important;padding:0!important;border:0!important;border-radius:0!important;background:transparent!important;box-shadow:none!important;outline:0!important;color:inherit}
 .agenda-v2 .agenda-search:focus-within{border-color:#65a77c;box-shadow:0 0 0 3px #65a77c20}
 .agenda-v2 .agenda-google-sync{min-height:36px;border-color:#dbe8df;background:#f5faf6;color:#33794d}
 .agenda-v2 .agenda-v2-layout.agenda-main-single{display:grid;grid-template-columns:250px minmax(0,1fr);min-height:600px;overflow:hidden;border:1px solid #e0e8e2;border-radius:16px;background:#fff;box-shadow:0 8px 24px #19362509}
