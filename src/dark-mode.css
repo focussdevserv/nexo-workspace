@@ -831,3 +831,59 @@ html[data-theme='light'] .app-shell a:not([class]) { color: #14764c; }
 html[data-theme='light'] .brand-glyph b { background: #68da4b; }
 html[data-theme='light'] .brand-glyph em { background: #23b7a2; }
 
+/* Light theme tuned to the shared TaskOrbit / Helix CRM visual reference. */
+html[data-theme='light'] {
+  --nexo-light-bg: #f3f4f2;
+  --nexo-light-surface: #fff;
+  --nexo-light-raised: #fafbf9;
+  --nexo-light-border: #e6e8e4;
+  --nexo-light-text: #171a18;
+  --nexo-light-muted: #818782;
+  --nexo-green: #72bd36;
+  --nexo-green-soft: #edf7e5;
+}
+html[data-theme='light'] .app-shell { background: #f3f4f2; }
+html[data-theme='light'] .topbar { background: #f3f4f2; }
+html[data-theme='light'] .side-nav { box-shadow: 1px 0 0 #e8eae7; }
+html[data-theme='light'] .side-nav-link.active {
+  background: #eef7e7;
+  border-color: #eef7e7;
+  color: #171a18;
+  box-shadow: inset 3px 0 #75bd3b;
+}
+html[data-theme='light'] .side-nav-link.active svg { color: #427d25; }
+html[data-theme='light'] .side-nav-link.active:before { display: none; }
+html[data-theme='light'] .side-nav-link:hover:not(.active) { background: #f4f6f2; color: #252b26; }
+html[data-theme='light'] .day-strip {
+  background: #fff;
+  color: #171a18;
+  border: 1px solid #e5e7e3;
+  box-shadow: 0 2px 8px #15210b08;
+}
+html[data-theme='light'] .day-strip .date-chip { background: #f2f4f1; color: #3f4741; }
+html[data-theme='light'] .day-strip .strip-event { border-color: #e5e8e3; }
+html[data-theme='light'] .day-strip .strip-event > span:first-child:not(.avatar-stack):not(.time-pin),
+html[data-theme='light'] .day-strip .strip-empty { color: #737b74; }
+html[data-theme='light'] .day-strip .strip-current { background: #eff8e8; color: #20291d; }
+html[data-theme='light'] .day-strip .strip-current .time-pin { background: #20291d; color: #fff; }
+html[data-theme='light'] :is(.stat-card,.lead-card,.task-card,.alert-card,.empty-filter,.settings-sidebar,.settings-main,.settings-card,.attention-panel,.quick-search-panel,.notification-panel,.search-panel,.settings-panel) {
+  border-color: #e6e8e4;
+  box-shadow: 0 2px 10px #18201408;
+}
+html[data-theme='light'] .app-shell :is(.primary-button,.module-create-button,.com-primary,.admin-primary,.work-button-primary,.ns-primary,.settings-save-button) {
+  background: #171a18;
+  border-color: #171a18;
+  color: #fff;
+}
+html[data-theme='light'] .app-shell :is(.primary-button,.module-create-button,.com-primary,.admin-primary,.work-button-primary,.ns-primary,.settings-save-button):hover {
+  background: #303832;
+  border-color: #303832;
+}
+html[data-theme='light'] .app-shell :is(.stat-icon,.com-metric-icon,.ns-metric-icon,.work-metric-icon) { background: #eff8e8; color: #4c8e29; }
+html[data-theme='light'] .app-shell :is(.strip-current,.quote-card,.status-em-andamento,.status-concluido,.status-concluida,.status-aprovado,.com-badge-green) { background: #eff8e8; color: #3c7624; }
+html[data-theme='light'] .app-shell :is(.count-pill,.date-chip,.status-a-fazer,.com-badge-blue,.ns-filter-tabs button.selected) { background: #f1f3f0; color: #555d56; border-color: #e6e8e4; }
+html[data-theme='light'] .app-shell :is(.quick-search-panel button,.notification-item) { color: #202521; }
+html[data-theme='light'] .app-shell :is(.quick-search-panel button:hover,.notification-item:hover) { background: #f2f7ee; color: #2f6d20; }
+html[data-theme='light'] .app-shell :is(.icon-button,.com-icon-action,.ns-icon-button):hover { background: #eff8e8; color: #467e2c; }
+html[data-theme='light'] .app-shell :is(.com-filter button.active,.com-tabs button.active,.work-tabs button[aria-pressed='true'],.settings-sidebar nav button.active) { background: #eff8e8; border-color: #dcebd1; color: #3d7026; }
+
