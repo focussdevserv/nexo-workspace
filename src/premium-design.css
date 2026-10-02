@@ -269,15 +269,15 @@ html[data-theme] .app-shell :is(.welcome-row h1,.module-page-header h1,.com-page
 }
 html[data-theme='light'] .app-shell :is(.primary-button,.module-create-button,.com-primary,.work-button-primary,.ns-primary,.admin-primary,.settings-save-button,.workspace-access-submit),
 html[data-theme='light'] .cp-public-page .admin-primary {
-  background: #e0fd03 !important;
-  border-color: #d2ee00 !important;
-  color: #17171b !important;
-  box-shadow: 0 5px 16px rgb(176 201 0 / 20%);
+  background: #1a1a1f !important;
+  border-color: #1a1a1f !important;
+  color: #ffffff !important;
+  box-shadow: 0 5px 14px rgb(20 20 24 / 14%);
 }
 html[data-theme='light'] .app-shell :is(.primary-button,.module-create-button,.com-primary,.work-button-primary,.ns-primary,.admin-primary,.settings-save-button,.workspace-access-submit):hover:not(:disabled) {
-  background: #c9e700 !important;
-  border-color: #b8d600 !important;
-  color: #17171b !important;
+  background: #303036 !important;
+  border-color: #303036 !important;
+  color: #ffffff !important;
 }
 html[data-theme='dark'] .app-shell :is(.primary-button,.module-create-button,.com-primary,.work-button-primary,.ns-primary,.admin-primary,.settings-save-button,.workspace-access-submit) {
   background: #e0fd03 !important;
@@ -387,8 +387,8 @@ html[data-theme='light'] .app-shell .day-strip :is(.date-chip,.strip-event) { ba
 html[data-theme='light'] .app-shell .day-strip .date-chip { background:#f2f2f4 !important; color:#44444b !important; }
 html[data-theme='light'] .app-shell .day-strip .strip-event>span:first-child:not(.avatar-stack):not(.time-pin),
 html[data-theme='light'] .app-shell .day-strip .strip-empty { color:#77777f !important; }
-html[data-theme='light'] .app-shell .day-strip .strip-current { background:#e0fd03 !important; border-radius:999px; }
-html[data-theme='light'] .app-shell .day-strip .strip-current strong { color:#17171b !important; }
+html[data-theme='light'] .app-shell .day-strip .strip-current { background:#edf5cf !important; border-radius:999px; }
+html[data-theme='light'] .app-shell .day-strip .strip-current :is(strong,span) { color:#303a20 !important; }
 html[data-theme='light'] .app-shell .day-strip .strip-current .time-pin { background:#1a1a1f !important; color:#fff !important; }
 html[data-theme='dark'] .app-shell .day-strip { background:#1a1a1e !important; border:1px solid #333338; border-radius:999px; color:#f4f4f5 !important; }
 html[data-theme='dark'] .app-shell .day-strip :is(.date-chip,.strip-event) { background:transparent !important; border-color:#333338; color:#f4f4f5 !important; }
