@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { fetchAllRecords, useWorkspaceRecords } from '../lib/workspace-api.js';
 import { useWorkspacePreferences } from '../lib/workspace-preferences.js';
 import { calculateGoalMetric, goalMetricDefinitions } from '../lib/goal-metrics.js';
@@ -26,12 +26,22 @@ export default function GoalsScreen({ notify }) {
   const setGoals = (value) => setDraftGoals((current) => typeof value === 'function' ? value(current || savedGoals) : value);
   const [period, setPeriod] = useState('month');
   const [showForm, setShowForm] = useState(false);
+  const [formDirty, setFormDirty] = useState(false);
+  const goalDialogRef = useRef(null);
+  const returnFocusRef = useRef(null);
   const [editing, setEditing] = useState(null);
   const [formError, setFormError] = useState('');
   const [form, setForm] = useState({ name: '', group: 'Comercial', metric: 'manual', current: '0', target: '', unit: 'number' });
   const [savedAt, setSavedAt] = useState('');
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    if (!showForm) return undefined;
+    const dialog = goalDialogRef.current;
+    const firstControl = dialog?.querySelector('input:not([readonly]), select, button');
+    firstControl?.focus();
+    return () => returnFocusRef.current?.focus?.();
+  }, [showForm]);
   useEffect(() => {
     const confirmNavigation = (event) => {
       guardGoalsNavigation(event, { dirty, confirmLeave: (message) => window.confirm(message) });
@@ -91,8 +101,34 @@ export default function GoalsScreen({ notify }) {
     } catch (error) { setDraftGoals(persistedGoals); setDirty(true); notify(error.message || 'Não foi possível salvar as metas. As alterações continuam abertas para você tentar novamente.'); }
     finally { setSaving(false); }
   };
-  const openNew = () => { setEditing(null); setFormError(''); setForm({ name: '', group: 'Comercial', metric: 'manual', current: '0', target: '', unit: 'number' }); setShowForm(true); };
-  const openEdit = (goal) => { setEditing(goal.id); setFormError(''); setForm({ name: goal.name, group: goal.group, metric: goal.metric || 'manual', current: String(goal.current), target: String(goal.target), unit: goal.unit }); setShowForm(true); };
+  const openNew = () => { returnFocusRef.current = document.activeElement; setEditing(null); setFormError(''); setFormDirty(false); setForm({ name: '', group: 'Comercial', metric: 'manual', current: '0', target: '', unit: 'number' }); setShowForm(true); };
+  const openEdit = (goal) => { returnFocusRef.current = document.activeElement; setEditing(goal.id); setFormError(''); setFormDirty(false); setForm({ name: goal.name, group: goal.group, metric: goal.metric || 'manual', current: String(goal.current), target: String(goal.target), unit: goal.unit }); setShowForm(true); };
+  const closeForm = () => {
+    if (saving) return;
+    if (formDirty && !window.confirm('Você tem alterações nesta meta que ainda não foram aplicadas. Fechar e descartar essas alterações?')) return;
+    setShowForm(false);
+    setFormDirty(false);
+    setFormError('');
+  };
+  const handleGoalDialogKeyDown = (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeForm();
+      return;
+    }
+    if (event.key !== 'Tab') return;
+    const controls = [...(goalDialogRef.current?.querySelectorAll('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [href], [tabindex]:not([tabindex="-1"])') || [])];
+    if (!controls.length) return;
+    const first = controls[0];
+    const last = controls[controls.length - 1];
+    if (event.shiftKey && (document.activeElement === first || !goalDialogRef.current?.contains(document.activeElement))) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && (document.activeElement === last || !goalDialogRef.current?.contains(document.activeElement))) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
   const submit = (event) => {
     event.preventDefault();
     const current = form.metric === 'manual' ? Number(form.current) : 0; const target = Number(form.target);
@@ -101,7 +137,7 @@ export default function GoalsScreen({ notify }) {
     const newId = globalThis.crypto?.randomUUID?.() || `goal-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const item = { id: editing || newId, name: form.name.trim(), group: form.group, metric: form.metric, current, target, unit: form.metric === 'manual' ? form.unit : goalMetricDefinitions[form.metric].unit, period, color: existing?.color || (form.group === 'Financeiro' ? 'green' : form.group === 'Projetos' ? 'violet' : 'blue') };
     const next = editing ? goals.map((goal) => goal.id === editing ? item : goal) : [item, ...goals];
-    setGoals(next); setDirty(true); setShowForm(false); setFormError('');
+    setGoals(next); setDirty(true); setShowForm(false); setFormDirty(false); setFormError('');
   };
   const updateProgress = (goal, direction) => {
     if (goal.metric && goal.metric !== 'manual') return;
@@ -136,17 +172,17 @@ export default function GoalsScreen({ notify }) {
 
     <div className="goals-note"><Activity size={15} /><span><b>Indicadores conectados aos módulos.</b> Receita usa cobranças recebidas, negócios ganhos vêm do CRM, entregas de Projetos e Horas de registros aprovados. Metas manuais continuam editáveis.</span><button type="button" className="admin-secondary" disabled={metricsLoading} onClick={refreshMetrics}>{metricsLoading ? 'Atualizando…' : 'Atualizar indicadores'}</button></div>
 
-    {showForm && <div className="goal-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setShowForm(false); }}><form className="goal-modal" onSubmit={submit} aria-labelledby="goal-modal-title">
-      <header><div><span className="admin-eyebrow">OBJETIVO DO PERÍODO</span><h2 id="goal-modal-title">{editing ? 'Editar meta' : 'Criar meta'}</h2></div><button type="button" disabled={saving} aria-label="Fechar" onClick={() => setShowForm(false)}><X size={17} /></button></header>
-      <label>Nome da meta<input autoFocus required maxLength="60" value={form.name} onChange={(e) => { setForm({ ...form, name: e.target.value }); setFormError(''); }} placeholder="Ex.: Fechar novos contratos" /></label>
+    {showForm && <div className="goal-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeForm(); }}><form ref={goalDialogRef} className="goal-modal" role="dialog" aria-modal="true" onKeyDown={handleGoalDialogKeyDown} onSubmit={submit} aria-labelledby="goal-modal-title">
+      <header><div><span className="admin-eyebrow">OBJETIVO DO PERÍODO</span><h2 id="goal-modal-title">{editing ? 'Editar meta' : 'Criar meta'}</h2></div><button type="button" disabled={saving} aria-label="Fechar" onClick={closeForm}><X size={17} /></button></header>
+      <label>Nome da meta<input required maxLength="60" value={form.name} onChange={(e) => { setForm({ ...form, name: e.target.value }); setFormDirty(true); setFormError(''); }} placeholder="Ex.: Fechar novos contratos" /></label>
       <div className="goal-modal-fields">
-        <label>Área<select value={form.group} onChange={(e) => { const group = e.target.value; const metric = groupMetrics[group][0]; setForm({ ...form, group, metric, unit: metric === 'manual' ? form.unit : goalMetricDefinitions[metric].unit }); }}><option>Comercial</option><option>Financeiro</option><option>Projetos</option><option>Operação</option></select></label>
-        <label>Indicador<select value={form.metric} onChange={(e) => { const metric = e.target.value; setForm({ ...form, metric, unit: metric === 'manual' ? form.unit : goalMetricDefinitions[metric].unit }); }}><option value="manual">Atualizado manualmente</option>{groupMetrics[form.group].filter((metric) => metric !== 'manual').map((metric) => <option value={metric} key={metric}>{goalMetricDefinitions[metric].label}</option>)}</select></label>
-        {form.metric === 'manual' ? <label>Unidade<select value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })}><option value="number">Quantidade</option><option value="BRL">Valor em reais</option></select></label> : <label>Resultado atual<input readOnly value={currentLabel({ metric: form.metric, unit: form.unit, period })} aria-describedby="goal-metric-help" /></label>}
-        {form.metric === 'manual' && <label>Resultado atual<input type="number" min="0" step={form.unit === 'BRL' ? '0.01' : '1'} value={form.current} onChange={(e) => setForm({ ...form, current: e.target.value })} /></label>}
-        <label>Meta do período<input required type="number" min="0.01" step={form.unit === 'BRL' ? '0.01' : '1'} value={form.target} onChange={(e) => { setForm({ ...form, target: e.target.value }); setFormError(''); }} placeholder="Ex.: 10" /></label>
+        <label>Área<select value={form.group} onChange={(e) => { const group = e.target.value; const metric = groupMetrics[group][0]; setForm({ ...form, group, metric, unit: metric === 'manual' ? form.unit : goalMetricDefinitions[metric].unit }); setFormDirty(true); }}><option>Comercial</option><option>Financeiro</option><option>Projetos</option><option>Operação</option></select></label>
+        <label>Indicador<select value={form.metric} onChange={(e) => { const metric = e.target.value; setForm({ ...form, metric, unit: metric === 'manual' ? form.unit : goalMetricDefinitions[metric].unit }); setFormDirty(true); }}><option value="manual">Atualizado manualmente</option>{groupMetrics[form.group].filter((metric) => metric !== 'manual').map((metric) => <option value={metric} key={metric}>{goalMetricDefinitions[metric].label}</option>)}</select></label>
+        {form.metric === 'manual' ? <label>Unidade<select value={form.unit} onChange={(e) => { setForm({ ...form, unit: e.target.value }); setFormDirty(true); }}><option value="number">Quantidade</option><option value="BRL">Valor em reais</option></select></label> : <label>Resultado atual<input readOnly value={currentLabel({ metric: form.metric, unit: form.unit, period })} aria-describedby="goal-metric-help" /></label>}
+        {form.metric === 'manual' && <label>Resultado atual<input type="number" min="0" step={form.unit === 'BRL' ? '0.01' : '1'} value={form.current} onChange={(e) => { setForm({ ...form, current: e.target.value }); setFormDirty(true); }} /></label>}
+        <label>Meta do período<input required type="number" min="0.01" step={form.unit === 'BRL' ? '0.01' : '1'} value={form.target} onChange={(e) => { setForm({ ...form, target: e.target.value }); setFormDirty(true); setFormError(''); }} placeholder="Ex.: 10" /></label>
       </div>{form.metric !== 'manual' && <p id="goal-metric-help" className="goal-form-help">Resultado calculado com registros deste período. Atualize os indicadores para sincronizar.</p>}{formError && <p className="goal-form-error" role="alert">{formError}</p>}
-      <footer><button type="button" className="admin-secondary" disabled={saving} onClick={() => setShowForm(false)}>Cancelar</button><button type="submit" className="admin-primary" disabled={saving}><Check size={14} /> {editing ? 'Salvar meta' : 'Criar meta'}</button></footer>
+      <footer><button type="button" className="admin-secondary" disabled={saving} onClick={closeForm}>Cancelar</button><button type="submit" className="admin-primary" disabled={saving}><Check size={14} /> {editing ? 'Salvar meta' : 'Criar meta'}</button></footer>
     </form></div>}
   </div>;
 }

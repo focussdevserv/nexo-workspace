@@ -2,8 +2,9 @@
 import { BriefcaseBusiness, CheckCircle2, CircleDollarSign, Clock3, Download, RefreshCw, Target, TrendingUp, Users } from 'lucide-react';
 import './reports.css';
 import { fetchAllRecords } from '../lib/workspace-api.js';
-import { buildChartBuckets, buildProjectReportRows, formatReportHours, hasReportChartFailures, hasReportSourceFailures, inPeriod, parseReportAmount, reportDateLabel, reportHours, reportSourceState, reportSourcesForTab } from '../lib/reports.js';
+import { buildChartBuckets, buildProjectReportRows, formatReportHours, hasReportChartFailures, hasReportSourceFailures, inPeriod, paidReportRevenues, parseReportAmount, reportDateLabel, reportHours, reportSourceState, reportSourcesForTab } from '../lib/reports.js';
 import { downloadCsvFile, rowsToCsv } from '../lib/csv.js';
+import { reportTabForKey } from '../lib/report-tab-navigation.js';
 
 const periods = [{ id: 'month', label: 'Este mês', months: 1 }, { id: 'quarter', label: 'Últimos 90 dias', months: 3 }, { id: 'year', label: 'Este ano', months: 12 }];
 const tabs = ['Visão geral', 'Comercial', 'Projetos', 'Financeiro'];
@@ -68,7 +69,7 @@ export default function ReportsScreen({ notify }) {
   const completedProjects = data.projects.filter((item) => ['concluido','concluida','completed'].includes(statusKey(item.status)) && inPeriod(item, periodId, now, 'completed'));
   const paidOrders = data.orders.filter((item) => ['paid','processed','approved','paga','pago','recebida'].includes(statusKey(item.status)) && inPeriod(item, periodId, now, 'paid'));
   const periodRevenues = data.revenues.filter((item) => inPeriod(item, periodId, now, 'expense'));
-  const paidRevenues = periodRevenues.filter((item) => ['paid','processed','approved','paga','pago','recebida','received','conciliada','conciliado'].includes(statusKey(item.status)));
+  const paidRevenues = paidReportRevenues(data.revenues, periodId, now);
   const revenue = [...paidOrders, ...paidRevenues].reduce((sum, item) => sum + parseReportAmount(item.amount ?? item.value), 0);
   const periodExpenses = data.expenses.filter((item) => inPeriod(item, periodId, now, 'expense'));
   const expenses = periodExpenses.reduce((sum, item) => sum + parseReportAmount(item.amount ?? item.value), 0);
@@ -108,8 +109,17 @@ export default function ReportsScreen({ notify }) {
   const destination = tab === 'Comercial' ? 'CRM' : tab === 'Projetos' ? 'Projetos' : tab === 'Financeiro' ? 'Cobranças' : 'Meu Dia';
   const destinationAllowed = canOpenReportDestination(destination);
   const restrictedModuleNames = [...new Set(relevantRestrictions.map(({ module }) => module))];
+  const handleReportTabKeyDown = (event) => {
+    const nextTab = reportTabForKey(tab, event.key, tabs);
+    if (nextTab === tab) return;
+    event.preventDefault();
+    const tabButtons = event.currentTarget.parentElement.querySelectorAll('[role="tab"]');
+    tabButtons[tabs.indexOf(nextTab)]?.focus();
+    setTab(nextTab);
+  };
   return <div className="reports-module">
-    <div className="reports-topline"><nav className="reports-tabs" aria-label="Tipo de relatório" role="tablist">{tabs.map((item) => <button key={item} role="tab" aria-selected={tab === item} className={tab === item ? 'active' : ''} onClick={() => setTab(item)}>{item}</button>)}</nav><div className="reports-controls"><nav className="report-period" aria-label="Período">{periods.map((item) => <button key={item.id} aria-pressed={periodId === item.id} className={periodId === item.id ? 'active' : ''} onClick={() => setPeriodId(item.id)}>{item.label}</button>)}</nav><button className="admin-secondary" onClick={load} disabled={loading}><RefreshCw size={14} className={loading ? 'report-refreshing' : ''} />{loading ? 'Atualizando...' : 'Atualizar'}</button><button className="admin-secondary" onClick={exportCsv} disabled={loading || relevantFailures} title={relevantFailures ? 'Não é possível exportar: há fontes deste relatório indisponíveis.' : undefined}><Download size={14} /> Exportar CSV</button></div></div>
+    <div className="reports-topline"><nav className="reports-tabs" aria-label="Tipo de relatório" role="tablist">{tabs.map((item) => <button key={item} id={`reports-tab-${periodId}-${tabs.indexOf(item)}`} type="button" role="tab" aria-controls="reports-tabpanel" aria-selected={tab === item} tabIndex={tab === item ? 0 : -1} className={tab === item ? 'active' : ''} onKeyDown={handleReportTabKeyDown} onClick={() => setTab(item)}>{item}</button>)}</nav><div className="reports-controls"><nav className="report-period" aria-label="Período">{periods.map((item) => <button key={item.id} aria-pressed={periodId === item.id} className={periodId === item.id ? 'active' : ''} onClick={() => setPeriodId(item.id)}>{item.label}</button>)}</nav><button className="admin-secondary" onClick={load} disabled={loading}><RefreshCw size={14} className={loading ? 'report-refreshing' : ''} />{loading ? 'Atualizando...' : 'Atualizar'}</button><button className="admin-secondary" onClick={exportCsv} disabled={loading || relevantFailures} title={relevantFailures ? 'Não é possível exportar: há fontes deste relatório indisponíveis.' : undefined}><Download size={14} /> Exportar CSV</button></div></div>
+    <div id="reports-tabpanel" role="tabpanel" aria-labelledby={`reports-tab-${periodId}-${tabs.indexOf(tab)}`} tabIndex={0}>
     {error && <div className="reports-no-data" role="alert">Relatório incompleto: falha ao carregar {reportSources.filter(({ key }) => failed(key)).map(({ module }) => module).filter((module, index, all) => all.indexOf(module) === index).join(', ')}. Os indicadores dessas fontes aparecem como indisponíveis. {error}</div>}
     {!!restrictedModuleNames.length && <div className="reports-access-note" role="status">Parte dos dados foi ocultada pelo seu perfil: {restrictedModuleNames.join(', ')}. Os indicadores afetados aparecem como “Sem acesso”; nenhuma permissão foi ampliada.</div>}
     <section className="admin-stats reports-kpis">{kpis.map((item) => <ReportStat key={item.label} {...item} />)}</section>
@@ -117,6 +127,7 @@ export default function ReportsScreen({ notify }) {
       {chartValues.map((bucket) => { const height = bucket.value ? Math.max(5, bucket.value / chartMax * 100) : 0; return <div className="reports-chart-column" key={bucket.key} title={`${bucket.label}: ${chartFormat(bucket.value)}`}><div className="reports-chart-track"><i style={{ height: `${height}%` }} /></div><span>{bucket.label}</span></div>; })}
     </div> : <div className="reports-chart-empty">Ainda não há registros neste período.</div>}</section>
     <section className="admin-panel" aria-busy={loading}><div className="admin-panel-head"><div><h2>{tab === 'Comercial' ? 'Oportunidades' : tab === 'Projetos' ? 'Projetos' : tab === 'Financeiro' ? 'Movimentações financeiras' : 'Atividade do workspace'}</h2><p>{tab === 'Visão geral' ? 'Leads, projetos e movimentações recentes deste período.' : 'Resultados obtidos dos registros do workspace.'}</p></div>{destinationAllowed ? <button className="admin-link" onClick={() => window.dispatchEvent(new CustomEvent('nexo:navigate', { detail: destination }))}>Abrir módulo <span>→</span></button> : <span className="reports-route-denied" role="status" title={`Seu perfil não pode abrir ${destination}.`}>Sem acesso ao módulo</span>}</div><div className="report-service-table"><div className="report-service-row report-service-head"><span>Registro</span><span>Categoria / cliente</span><span>Status / valor</span><span>Data</span></div>{loading ? <div className="reports-no-data" role="status">Carregando registros do workspace…</div> : <>{rows.slice(0, 10).map((row,index) => <div className="report-service-row" key={`${row[0]}-${index}`}><span>{row[0]}</span><span>{row[1]}</span><span>{row[2]}</span><span>{row[3] || '—'}</span></div>)}{!rows.length && <div className="reports-no-data">{relevantRestrictions.length ? 'Sem registros visíveis com as permissões atuais.' : 'Nenhum registro neste período.'}</div>}</>}</div></section>
+    </div>
   </div>;
 }
 function ReportStat({ icon: Icon, label, value, hint, tone, restricted: isRestricted }) { return <article className={`admin-stat ${isRestricted ? 'report-stat-restricted' : ''}`}><span className={`admin-stat-icon ${tone}`}><Icon size={18} /></span><span className="admin-stat-copy"><small>{label}</small><strong>{value}</strong><em>{hint}</em></span></article>; }

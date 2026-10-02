@@ -47,7 +47,7 @@ import { googleCalendarTestDisposition } from './integrations/google-health.js';
 import { sameMercadoPagoPaymentSnapshot } from './integrations/mercadopago.js';
 import { matchesMercadoPagoExternalReference, mercadoPagoAccountMatchesRecord, mercadoPagoWebhookResource } from './integrations/mercadopago-webhook.js';
 import { calculateFinanceTransferBalances } from './integrations/finance-transfers.js';
-import { calculateAccountMovementBalance, isCurrencyAmount, isCurrencyBalance, reverseAccountMovementBalance } from './integrations/account-ledger.js';
+import { calculateAccountMovementBalance, canUpdateFinanceAccountBalance, isCurrencyAmount, isCurrencyBalance, reverseAccountMovementBalance } from './integrations/account-ledger.js';
 import { paymentDueDateAtEndOfDay, paymentDueDateDuration } from './billing/due-date.js';
 import { withStableBillingPaidAt } from './billing/paid-at.js';
 import { subscriptionDateTimeSchema, validateSubscriptionDates } from './billing/subscription-dates.js';
@@ -58,7 +58,7 @@ import { buildFinanceRecurrenceDates } from './integrations/finance-recurrence.j
 import { buildWahaSendFilePayload, classifyWahaQrResponse, classifyWahaSessionReadiness } from './integrations/waha.js';
 import { clicksignBaseUrl, createClicksignEnvelope, getClicksignEnvelope, notifyClicksignEnvelope } from './integrations/clicksign.js';
 import { mapN8nCollections, n8nAutomationTemplates, buildN8nAutomationWorkflow, n8nApiKeyFailureMessage, n8nApiValidationMessage, n8nProposalTaskMatchesSource, n8nWorkflowActionEndpoint, n8nWorkflowsEndpoint, type N8nAutomationTemplateId } from './integrations/n8n.js';
-import { N8N_DELIVERY_MAX_ATTEMPTS, n8nDeliveryCanRetry, n8nDeliveryExhausted, n8nDeliveryRetryDelayMs } from './integrations/n8n-delivery.js';
+import { N8N_DELIVERY_MAX_ATTEMPTS, n8nCallbackRejectionReason, n8nDeliveryCanRetry, n8nDeliveryExhausted, n8nDeliveryRetryDelayMs } from './integrations/n8n-delivery.js';
 import { isUnverifiedContractTransition, requiresExternalSignature } from './contracts/status.js';
 import { checkPublicSite } from './monitoring/site-check.js';
 import { siteCheckFailureData } from './monitoring/site-check-failure.js';
@@ -1699,9 +1699,16 @@ app.post('/api/integrations/n8n/actions', { config: { rateLimit: { max: 120, tim
   if (!body) return;
   const [automation] = await db.select().from(workspaceRecords).where(and(
     eq(workspaceRecords.id, body.automationId), eq(workspaceRecords.resource, 'automations'), isNull(workspaceRecords.archivedAt),
-    sql`${workspaceRecords.data}->>'active' = 'true'`, sql`${workspaceRecords.data}->>'eventKey' = ${body.event.eventKey}`,
   )).limit(1);
   if (!automation) return reply.code(404).send({ error: 'automation_not_found' });
+  const rejection = n8nCallbackRejectionReason({
+    integrationEnabled: await isIntegrationEnabled(automation.organizationId, 'n8n'),
+    automationActive: automation.data.active === true,
+    automationEventKey: automation.data.eventKey,
+    incomingEventKey: body.event.eventKey,
+  });
+  if (rejection === 'integration_disconnected') return reply.code(409).send({ error: rejection, message: 'Reative a integração n8n para aceitar ações de workflows.' });
+  if (rejection) return reply.code(404).send({ error: rejection });
   const templateId = String(automation.data.templateId ?? '') as N8nAutomationTemplateId;
   const template = n8nAutomationTemplates[templateId];
   if (!template || template.eventKey !== body.event.eventKey) return reply.code(409).send({ error: 'automation_action_not_allowed' });
@@ -3553,6 +3560,7 @@ app.patch('/api/workspace/:resource/:id', { preHandler: app.authenticate }, asyn
   let invalidApprovalClient = false;
   let invalidApprovalAttachment = false;
   let linkedTransferMutationBlocked = false;
+  let financeAccountBalanceMutationBlocked = false;
   let projectArchiveTransitionBlocked = false;
   const updated = await db.transaction(async (tx) => {
     const [current] = await tx.select().from(workspaceRecords).where(and(eq(workspaceRecords.id, params.data.id), eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, params.data.resource), isNull(workspaceRecords.archivedAt))).limit(1);
@@ -3561,6 +3569,7 @@ app.patch('/api/workspace/:resource/:id', { preHandler: app.authenticate }, asyn
     if (!recordMatchesWorkspaceScope(params.data.resource, current.id, { ...current.data, ...body.data }, request.user.permissions?.scope)) return undefined;
     if (params.data.resource === 'projects' && Object.hasOwn(body.data, 'status') && !canChangeProjectArchiveState(request.user.role, current.data.status, body.data.status)) { projectArchiveTransitionBlocked = true; return undefined; }
     if (params.data.resource === 'finance-transactions' && current.data.transferId) { linkedTransferMutationBlocked = true; return undefined; }
+    if (params.data.resource === 'finance-accounts' && Object.hasOwn(body.data, 'balance') && !canUpdateFinanceAccountBalance(current.data.balance, body.data.balance)) { financeAccountBalanceMutationBlocked = true; return undefined; }
     if (params.data.resource === 'clients') { invalidClientBilling = validateClientServiceCharges({ ...current.data, ...body.data }.serviceCharges) || ''; if (invalidClientBilling) return undefined; }
     if (params.data.resource === 'approvals') {
       const merged = { ...current.data, ...body.data };
@@ -3620,6 +3629,7 @@ app.patch('/api/workspace/:resource/:id', { preHandler: app.authenticate }, asyn
   if (invalidApprovalClient) return reply.code(400).send({ error: 'approval_client_invalid', message: 'A aprovacao precisa estar vinculada a um cliente ativo deste workspace.' });
   if (invalidApprovalAttachment) return reply.code(403).send({ error: 'approval_file_scope_denied', message: 'O arquivo precisa estar vinculado ao cliente ou ao projeto selecionado.' });
   if (linkedTransferMutationBlocked) return reply.code(409).send({ error: 'finance_transfer_managed', message: 'A movimentacao faz parte de uma transferencia pareada e nao pode ser alterada separadamente.' });
+  if (financeAccountBalanceMutationBlocked) return reply.code(409).send({ error: 'finance_account_balance_ledger_required', message: 'Para alterar o saldo, registre uma movimentacao na conta. O ajuste direto ocultaria o historico financeiro.' });
   if (projectArchiveTransitionBlocked) return reply.code(403).send({ error: 'project_archive_forbidden', message: 'Somente administradores podem arquivar ou reabrir projetos.' });
   if (!updated) return reply.code(404).send({ error: 'not_found', message: 'Registro não encontrado.' });
   const normalizeStatus = (value: unknown) => String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();

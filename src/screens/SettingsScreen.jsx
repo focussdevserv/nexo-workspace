@@ -7,12 +7,14 @@ import {
 import './settings.css';
 import './branding.css';
 import { apiRequest, useWorkspaceRecords } from '../lib/workspace-api.js';
-import { publishWorkspacePreferences, readCachedWorkspacePreferences, rememberWorkspaceThemePreference, workspacePreferencesFromSettings } from '../lib/workspace-preferences.js';
+import { publishWorkspacePreferences, rememberWorkspaceThemePreference, workspacePreferencesFromSettings } from '../lib/workspace-preferences.js';
 import { compressBrandLogo } from '../lib/brand-logo.js';
 import { confirmSettingsNavigation } from '../lib/navigation-guards.js';
 import { enableBrowserNotifications } from './settings-browser-notifications.js';
 import { confirmSettingsImport, normalizeImportedSettings } from '../lib/settings-import.js';
 import { workspaceStartPages } from '../lib/workspace-preferences.js';
+import { settingsBaseline, settingsDraftHasChanges } from '../lib/settings-draft.js';
+import { resolveSettingsHydration } from '../lib/settings-hydration.js';
 
 const defaults = {
   workspace: { agency: '', timezone: 'America/Sao_Paulo', weekStart: 'monday', currency: 'BRL', dateFormat: 'dd/MM/yyyy', language: 'pt-BR', fiscalName: '', document: '', email: '', phone: '', website: '', address: '', brandLogo: '' },
@@ -43,6 +45,7 @@ export default function SettingsScreen({ notify, navigationContext = null, onNav
   const [active, setActive] = useState('workspace');
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
   const [savedAt, setSavedAt] = useState('');
   const fileRef = useRef(null);
   const backupRef = useRef(null);
@@ -55,11 +58,14 @@ export default function SettingsScreen({ notify, navigationContext = null, onNav
     if (requestedSection) onNavigationContextConsumed();
   }, [navigationContext, onNavigationContextConsumed]);
   useEffect(() => {
-    if (!savedSettings || dirty) return;
-    setSettings(Object.fromEntries(Object.entries(defaults).map(([key, value]) => [key, { ...value, ...(savedSettings.settings?.[key] || {}) }])));
-    setSavedAt(savedSettings.savedAt || '');
+    const hydration = resolveSettingsHydration({ defaults, savedRecord: savedSettings, loading: settingsLoading, error: settingsLoadError, dirty });
+    if (!hydration) return;
+    setSettings(hydration.settings);
+    setSavedAt(hydration.savedAt);
     setDirty(false);
-  }, [savedSettings?.id, savedSettings?.updatedAt, dirty]);
+    rememberWorkspaceThemePreference(hydration.settings.preferences.darkMode);
+    publishWorkspacePreferences(workspacePreferencesFromSettings(hydration.settings));
+  }, [savedSettings?.id, savedSettings?.updatedAt, dirty, settingsLoading, settingsLoadError]);
   useEffect(() => {
     const onBeforeUnload = (event) => { if (dirty) { event.preventDefault(); event.returnValue = ''; } };
     window.addEventListener('beforeunload', onBeforeUnload);
@@ -79,15 +85,9 @@ export default function SettingsScreen({ notify, navigationContext = null, onNav
   }, [dirty]);
   const update = (group, field, value) => {
     const next = { ...settings, [group]: { ...settings[group], [field]: value } };
-    const baseline = Object.fromEntries(Object.entries(defaults).map(([key, fallback]) => [key, { ...fallback, ...(savedSettings?.settings?.[key] || {}) }]));
     setSettings(next);
-    if (group === 'preferences') {
-      if (field === 'darkMode') rememberWorkspaceThemePreference(value);
-      publishWorkspacePreferences({ ...next.preferences, timezone: next.workspace.timezone, weekStart: next.workspace.weekStart });
-    } else if (group === 'workspace' && ['timezone', 'weekStart'].includes(field)) {
-      publishWorkspacePreferences({ ...readCachedWorkspacePreferences(), timezone: next.workspace.timezone, weekStart: next.workspace.weekStart });
-    }
-    setDirty(JSON.stringify(next) !== JSON.stringify(baseline));
+    setSaveError('');
+    setDirty(settingsDraftHasChanges(next, settingsBaseline(defaults, savedSettings?.settings)));
   };
   const save = async () => {
     if (!canWriteSettings) { notify('Seu perfil pode consultar estas configurações, mas não pode alterá-las.'); return; }
@@ -95,16 +95,22 @@ export default function SettingsScreen({ notify, navigationContext = null, onNav
     if (saving) return;
     const revision = settingsRevision.current;
     setSaving(true);
+    setSaveError('');
     try {
       const timestamp = new Date().toISOString();
       const payload = { key: 'workspace-preferences', settings, savedAt: timestamp };
       if (savedSettings) await updateRecord(savedSettings.id, payload); else await create(payload);
+      rememberWorkspaceThemePreference(settings.preferences.darkMode);
       publishWorkspacePreferences(workspacePreferencesFromSettings(settings));
       window.dispatchEvent(new CustomEvent('nexo:workspace-notifications', { detail: settings.notifications }));
       setSavedAt(timestamp);
       if (settingsRevision.current === revision) setDirty(false);
       notify(settingsRevision.current === revision ? 'Preferências do workspace salvas.' : 'Preferências salvas. As alterações mais recentes continuam sem salvar.');
-    } catch (error) { notify(error.message || 'Não foi possível salvar as preferências no servidor.'); }
+    } catch (error) {
+      const message = error.message || 'Não foi possível salvar as preferências no servidor.';
+      setSaveError(message);
+      notify(message);
+    }
     finally { setSaving(false); }
   };
   const openIntegrations = () => window.dispatchEvent(new CustomEvent('nexo:navigate', { detail: 'Integrações' }));
@@ -146,9 +152,8 @@ export default function SettingsScreen({ notify, navigationContext = null, onNav
       const imported = normalizeImportedSettings(payload, defaults);
       if (!confirmSettingsImport({ dirty, confirmReplace: (message) => window.confirm(message) })) return;
       setSettings(imported);
-      rememberWorkspaceThemePreference(imported.preferences.darkMode);
-      publishWorkspacePreferences(workspacePreferencesFromSettings(imported));
-      setDirty(true);
+      setSaveError('');
+      setDirty(settingsDraftHasChanges(imported, settingsBaseline(defaults, savedSettings?.settings)));
       notify('Configurações importadas. Salve para aplicar.');
     } catch { notify('Esse arquivo não contém uma exportação válida do Focusshub.'); }
     event.target.value = '';
@@ -202,9 +207,8 @@ export default function SettingsScreen({ notify, navigationContext = null, onNav
     if (!canWriteSettings) { notify('Seu perfil não pode redefinir as configurações deste workspace.'); return; }
     if (!window.confirm('Restaurar todas as configurações para os valores iniciais?')) return;
     setSettings(structuredClone(defaults));
-    rememberWorkspaceThemePreference(defaults.preferences.darkMode);
-    publishWorkspacePreferences(workspacePreferencesFromSettings(defaults));
-    setDirty(true);
+    setSaveError('');
+    setDirty(settingsDraftHasChanges(defaults, settingsBaseline(defaults, savedSettings?.settings)));
     notify('Valores iniciais carregados. Salve para confirmar.');
   };
   const activeSection = sections.find((item) => item.id === active);
@@ -218,6 +222,8 @@ export default function SettingsScreen({ notify, navigationContext = null, onNav
 
     <section className="settings-main">
       <div className="settings-main-head"><div><span className="settings-overline">PREFERÊNCIAS DO WORKSPACE</span><h2>{activeSection.label}</h2><p>{activeSection.hint}. As preferências sincronizam com o servidor ao salvar.</p></div><div className="settings-head-actions"><span className={`settings-save-state ${dirty ? 'pending' : ''}`}><i />{saving ? 'Salvando alterações…' : dirty ? 'Alterações não salvas' : savedAt ? `Salvo às ${new Date(savedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}` : 'Tudo atualizado'}</span><button className="admin-primary" disabled={saving || !dirty || !canWriteSettings || settingsLoading || Boolean(settingsLoadError)} onClick={save}><Check size={15} />{saving ? ' Salvando…' : ' Salvar alterações'}</button></div></div>
+
+      {saveError && <div className="settings-access-notice error" role="alert">Não foi possível salvar as preferências: {saveError}. Verifique a conexão e tente salvar novamente.</div>}
 
       {active === 'integrations' && <div className="settings-data-action"><div><b>Gerenciar integrações</b><small>Abra o painel para autorizar contas OAuth, conectar caixas postais ou configurar credenciais no servidor.</small></div><button type="button" className="admin-secondary" onClick={openIntegrations}><Link2 size={15} /> Abrir painel de integrações</button></div>}
       {settingsLoading && <div className="settings-access-notice" role="status">Carregando configurações salvas antes de liberar a edição…</div>}

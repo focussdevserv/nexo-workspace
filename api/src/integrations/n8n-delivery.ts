@@ -14,3 +14,14 @@ export function n8nDeliveryExhausted(attempts: number) {
 export function n8nDeliveryCanRetry(delivery: { discardedAt: Date | null; deliveredAt: Date | null; record: Record<string, unknown> }) {
   return Boolean(delivery.discardedAt && !delivery.deliveredAt && delivery.record && Object.keys(delivery.record).length);
 }
+
+export function n8nCallbackRejectionReason(input: {
+  integrationEnabled: boolean;
+  automationActive: boolean;
+  automationEventKey: unknown;
+  incomingEventKey: string;
+}) {
+  if (!input.integrationEnabled) return 'integration_disconnected';
+  if (!input.automationActive || input.automationEventKey !== input.incomingEventKey) return 'automation_not_found';
+  return null;
+}

@@ -1,7 +1,7 @@
 export const dateOf = (item, field = 'default') => {
   const candidates = field === 'created' ? [item.createdAt, item.created_at, item.date, item.updatedAt, item.updated_at]
     : field === 'expense' ? [item.date, item.createdAt, item.created_at, item.updatedAt, item.updated_at]
-      : field === 'paid' ? [item.paidAt, item.paid_at, item.paymentDetails?.paidAt, item.updatedAt, item.updated_at, item.createdAt, item.created_at]
+      : field === 'paid' ? [item.settledAt, item.settled_at, item.paidAt, item.paid_at, item.paymentDetails?.paidAt, item.updatedAt, item.updated_at, item.createdAt, item.created_at]
       : field === 'completed' ? [item.completedAt, item.completed_at, item.updatedAt, item.updated_at, item.createdAt, item.created_at]
           : field === 'work' ? [item.startedAt, item.started_at, item.endedAt, item.ended_at, item.createdAt, item.created_at, item.date]
             : field === 'task' ? [item.due, item.dueAt, item.due_at, item.createdAt, item.created_at, item.date, item.updatedAt, item.updated_at]
@@ -22,6 +22,15 @@ export const inPeriod = (item, periodId, now = new Date(), field = 'default') =>
   const date = dateOf(item, field);
   return !Number.isNaN(date.getTime()) && date >= periodStart(periodId, now) && date <= now;
 };
+
+const paidReportStatuses = new Set(['paid', 'processed', 'approved', 'paga', 'pago', 'recebida', 'received', 'conciliada', 'conciliado']);
+const normalizedStatus = (value) => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+
+// Manual receipts belong to the period in which they were settled, not the
+// period when the revenue row was first created or its original due date.
+export function paidReportRevenues(records = [], periodId, now = new Date()) {
+  return records.filter((item) => paidReportStatuses.has(normalizedStatus(item.status)) && inPeriod(item, periodId, now, 'paid'));
+}
 
 export const reportSourceState = (source, restrictedSources = [], failedSources = []) =>
   restrictedSources.includes(source) ? 'restricted' : failedSources.includes(source) ? 'failed' : 'ready';

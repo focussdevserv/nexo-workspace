@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildChartBuckets, buildProjectReportRows, dateOf, formatReportHours, hasReportChartFailures, hasReportSourceFailures, inPeriod, parseReportAmount, periodStart, reportDateLabel, reportHours, reportSourceState, reportSourcesForTab } from './reports.js';
+import { buildChartBuckets, buildProjectReportRows, dateOf, formatReportHours, hasReportChartFailures, hasReportSourceFailures, inPeriod, paidReportRevenues, parseReportAmount, periodStart, reportDateLabel, reportHours, reportSourceState, reportSourcesForTab } from './reports.js';
 
 test('report amounts parse Brazilian and US mixed thousands and decimal separators', () => {
   assert.equal(parseReportAmount('R$ 1.234,56'), 1234.56);
@@ -50,6 +50,18 @@ test('paid billing reports keep using the stored approval date after later refre
   };
   assert.equal(dateOf(order, 'paid').toISOString(), '2026-09-30T21:20:00.000Z');
   assert.equal(inPeriod(order, 'month', new Date('2026-10-02T13:00:00.000Z'), 'paid'), false);
+});
+
+test('paid manual revenues are reported in their settlement period, not creation period', () => {
+  const now = new Date('2026-10-02T15:00:00.000Z');
+  const revenues = [
+    { id: 'settled-this-month', status: 'Recebida', date: '2026-09-30', createdAt: '2026-09-30T10:00:00Z', settledAt: '2026-10-01T10:00:00Z', amount: 250 },
+    { id: 'settled-last-month', status: 'Recebida', date: '2026-10-01', settledAt: '2026-09-30T10:00:00Z', amount: 500 },
+    { id: 'pending', status: 'Pendente', date: '2026-10-01', amount: 700 },
+  ];
+
+  assert.deepEqual(paidReportRevenues(revenues, 'month', now).map(({ id }) => id), ['settled-this-month']);
+  assert.equal(dateOf(revenues[0], 'paid').toISOString(), '2026-10-01T10:00:00.000Z');
 });
 
 test('records with no date are excluded instead of being treated as epoch dated', () => {

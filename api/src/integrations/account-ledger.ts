@@ -17,6 +17,11 @@ export function isCurrencyBalance(value: unknown) {
   catch { return false; }
 }
 
+export function canUpdateFinanceAccountBalance(currentBalance: unknown, nextBalance: unknown) {
+  try { return cents(currentBalance) === cents(nextBalance); }
+  catch { return false; }
+}
+
 export function calculateAccountMovementBalance(balance: unknown, direction: 'Entrada' | 'Saída', amount: unknown) {
   const currentCents = cents(balance);
   const amountCents = cents(amount);

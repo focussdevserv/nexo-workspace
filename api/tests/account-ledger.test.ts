@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
-import { calculateAccountMovementBalance, isCurrencyAmount, isCurrencyBalance, reverseAccountMovementBalance } from '../src/integrations/account-ledger.ts';
+import { calculateAccountMovementBalance, canUpdateFinanceAccountBalance, isCurrencyAmount, isCurrencyBalance, reverseAccountMovementBalance } from '../src/integrations/account-ledger.ts';
 
 test('account movements update balances in integer cents for both directions', () => {
   assert.equal(calculateAccountMovementBalance('125.55', 'Saída', 25.1), 100.45);
@@ -14,6 +14,12 @@ test('account balances accept zero and negative cents but reject precision that 
   assert.equal(isCurrencyBalance(-12.34), true);
   assert.equal(isCurrencyBalance(12.345), false);
   assert.equal(isCurrencyBalance(Number.MAX_SAFE_INTEGER), false);
+});
+
+test('account balance edits may preserve the ledger balance but cannot silently overwrite it', () => {
+  assert.equal(canUpdateFinanceAccountBalance('125.50', 125.5), true);
+  assert.equal(canUpdateFinanceAccountBalance(125.5, 126.5), false);
+  assert.equal(canUpdateFinanceAccountBalance(125.5, 'invalid'), false);
 });
 
 test('account ledger rejects zero, excess decimal precision, and unsafe balances', () => {
@@ -38,4 +44,13 @@ test('transaction deletion locks the account and reverses standalone entries ato
   assert.match(deletion, /finance_transfer_managed/);
   assert.match(deletion, /eq\(workspaceRecords\.id, accountId\)[\s\S]*?\.for\('update'\)/);
   assert.ok(deletion.indexOf("eq(workspaceRecords.resource, 'finance-transactions'), isNull(workspaceRecords.archivedAt),\n      )).returning") < deletion.indexOf('if (accountData && nextBalance !== undefined)'));
+});
+
+test('account balance changes through the generic editor are rejected without a ledger entry', async () => {
+  const source = await readFile(new URL('../src/server.ts', import.meta.url), 'utf8');
+  const start = source.indexOf("app.patch('/api/workspace/:resource/:id'");
+  const patchRoute = source.slice(start, source.indexOf("app.delete('/api/workspace/finance-accounts/:id'", start));
+  assert.match(patchRoute, /canUpdateFinanceAccountBalance\(current\.data\.balance, body\.data\.balance\)/);
+  assert.match(patchRoute, /finance_account_balance_ledger_required/);
+  assert.match(patchRoute, /registre uma movimentacao na conta/i);
 });
