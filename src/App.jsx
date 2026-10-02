@@ -129,13 +129,28 @@ function ModuleLoading() {
   return <div className="module-loading" role="status" aria-live="polite">Carregando módulo…</div>;
 }
 
-function ModuleErrorFallback({ resetError }) {
+function recoverFromStaleModuleAssets(error) {
+  const message = String(error?.message || error || '');
+  if (!/Unable to preload CSS|Failed to fetch dynamically imported module|Importing a module script failed|ChunkLoadError|Loading chunk .* failed/i.test(message)) return;
+
+  const entryAsset = document.querySelector('script[type="module"][src]')?.getAttribute('src') || window.location.pathname;
+  const recoveryKey = `focusshub:stale-module-recovery:${entryAsset}`;
+  try {
+    if (window.sessionStorage.getItem(recoveryKey)) return;
+    window.sessionStorage.setItem(recoveryKey, '1');
+    window.location.reload();
+  } catch {
+    // If session storage is unavailable, leave the explicit reload action visible.
+  }
+}
+
+function ModuleErrorFallback() {
   return <section className="module-load-error" role="alert">
     <span className="module-error-mark" aria-hidden="true">!</span>
     <span className="eyebrow">FOCUSSHUB · MÓDULO</span>
     <h2>Não foi possível abrir esta tela</h2>
     <p>O restante do workspace continua disponível. Tente novamente ou abra outra área pelo menu.</p>
-    <button className="primary-button" type="button" onClick={resetError}>Tentar novamente</button>
+    <button className="primary-button" type="button" onClick={() => window.location.reload()}>Recarregar tela</button>
   </section>;
 }
 
@@ -727,7 +742,7 @@ function WorkspaceShell() {
             {currentUser?.role !== 'member' && <button className="alert-card" onClick={() => navigateToPage('Propostas')}><span className="alert-icon blue-bg"><FileText size={18} /></span><span><b>Propostas pendentes</b><small>{dashboardRestricted('proposals') ? 'Seu perfil não tem leitura de CRM' : dashboardRecords.proposals.filter((item) => !['Aprovada', 'Recusada', 'accepted', 'rejected'].includes(item.status)).length ? 'Aguardando retorno de clientes' : 'Nenhuma proposta pendente'}</small></span><span className="alert-count blue-count">{dashboardRestricted('proposals') ? '—' : dashboardRecords.proposals.filter((item) => !['Aprovada', 'Recusada', 'accepted', 'rejected'].includes(item.status)).length}</span><ChevronRight size={17} /></button>}
             <button className="alert-card" onClick={() => navigateToPage('Agenda')}><span className="alert-icon blue-bg"><CalendarDays size={18} /></span><span><b>Eventos de hoje</b><small>{dashboardRestricted('events') ? 'Seu perfil não tem leitura da Agenda' : todayEvents.length ? `${todayEvents.length} compromisso${todayEvents.length === 1 ? '' : 's'} na agenda` : 'Nenhum compromisso agendado'}</small></span><span className="alert-count blue-count">{dashboardRestricted('events') ? '—' : todayEvents.length}</span><ChevronRight size={17} /></button>
           </section>
-          </main> : <Sentry.ErrorBoundary fallback={ModuleErrorFallback} key={activeNav}><ModuleScreen page={activeNav} navigationContext={navigationContext} onNavigationContextConsumed={() => setNavigationContext(null)} /></Sentry.ErrorBoundary>}
+          </main> : <Sentry.ErrorBoundary fallback={ModuleErrorFallback} onError={recoverFromStaleModuleAssets} key={activeNav}><ModuleScreen page={activeNav} navigationContext={navigationContext} onNavigationContextConsumed={() => setNavigationContext(null)} /></Sentry.ErrorBoundary>}
         </div>
       </section>
       {toast && <div className="toast" role="status"><Check size={16} />{toast}</div>}
