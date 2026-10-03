@@ -5,6 +5,7 @@ import { apiRequest } from '../lib/workspace-api.js';
 import { copyTextToClipboard } from '../lib/copy-to-clipboard.js';
 import { isLocalDemoActive } from '../lib/local-demo.js';
 import { createLatestRequestGuard } from '../lib/latest-request.js';
+import { averageActiveTeamLoad } from '../lib/team-capacity.js';
 import { effectiveModulePermissionDraft, permissionDraftForAccount, permissionsPayload, setModulePermissionMode, setModulePermissionValue, validatePermissionDraft } from '../lib/team-permissions.js';
 import './team.css';
 
@@ -34,7 +35,7 @@ export default function TeamScreen({ notify }) {
   }, [dialog]);
   const activeCount = people.filter((person) => person.status === 'Ativo').length;
   const inactiveCount = people.filter((person) => person.status !== 'Ativo').length;
-  const averageLoad = activeCount ? Math.round(people.filter((person) => person.status === 'Ativo').reduce((sum, person) => sum + Number(person.load || 0), 0) / activeCount) : 0;
+  const averageLoad = averageActiveTeamLoad(people);
   const visible = useMemo(() => people.filter((person) => {
     const status = person.status === 'Ativo' ? 'Ativo' : 'Inativo';
     return (filter === 'Todos' || status === filter) && `${person.name} ${person.email} ${person.title || person.role || ''}`.toLowerCase().includes(query.toLowerCase());
@@ -80,7 +81,7 @@ export default function TeamScreen({ notify }) {
   return <div className="team-module">
     <div className="team-guidance"><ShieldCheck size={16} /><span><b>Controles separados.</b> Cadastros operacionais organizam tarefas. Contas e permissoes do Focusshub sao gerenciadas abaixo.</span></div>
     <TeamAccessPanel notify={notify} onAccountCountChange={setAccountCount} />
-    <section className="team-summary"><TeamStat icon={Users} label="Pessoas ativas" value={String(activeCount).padStart(2, '0')} detail="na operação" /><TeamStat icon={UserRound} label="Pessoas inativas" value={String(inactiveCount).padStart(2, '0')} detail="cadastros operacionais" /><TeamStat icon={ShieldCheck} label="Contas Focusshub" value={accountCount === null ? '—' : String(accountCount).padStart(2, '0')} detail={accountCount === null ? 'visível para o proprietário' : 'com acesso ativo'} /></section>
+    <section className="team-summary"><TeamStat icon={Users} label="Pessoas ativas" value={String(activeCount).padStart(2, '0')} detail="na operação" /><TeamStat icon={UserRound} label="Pessoas inativas" value={String(inactiveCount).padStart(2, '0')} detail="cadastros operacionais" /><TeamStat icon={ShieldCheck} label="Contas Focusshub" value={accountCount === null ? '—' : String(accountCount).padStart(2, '0')} detail={accountCount === null ? 'visível para o proprietário' : 'com acesso ativo'} /><TeamStat icon={Users} label="Carga semanal média" value={averageLoad === null ? '—' : `${averageLoad}%`} detail={averageLoad === null ? 'sem pessoas ativas com carga' : 'entre pessoas ativas'} /></section>
     <section className="team-directory"><header className="team-directory-head"><div><h2>Equipe operacional</h2><p>Registre colaboradores para organizar tarefas e carga de trabalho. O cadastro não cria uma conta Focusshub.</p></div><button ref={addPersonButtonRef} type="button" className="admin-primary" disabled={peopleLoading || Boolean(peopleError) || directoryBusy} onClick={openNew}><Plus size={15} />Adicionar pessoa</button></header>
       <div className="team-directory-controls"><div className="team-filter-tabs">{['Todos', 'Ativo', 'Inativo'].map((item) => <button type="button" key={item} className={filter === item ? 'active' : ''} onClick={() => setFilter(item)}>{item}</button>)}</div><label className="team-search"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar nome, e-mail ou função" /></label></div>
       <div className="team-directory-table"><div className="team-directory-row team-directory-labels"><span>Pessoa</span><span>Função</span><span>Projetos</span><span>Carga semanal</span><span>Situação</span><span>Ações</span></div>

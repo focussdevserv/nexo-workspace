@@ -39,6 +39,13 @@ test('local demo inbox supports filtering, read/resolve state and an isolated si
     assert.equal(sessions.data[0].status, 'WORKING');
     assert.equal(sessions.data[0].demo, true);
 
+    const paused = handleLocalDemoRequest(`/api/integrations/waha/sessions/${sessions.data[0].id}/stop`, { method: 'POST', body: '{}' });
+    assert.equal(paused.data.status, 'STOPPED');
+    assert.equal(handleLocalDemoRequest('/api/integrations/waha/sessions').data[0].status, 'STOPPED');
+    const resumed = handleLocalDemoRequest(`/api/integrations/waha/sessions/${sessions.data[0].id}/start`, { method: 'POST', body: '{}' });
+    assert.equal(resumed.data.status, 'WORKING');
+    assert.equal(handleLocalDemoRequest('/api/integrations/waha/sessions').data[0].status, 'WORKING');
+
     handleLocalDemoRequest('/api/workspace/inbox/demo-inbox-a', { method: 'PATCH', body: JSON.stringify({ data: { status: 'open' } }) });
     const response = handleLocalDemoRequest('/api/integrations/waha/send', {
       method: 'POST',

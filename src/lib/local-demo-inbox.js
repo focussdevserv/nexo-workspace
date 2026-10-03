@@ -16,7 +16,23 @@ export function handleLocalDemoInboxRequest(store, pathname, method, body = {}, 
   }
 
   if (pathname === '/api/integrations/waha/sessions' && method === 'GET') {
-    return { changed: false, response: { data: [{ ...demoSession }] } };
+    return { changed: false, response: { data: [{ ...demoSession, ...(store.wahaSession || {}) }] } };
+  }
+
+  const sessionAction = pathname.match(/^\/api\/integrations\/waha\/sessions\/([^/]+)\/(stop|start|restart|logout)$/);
+  if (sessionAction && method === 'POST') {
+    const [, sessionId, action] = sessionAction;
+    if (decodeURIComponent(sessionId) !== demoSession.id) throw new Error('Sessão não encontrada na demonstração local.');
+    const status = action === 'stop' ? 'STOPPED' : action === 'logout' ? 'SCAN_QR_CODE' : 'WORKING';
+    store.wahaSession = { ...(store.wahaSession || {}), status };
+    return { changed: true, response: { data: { ...demoSession, ...store.wahaSession } } };
+  }
+
+  const sessionDelete = pathname.match(/^\/api\/integrations\/waha\/sessions\/([^/]+)$/);
+  if (sessionDelete && method === 'DELETE') {
+    if (decodeURIComponent(sessionDelete[1]) !== demoSession.id) throw new Error('Sessão não encontrada na demonstração local.');
+    store.wahaSession = { ...(store.wahaSession || {}), status: 'NOT_FOUND' };
+    return { changed: true, response: { data: { deleted: true, simulated: true } } };
   }
 
   if (pathname !== '/api/integrations/waha/send' || method !== 'POST') return null;
