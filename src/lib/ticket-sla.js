@@ -17,7 +17,16 @@ export function ticketSlaState(ticket, now = Date.now()) {
 export function ticketSlaLabel(ticket, now = Date.now()) {
   const { state, remainingMs } = ticketSlaState(ticket, now);
   if (remainingMs === null) return state;
-  if (state === 'Vencido') return remainingMs === 0 ? 'Vencido agora' : `Vencido ha ${Math.max(1, Math.floor(Math.abs(remainingMs) / 3_600_000))} h`;
+  if (state === 'Vencido') {
+    if (remainingMs === 0) return 'Vencido agora';
+    const overdueMinutes = Math.floor(Math.abs(remainingMs) / 60_000);
+    if (overdueMinutes < 60) return overdueMinutes === 0 ? 'Vencido há menos de 1 min' : `Vencido há ${overdueMinutes} min`;
+    return `Vencido há ${Math.floor(overdueMinutes / 60)} h`;
+  }
+  if (remainingMs < 3_600_000) {
+    const remainingMinutes = Math.ceil(remainingMs / 60_000);
+    return remainingMinutes < 60 ? `Restam ${remainingMinutes} min` : 'Restam 1 h';
+  }
   const hours = Math.ceil(remainingMs / 3_600_000);
   return hours < 24 ? `Restam ${hours} h` : `Restam ${Math.ceil(hours / 24)} d`;
 }

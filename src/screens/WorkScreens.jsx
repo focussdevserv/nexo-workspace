@@ -293,6 +293,8 @@ function WorkScreen({ page, navigationContext = null, onNavigationContextConsume
   const [hours, setHours, hoursError, hoursLoaded, refreshHours] = useLocalState('nexo.work.hours.v1', []);
   const [hoursPeriod, setHoursPeriod] = useState('Esta semana');
   const [timerBusy, setTimerBusy] = useState(false);
+  const timerActionLockRef = useRef(null);
+  if (!timerActionLockRef.current) timerActionLockRef.current = createAsyncActionLock();
   const [hoursTaskId, setHoursTaskId] = useState('');
   const [hoursQuery, setHoursQuery] = useState('');
   const [hoursSearchOpen, setHoursSearchOpen] = useState(false);
@@ -478,26 +480,29 @@ function WorkScreen({ page, navigationContext = null, onNavigationContextConsume
     return () => window.clearInterval(timer);
   }, [activeTimer?.id]);
   const toggleTimer = async () => {
-    if (timerBusy) return;
-    const now = new Date();
-    if (!activeTimer) {
-      const taskForTimer = key === 'horas' ? hoursTask : selectedTask;
-      if (key === 'horas' && !taskForTimer) { notify('Selecione uma tarefa ativa antes de iniciar o cronômetro.'); return; }
-      const id = globalThis.crypto?.randomUUID?.() || `timer-${Date.now()}`;
-      const project = findProjectForTask(taskForTimer, projects);
+    if (timerBusy || timerActionLockRef.current.locked) return;
+    return timerActionLockRef.current.run(async () => {
       setTimerBusy(true);
-      const saved = await setHours((current) => [...current.filter((item) => item.status !== 'running'), { id, title: taskForTimer?.title || 'Tempo sem tarefa', taskId: taskForTimer?.id || null, project: project?.name || taskForTimer?.project || '', projectId: project?.id || taskForTimer?.projectId || '', client: taskForTimer?.client || project?.client || '', clientId: taskForTimer?.clientId || project?.clientId || '', assignee: taskForTimer?.assignee || '', startedAt: now.toISOString(), status: 'running' }]);
-      setTimerBusy(false);
-      if (!saved?.ok) { notify(saved?.error?.message || 'Could not start timer.'); return; }
-      notify('Cronômetro iniciado e sincronizado com o workspace.');
-      return;
-    }
-    const elapsed = Math.max(0, Math.floor((now.getTime() - new Date(activeTimer.startedAt).getTime()) / 1000));
-    setTimerBusy(true);
-    const saved = await setHours((current) => current.map((item) => item.id === activeTimer.id ? { ...item, endedAt: now.toISOString(), seconds: elapsed, hours: Number((elapsed / 3600).toFixed(2)), status: 'completed' } : item));
-    setTimerBusy(false);
-    if (!saved?.ok) { notify(saved?.error?.message || 'Could not save elapsed time. The timer remains active.'); return; }
-    notify('Tempo registrado no workspace.');
+      try {
+        const now = new Date();
+        if (!activeTimer) {
+          const taskForTimer = key === 'horas' ? hoursTask : selectedTask;
+          if (key === 'horas' && !taskForTimer) { notify('Selecione uma tarefa ativa antes de iniciar o cronômetro.'); return; }
+          const id = globalThis.crypto?.randomUUID?.() || `timer-${Date.now()}`;
+          const project = findProjectForTask(taskForTimer, projects);
+          const saved = await setHours((current) => [...current.filter((item) => item.status !== 'running'), { id, title: taskForTimer?.title || 'Tempo sem tarefa', taskId: taskForTimer?.id || null, project: project?.name || taskForTimer?.project || '', projectId: project?.id || taskForTimer?.projectId || '', client: taskForTimer?.client || project?.client || '', clientId: taskForTimer?.clientId || project?.clientId || '', assignee: taskForTimer?.assignee || '', startedAt: now.toISOString(), status: 'running' }]);
+          if (!saved?.ok) { notify(saved?.error?.message || 'Could not start timer.'); return; }
+          notify('Cronômetro iniciado e sincronizado com o workspace.');
+          return;
+        }
+        const elapsed = Math.max(0, Math.floor((now.getTime() - new Date(activeTimer.startedAt).getTime()) / 1000));
+        const saved = await setHours((current) => current.map((item) => item.id === activeTimer.id ? { ...item, endedAt: now.toISOString(), seconds: elapsed, hours: Number((elapsed / 3600).toFixed(2)), status: 'completed' } : item));
+        if (!saved?.ok) { notify(saved?.error?.message || 'Could not save elapsed time. The timer remains active.'); return; }
+        notify('Tempo registrado no workspace.');
+      } finally {
+        setTimerBusy(false);
+      }
+    });
   };
   const timerLabel = `${String(Math.floor(timerSeconds / 3600)).padStart(2, '0')}:${String(Math.floor(timerSeconds % 3600 / 60)).padStart(2, '0')}:${String(timerSeconds % 60).padStart(2, '0')}`;
   const notify = (message) => {

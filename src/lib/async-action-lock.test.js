@@ -19,6 +19,24 @@ test('prevents concurrent submissions and releases after completion', async () =
   assert.deepEqual(await lock.run(async () => ({ ok: true, retry: true })), { ok: true, retry: true });
 });
 
+test('rapid timer clicks persist only one running session', async () => {
+  const lock = createAsyncActionLock();
+  let releaseSave;
+  let createdSessions = 0;
+  const startTimer = () => lock.run(async () => {
+    createdSessions += 1;
+    await new Promise((resolve) => { releaseSave = resolve; });
+  });
+
+  const firstClick = startTimer();
+  const secondClick = await startTimer();
+  assert.deepEqual(secondClick, { ok: false, skipped: true });
+  assert.equal(createdSessions, 1);
+  releaseSave();
+  await firstClick;
+  assert.equal(lock.locked, false);
+});
+
 test('skips an automatic status poll while a manual refresh is still in flight', async () => {
   const lock = createAsyncActionLock();
   let finishRefresh;

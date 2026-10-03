@@ -40,3 +40,13 @@ test('a ticket becomes overdue at the exact SLA deadline', () => {
   assert.equal(ticketSlaLabel(ticket, now), 'Vencido agora');
   assert.equal(countOverdueTickets([ticket], now), 1);
 });
+
+test('ticket SLA labels show accurate minute-level timing around the one-hour boundary', () => {
+  const now = Date.parse('2026-10-01T10:00:00.000Z');
+  assert.equal(ticketSlaLabel({ status: 'Aberto', slaDueAt: new Date(now + 30 * 60_000).toISOString() }, now), 'Restam 30 min');
+  assert.equal(ticketSlaLabel({ status: 'Aberto', slaDueAt: new Date(now - 30 * 60_000).toISOString() }, now), 'Vencido há 30 min');
+  assert.equal(ticketSlaLabel({ status: 'Aberto', slaDueAt: new Date(now - 1_000).toISOString() }, now), 'Vencido há menos de 1 min');
+  assert.equal(ticketSlaLabel({ status: 'Aberto', slaDueAt: new Date(now + 59 * 60_000 + 30_000).toISOString() }, now), 'Restam 1 h');
+  assert.equal(ticketSlaLabel({ status: 'Aberto', slaDueAt: new Date(now - 60 * 60_000).toISOString() }, now), 'Vencido há 1 h');
+  assert.equal(ticketSlaLabel({ status: 'Aberto', slaDueAt: new Date(now + 60 * 60_000).toISOString() }, now), 'Restam 1 h');
+});
