@@ -1,5 +1,9 @@
 import { calendarDateKeyInTimeZone } from './calendar-preferences.js';
 
+export function defaultManualHoursDate(instant = new Date(), timeZone) {
+  return calendarDateKeyInTimeZone(instant, timeZone);
+}
+
 export function hoursEntryLocalDate(item, timeZone) {
   const storedDate = String(item?.date || '');
   if (/^\d{4}-\d{2}-\d{2}$/.test(storedDate)) return storedDate;

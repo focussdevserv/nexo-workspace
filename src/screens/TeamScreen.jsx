@@ -12,6 +12,7 @@ import { formatWorkspaceDateTime } from '../lib/workspace-formatting.js';
 import { effectiveModulePermissionDraft, permissionDraftForAccount, permissionsPayload, setModulePermissionMode, setModulePermissionValue, validatePermissionDraft } from '../lib/team-permissions.js';
 import { shouldCloseTeamDialog } from '../lib/team-dialog.js';
 import { confirmDiscardTeamPermissionDraft, teamPermissionDraftHasChanges } from '../lib/team-permission-draft.js';
+import { resolveTeamInviteLink } from '../lib/team-invite-link.js';
 import './team.css';
 
 const accessModules = [
@@ -109,8 +110,7 @@ function TeamAccessPanel({ notify, onAccountCountChange }) {
   const [error, setError] = useState('');
   const [listError, setListError] = useState('');
   const [scopeError, setScopeError] = useState('');
-  const [inviteUrl, setInviteUrl] = useState('');
-  const [inviteRecipient, setInviteRecipient] = useState('');
+  const [inviteLink, setInviteLink] = useState({ url: '', recipient: '' });
   const [inviteNotice, setInviteNotice] = useState('');
   const inviteFormRef = useRef(null);
   const [draft, setDraft] = useState({ name: '', email: '', role: 'member' });
@@ -157,10 +157,8 @@ function TeamAccessPanel({ notify, onAccountCountChange }) {
     setBusy(true); setError('');
     try {
       const result = await apiRequest('/api/team/invites', { method: 'POST', body: JSON.stringify({ ...draft, name: draft.name.trim(), email: draft.email.trim().toLowerCase() }) });
-      setInviteUrl('');
       if (typeof result.inviteUrl !== 'string' || !result.inviteUrl.trim()) throw new Error('O convite foi aceito, mas o servidor não retornou um link. Atualize a lista antes de tentar novamente.');
-      setInviteUrl(result.inviteUrl);
-      setInviteRecipient(draft.email.trim().toLowerCase());
+      setInviteLink((current) => resolveTeamInviteLink(current, { type: 'created', url: result.inviteUrl, recipient: draft.email }));
       setInviteNotice('');
       setDraft({ name: '', email: '', role: 'member' });
       await refresh();
@@ -176,12 +174,11 @@ function TeamAccessPanel({ notify, onAccountCountChange }) {
     finally { setBusy(false); }
   };
   const copyInvite = async () => {
-    if (await copyTextToClipboard(inviteUrl)) notify('Link de convite copiado.');
+    if (await copyTextToClipboard(inviteLink.url)) notify('Link de convite copiado.');
     else setError('Nao foi possivel copiar o link neste navegador. Selecione e copie o link exibido.');
   };
   const renewInvite = (account) => {
     setDraft({ name: account.name, email: account.email, role: account.role });
-    setInviteUrl(''); setInviteRecipient('');
     setInviteNotice(`Dados de ${account.name} preparados. Revise-os e confirme em Criar convite para gerar um novo link.`);
     inviteFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     window.setTimeout(() => inviteFormRef.current?.querySelector('input')?.focus(), 250);
@@ -240,10 +237,10 @@ function TeamAccessPanel({ notify, onAccountCountChange }) {
     return { status, label: labels[status] || labels.inactive, deadline };
   };
   return <section className="team-access-panel"><header><div><span className="admin-eyebrow">CONTAS E PERMISSOES</span><h2>Acesso ao Focusshub</h2><p>Convites expiram em 48 horas. O link e exibido aqui para voce compartilhar; nenhum e-mail e enviado automaticamente. Contas inativas precisam de um novo convite para recuperar acesso.</p></div><button type="button" className="admin-secondary" onClick={refresh} disabled={loading || busy || editingPermissions !== null}>{loading ? 'Atualizando...' : 'Atualizar lista'}</button></header>
-    <form ref={inviteFormRef} className="team-invite-form" onSubmit={createInvite}><label>Nome<input required minLength="2" maxLength="120" value={draft.name} onChange={(event) => { setDraft({ ...draft, name: event.target.value }); setInviteUrl(''); setInviteRecipient(''); setInviteNotice(''); }} /></label><label>E-mail<input required type="email" value={draft.email} onChange={(event) => { setDraft({ ...draft, email: event.target.value }); setInviteUrl(''); setInviteRecipient(''); setInviteNotice(''); }} /></label><label>Papel<select value={draft.role} onChange={(event) => { setDraft({ ...draft, role: event.target.value }); setInviteUrl(''); setInviteRecipient(''); setInviteNotice(''); }}><option value="member">Membro - entrega e atendimento</option><option value="admin">Administrador - operacao da agencia</option></select></label><button type="submit" className="admin-primary" disabled={busy || loading || Boolean(listError)}><Plus size={14} />{busy ? 'Criando...' : 'Criar convite'}</button></form>
+    <form ref={inviteFormRef} className="team-invite-form" onSubmit={createInvite}><label>Nome<input required minLength="2" maxLength="120" value={draft.name} onChange={(event) => { setDraft({ ...draft, name: event.target.value }); setInviteNotice(''); }} /></label><label>E-mail<input required type="email" value={draft.email} onChange={(event) => { setDraft({ ...draft, email: event.target.value }); setInviteNotice(''); }} /></label><label>Papel<select value={draft.role} onChange={(event) => { setDraft({ ...draft, role: event.target.value }); setInviteNotice(''); }}><option value="member">Membro - entrega e atendimento</option><option value="admin">Administrador - operacao da agencia</option></select></label><button type="submit" className="admin-primary" disabled={busy || loading || Boolean(listError)}><Plus size={14} />{busy ? 'Criando...' : 'Criar convite'}</button></form>
     <p className="team-role-note">O papel é definido na criação do convite e não pode ser trocado nesta tela depois que a conta é ativada. Para alterar, suspenda a conta e gere um novo convite com o papel correto.</p>
     {inviteNotice && <p className="team-invite-notice" role="status">{inviteNotice}</p>}
-    {inviteUrl && <div className="team-invite-link" role="status"><span><b>Convite pronto para {inviteRecipient}</b><small>Uso único, válido por 48 horas. O link anterior permanece aqui até outro convite ser criado.</small><code>{inviteUrl}</code></span><button type="button" className="admin-secondary" onClick={copyInvite}><Copy size={14} />Copiar link</button></div>}
+    {inviteLink.url && <div className="team-invite-link" role="status"><span><b>Convite pronto para {inviteLink.recipient}</b><small>Uso único, válido por 48 horas. O link anterior permanece aqui até outro convite ser criado.</small><code>{inviteLink.url}</code></span><button type="button" className="admin-secondary" onClick={copyInvite}><Copy size={14} />Copiar link</button></div>}
     {scopeError && <p className="team-scope-empty-warning" role="status">{scopeError}</p>}
     {error && !listError && <p className="team-access-error" role="alert">{error}</p>}
     {listError && <p className="team-access-error" role="alert">{listError}<button type="button" disabled={loading || busy} onClick={refresh}>Tentar novamente</button></p>}

@@ -36,7 +36,7 @@ import { archiveClientRecord, isArchivedClient, restoreClientRecord } from "../l
 import { clientFileRecordForUpload } from "../lib/client-file-link.js";
 import { clientFileDeleteConfirmation, clientFileMetadataPatch, safeClientFileHref } from "../lib/client-file-actions.js";
 import { buildClientRelationshipHistory, clientRelationshipHistoryDateLabel } from "../lib/client-relationship-history.js";
-import { buildCommercialRecordEditorPatch, companyContactCount, commercialContactCompanySelection, commercialRecordEditorDraft, commercialRecordEditorFields, commercialRecordEditorIsDirty, synchronizeCompanyContactNames } from "../lib/commercial-record-editor.js";
+import { buildCommercialRecordEditorPatch, companyContactCount, commercialContactCompanySelection, commercialRecordEditorDraft, commercialRecordEditorFields, commercialRecordEditorIsDirty, synchronizeCompanyContactNames, unlinkCompanyContacts } from "../lib/commercial-record-editor.js";
 import { filterCommercialRecords } from "../lib/commercial-record-filter.js";
 import { commercialStageTone } from "../lib/commercial-stage-tone.js";
 import { averageProposalApprovalDays, countLeadsWithoutNextAction, formatElapsedDays } from "../lib/commercial-cycle-metrics.js";
@@ -1013,11 +1013,19 @@ export default function CommercialScreen({
         return false;
       }
     }
-    if (!confirmWorkspaceDelete(`Excluir "${record.name || record.title}" do workspace?`, preferences)) return false;
+    const deleteMessage = key === "empresas"
+      ? `Excluir "${record.name || record.title}" do workspace? Os contatos vinculados serão desvinculados e manterão o nome da empresa como referência.`
+      : `Excluir "${record.name || record.title}" do workspace?`;
+    if (!confirmWorkspaceDelete(deleteMessage, preferences)) return false;
     try {
-      await persistRecords({
+      const nextContacts = key === "empresas" ? unlinkCompanyContacts(record, records.contacts || []) : records.contacts;
+      const nextRecords = {
         ...records,
         [recordType]: (records[recordType] || []).filter(item => String(item.id || item.title || item.name) !== String(record.id || record.title || record.name))
+      };
+      if (nextContacts !== records.contacts) nextRecords.contacts = nextContacts;
+      await persistRecords({
+        ...nextRecords
       });
       notify("Registro removido.");
       return true;

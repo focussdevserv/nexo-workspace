@@ -9,6 +9,7 @@ import {
   commercialRecordEditorFields,
   commercialRecordEditorIsDirty,
   synchronizeCompanyContactNames,
+  unlinkCompanyContacts,
 } from './commercial-record-editor.js';
 
 const clients = [{ id: 12, name: 'Nexo Ltda', email: 'financeiro@nexo.test' }];
@@ -112,6 +113,21 @@ test('renaming a company updates linked contact labels and only unique legacy na
   const ambiguousLegacy = synchronizeCompanyContactNames(companies[0], 'Acme Digital', contacts, [...companies, duplicateCompany]);
   assert.equal(ambiguousLegacy[0].company, 'Acme Digital');
   assert.equal(ambiguousLegacy[1].company, 'Acme Tecnologia');
+});
+
+test('deleting a company clears only its contact IDs while preserving their company label', () => {
+  const contacts = [
+    { id: 1, companyId: 34, company: 'Acme Tecnologia' },
+    { id: 2, companyId: '35', company: 'Outra Empresa' },
+    { id: 3, company: 'Acme Tecnologia' },
+  ];
+  const unlinked = unlinkCompanyContacts(companies[0], contacts);
+  assert.deepEqual(unlinked[0], { id: 1, companyId: '', company: 'Acme Tecnologia' });
+  assert.equal(unlinked[1], contacts[1]);
+  assert.equal(unlinked[2], contacts[2]);
+  assert.equal(contacts[0].companyId, 34);
+  const unrelatedContacts = [contacts[1]];
+  assert.equal(unlinkCompanyContacts(companies[0], unrelatedContacts), unrelatedContacts);
 });
 
 test('keeps draft values as strings and detects unsaved changes', () => {

@@ -4039,6 +4039,10 @@ app.post('/api/workspace/:resource', { preHandler: app.authenticate }, async (re
   if (params.success && params.data.resource === 'monitors' && !monitorAssetId?.success) return reply.code(400).send({ error: 'monitor_site_asset_required', message: 'Vincule o agendamento a um ativo valido.' });
   const ticketClientId = params.data.resource === 'tickets' ? ticketClientIdFromDraft(body.data) : null;
   if (params.data.resource === 'tickets' && !ticketClientId) return reply.code(400).send({ error: 'ticket_client_required', message: 'Selecione um cliente cadastrado para este ticket.' });
+  const projectClientId = params.data.resource === 'projects' && body.data.clientId != null && body.data.clientId !== ''
+    ? z.string().uuid().safeParse(body.data.clientId)
+    : null;
+  if (projectClientId && !projectClientId.success) return reply.code(400).send({ error: 'project_client_invalid', message: 'O cliente vinculado ao projeto é inválido.' });
   const financeEntryCreate = ['revenues', 'expenses'].includes(params.data.resource);
   const parsedFinanceEntryKey = financeEntryCreate ? billingRequestIdempotencyKey(request.headers['idempotency-key']) : { key: null, valid: true };
   if (!parsedFinanceEntryKey.valid) return reply.code(400).send({ error: 'invalid_idempotency_key', message: 'Envie uma chave Idempotency-Key no formato UUID.' });
@@ -4126,6 +4130,14 @@ app.post('/api/workspace/:resource', { preHandler: app.authenticate }, async (re
       if (!recordMatchesWorkspaceScope('clients', linkedClient.id, linkedClient.data, recordScope)) return { created: [], ticketClientScopeDenied: true as const };
       ticketClient = linkedClient;
     }
+    if (projectClientId?.success) {
+      const [linkedClient] = await tx.select({ id: workspaceRecords.id, data: workspaceRecords.data }).from(workspaceRecords).where(and(
+        eq(workspaceRecords.id, projectClientId.data), eq(workspaceRecords.organizationId, request.user.organizationId),
+        eq(workspaceRecords.resource, 'clients'), isNull(workspaceRecords.archivedAt),
+      )).for('share').limit(1);
+      if (!linkedClient) return { created: [], projectClientMissing: true as const };
+      if (!recordMatchesWorkspaceScope('clients', linkedClient.id, linkedClient.data, recordScope)) return { created: [], projectClientScopeDenied: true as const };
+    }
     if (params.data.resource === 'leads') {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${request.user.organizationId}))`);
       const existingLeads = await tx.select({ id: workspaceRecords.id, data: workspaceRecords.data }).from(workspaceRecords).where(and(
@@ -4162,6 +4174,8 @@ app.post('/api/workspace/:resource', { preHandler: app.authenticate }, async (re
   if ('monitorAssetScopeDenied' in outcome && outcome.monitorAssetScopeDenied) return reply.code(403).send({ error: 'record_scope_denied', message: 'O ativo vinculado esta fora do seu escopo.' });
   if ('ticketClientMissing' in outcome && outcome.ticketClientMissing) return reply.code(400).send({ error: 'ticket_client_invalid', message: 'O cliente selecionado nao existe neste workspace.' });
   if ('ticketClientScopeDenied' in outcome && outcome.ticketClientScopeDenied) return reply.code(403).send({ error: 'record_scope_denied', message: 'O cliente selecionado esta fora do seu escopo.' });
+  if ('projectClientMissing' in outcome && outcome.projectClientMissing) return reply.code(400).send({ error: 'project_client_invalid', message: 'O cliente vinculado não existe ou não está ativo neste workspace.' });
+  if ('projectClientScopeDenied' in outcome && outcome.projectClientScopeDenied) return reply.code(403).send({ error: 'record_scope_denied', message: 'O cliente vinculado esta fora do seu escopo.' });
   if ('financeEntryIdempotencyConflict' in outcome && outcome.financeEntryIdempotencyConflict) return reply.code(409).send({ error: 'finance_entry_idempotency_conflict', message: 'Esta tentativa de lançamento já foi usada com outros dados. Confira a lista antes de criar outro registro.' });
   if ('financeEntryAlreadyArchived' in outcome && outcome.financeEntryAlreadyArchived) return reply.code(409).send({ error: 'finance_entry_idempotency_archived', message: 'Este lançamento já foi removido. Atualize a lista antes de criar outro.' });
   const saved = outcome.created[0]!;
@@ -4188,6 +4202,10 @@ app.patch('/api/workspace/:resource/:id', { preHandler: app.authenticate }, asyn
     if (!recordMatchesWorkspaceScope('clients', client.id, {}, request.user.permissions?.scope)) return reply.code(403).send({ error: 'record_scope_denied', message: 'O cliente vinculado não pertence ao seu escopo.' });
   }
   let previousData: Record<string, unknown> | undefined;
+  const projectClientPatch = params.data.resource === 'projects' && Object.hasOwn(body.data, 'clientId') && body.data.clientId != null && body.data.clientId !== ''
+    ? z.string().uuid().safeParse(body.data.clientId)
+    : null;
+  if (projectClientPatch && !projectClientPatch.success) return reply.code(400).send({ error: 'project_client_invalid', message: 'O cliente vinculado ao projeto e invalido.' });
   let rejectedContractTransition = false;
   let rejectedManagedSignatureMutation = false;
   let rejectedProposalTransition = false;
@@ -4196,12 +4214,22 @@ app.patch('/api/workspace/:resource/:id', { preHandler: app.authenticate }, asyn
   let linkedTransferMutationBlocked = false;
   let financeAccountBalanceMutationBlocked = false;
   let projectArchiveTransitionBlocked = false;
+  let projectClientMissing = false;
+  let projectClientScopeDenied = false;
   let activeHoursTimerConflict = false;
   const updated = await db.transaction(async (tx) => {
     const [current] = await tx.select().from(workspaceRecords).where(and(eq(workspaceRecords.id, params.data.id), eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, params.data.resource), isNull(workspaceRecords.archivedAt))).limit(1);
     if (!current) return undefined;
     if (!recordMatchesWorkspaceScope(params.data.resource, current.id, current.data, request.user.permissions?.scope)) return undefined;
     if (!recordMatchesWorkspaceScope(params.data.resource, current.id, { ...current.data, ...body.data }, request.user.permissions?.scope)) return undefined;
+    if (projectClientPatch?.success) {
+      const [linkedClient] = await tx.select({ id: workspaceRecords.id, data: workspaceRecords.data }).from(workspaceRecords).where(and(
+        eq(workspaceRecords.id, projectClientPatch.data), eq(workspaceRecords.organizationId, request.user.organizationId),
+        eq(workspaceRecords.resource, 'clients'), isNull(workspaceRecords.archivedAt),
+      )).for('share').limit(1);
+      if (!linkedClient) { projectClientMissing = true; return undefined; }
+      if (!recordMatchesWorkspaceScope('clients', linkedClient.id, linkedClient.data, request.user.permissions?.scope)) { projectClientScopeDenied = true; return undefined; }
+    }
     if (params.data.resource === 'hours' && body.data.status === 'running') {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${request.user.organizationId}), hashtext('hours-active-timer'))`);
       const activeTimers = await tx.select({ id: workspaceRecords.id, data: workspaceRecords.data }).from(workspaceRecords).where(and(
@@ -4275,6 +4303,8 @@ app.patch('/api/workspace/:resource/:id', { preHandler: app.authenticate }, asyn
   if (linkedTransferMutationBlocked) return reply.code(409).send({ error: 'finance_transfer_managed', message: 'A movimentacao faz parte de uma transferencia pareada e nao pode ser alterada separadamente.' });
   if (financeAccountBalanceMutationBlocked) return reply.code(409).send({ error: 'finance_account_balance_ledger_required', message: 'Para alterar o saldo, registre uma movimentacao na conta. O ajuste direto ocultaria o historico financeiro.' });
   if (projectArchiveTransitionBlocked) return reply.code(403).send({ error: 'project_archive_forbidden', message: 'Somente administradores podem arquivar ou reabrir projetos.' });
+  if (projectClientMissing) return reply.code(400).send({ error: 'project_client_invalid', message: 'O cliente vinculado nao existe ou nao esta ativo neste workspace.' });
+  if (projectClientScopeDenied) return reply.code(403).send({ error: 'record_scope_denied', message: 'O cliente vinculado esta fora do seu escopo.' });
   if (!updated) return reply.code(404).send({ error: 'not_found', message: 'Registro não encontrado.' });
   const normalizeStatus = (value: unknown) => String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
   const priorStatus = normalizeStatus(previousData?.status);

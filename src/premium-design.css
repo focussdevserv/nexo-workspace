@@ -1376,7 +1376,10 @@ html[data-theme='dark'] #root .app-shell .dashboard-view .alert-icon { backgroun
   html[data-theme] #root .app-shell .dashboard-view .bottom-alerts { grid-template-columns: 1fr; }
 }
 @media(max-width:420px) {
-  html[data-theme] #root .app-shell .dashboard-view > .welcome-row { align-items: flex-start; }
+  html[data-theme] #root .app-shell .dashboard-view > .welcome-row { align-items: stretch; flex-direction: column; gap: 12px; }
+  html[data-theme] #root .app-shell .dashboard-view > .welcome-row > div:first-child { width: 100%; min-width: 0; }
+  html[data-theme] #root .app-shell .dashboard-view > .welcome-row .welcome-subtitle { max-width: none; }
+  html[data-theme] #root .app-shell .dashboard-view > .welcome-row .dashboard-header-actions { width: 100%; justify-content: flex-start; flex-wrap: wrap; }
   html[data-theme] #root .app-shell .dashboard-view > .welcome-row .primary-button { padding-inline: 10px; }
   html[data-theme] #root .app-shell .dashboard-view > .welcome-row .primary-button svg:last-child { display: none; }
   html[data-theme] #root .app-shell .dashboard-view .lead-grid { grid-template-columns: 1fr; }

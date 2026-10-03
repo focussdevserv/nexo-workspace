@@ -73,6 +73,19 @@ export function synchronizeCompanyContactNames(company, nextName, contacts = [],
   });
 }
 
+export function unlinkCompanyContacts(company, contacts = []) {
+  const companyId = String(company?.id ?? '').trim();
+  if (!companyId) return contacts;
+
+  let changed = false;
+  const unlinked = contacts.map((contact) => {
+    if (String(contact.companyId ?? '').trim() !== companyId) return contact;
+    changed = true;
+    return { ...contact, companyId: '', company: String(contact.company || company.name || '').trim() };
+  });
+  return changed ? unlinked : contacts;
+}
+
 export function commercialContactCompanySelection(companies = [], selectedCompanyId = '') {
   const company = companies.find((item) => String(item.id) === String(selectedCompanyId));
   return {

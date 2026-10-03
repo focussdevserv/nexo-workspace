@@ -12,7 +12,7 @@ export function buildSiteAssetPayload(draft, client) {
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || !url.hostname || (url.port && !['80', '443'].includes(url.port))) {
     throw new Error('Use uma URL HTTP/HTTPS publica, sem credenciais nem porta personalizada.');
   }
-  if (url.hostname === 'localhost' || url.hostname.endsWith('.localhost') || url.hostname.endsWith('.local')) {
+  if (isNonPublicHost(url.hostname)) {
     throw new Error('O monitoramento aceita somente dominios publicos.');
   }
   return {
@@ -53,6 +53,30 @@ export function siteMonitorScheduleState(assetId, schedules = [], selectedMinute
     enabled: enabledSchedules.length > 0,
     intervalNeedsSave: enabledSchedules.some((schedule) => Number(schedule.intervalMinutes || 15) !== interval),
   };
+}
+
+function isNonPublicHost(hostname) {
+  const host = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) return true;
+  if (host.includes(':')) {
+    return host === '::' || host === '::1' || /^(?:fc|fd|ff)/.test(host) || /^fe[89ab]/.test(host);
+  }
+  // URL.hostname is already canonicalized by the URL parser, including legacy
+  // shorthand IPv4 forms such as 127.1.
+  const octets = host.split('.').map(Number);
+  if (octets.length !== 4 || octets.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;
+  const [a, b, c] = octets;
+  return a === 0 || a === 10 || a === 127 || a >= 224
+    || (a === 100 && b >= 64 && b <= 127)
+    || (a === 169 && b === 254)
+    || (a === 172 && b >= 16 && b <= 31)
+    || (a === 192 && b === 0 && c === 0)
+    || (a === 192 && b === 0 && c === 2)
+    || (a === 192 && b === 88 && c === 99)
+    || (a === 192 && b === 168)
+    || (a === 198 && (b === 18 || b === 19))
+    || (a === 198 && b === 51 && c === 100)
+    || (a === 203 && b === 0 && c === 113);
 }
 
 export function siteMonitorScheduleControlsDisabled({ loading = false, hasError = false, busyId = '' } = {}) {

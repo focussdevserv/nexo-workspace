@@ -65,6 +65,7 @@ import { siteRenewalDate, summarizeSiteRenewals } from '../lib/site-renewal.js';
 import { confirmWorkspaceDelete, useWorkspacePreferences } from '../lib/workspace-preferences.js';
 import { formatWorkspaceCurrency } from '../lib/workspace-formatting.js';
 import { handleDialogEscape, restoreDialogFocus } from '../lib/dialog-dismiss.js';
+import { financeRecordListState } from '../lib/finance-record-list-state.js';
 
 function useDialogEscapeClose(isOpen, isBusy, onClose, triggerRef) {
   const busyRef = useRef(isBusy);
@@ -89,8 +90,9 @@ function useStoredArray(key, fallback) {
   const path = key === 'nexo.billing.v1' ? '/api/billing/orders' : `/api/workspace/${resource}`;
   const [value, setValue] = useState([]);
   const [loading, setLoading] = useState(Boolean(resource));
+  const [loadError, setLoadError] = useState('');
   const ref = useRef(value);
-  const refresh = useCallback(async () => { try { ref.current = await fetchAllRecords(path); setValue(ref.current); return ref.current; } finally { setLoading(false); } }, [path]);
+  const refresh = useCallback(async () => { setLoading(true); setLoadError(''); try { ref.current = await fetchAllRecords(path); setValue(ref.current); return ref.current; } catch (error) { setLoadError(error.message || 'Não foi possível carregar os registros.'); throw error; } finally { setLoading(false); } }, [path]);
   useEffect(() => { let active = true; refresh().catch((error) => { if (active) window.dispatchEvent(new CustomEvent('nexo:workspace-error', { detail: error.message })); }); return () => { active = false; }; }, [refresh]);
   const persist = (nextOrUpdater) => {
     const previous = ref.current; const next = typeof nextOrUpdater === 'function' ? nextOrUpdater(previous) : nextOrUpdater; ref.current = next; setValue(next);
@@ -104,7 +106,7 @@ function useStoredArray(key, fallback) {
     ]).catch((error) => window.dispatchEvent(new CustomEvent('nexo:workspace-error', { detail: error.message })));
     return next;
   };
-  return [value, persist, refresh, loading];
+  return [value, persist, refresh, loading, loadError];
 }
 
 const initialMessages = [];
@@ -364,7 +366,7 @@ function FinanceList({ page, notify, navigationContext = null, onNavigationConte
   const titles = { receitas: ['Lançamento', 'Cliente / descrição', 'Data', 'Valor', 'Status'], despesas: ['Lançamento', 'Fornecedor / categoria', 'Data', 'Valor', 'Status'] };
   const resourceKey = page === 'despesas' ? 'nexo.finance.despesas.v1' : 'nexo.finance.receitas.v1';
   const resource = page === 'despesas' ? 'expenses' : 'revenues';
-  const [records, , refreshRecords] = useStoredArray(resourceKey, []);
+  const [records, , refreshRecords, recordsLoading, recordsError] = useStoredArray(resourceKey, []);
   const clientsStore = useWorkspaceRecords('clients');
   const [formOpen, setFormOpen] = useState(false);
   const [name, setName] = useState('');
@@ -409,6 +411,7 @@ function FinanceList({ page, notify, navigationContext = null, onNavigationConte
   };
   const selectedClient = clientsStore.records.find((client) => String(client.id) === String(clientId));
   const visibleFinanceRecords = filterFinanceRecords(records, { category: categoryFilter, period: periodFilter, clientId: clientFilter });
+  const recordsViewState = financeRecordListState({ records, loading: recordsLoading, error: recordsError });
   const recurrenceLabels = { weekly: 'semanal', monthly: 'mensal', quarterly: 'trimestral', yearly: 'anual' };
   const moneyRows = visibleFinanceRecords.map((item) => Object.assign([item.code || item.id, [clientsStore.records.find((client) => String(client.id) === String(item.clientId || item.workspaceClientId || item.clientRecordId))?.name, item.counterparty, item.category, item.description, item.recurrenceSeriesId ? `Recorrência ${recurrenceLabels[item.recurrenceFrequency] || ''} · ${item.recurrenceSequence}/${item.recurrenceCount}` : ''].filter(Boolean).join(' / '), item.date ? new Date(`${String(item.date).slice(0,10)}T12:00:00`).toLocaleDateString('pt-BR') + (item.dueDate ? ` / vence ${new Date(`${String(item.dueDate).slice(0,10)}T12:00:00`).toLocaleDateString('pt-BR')}` : '') : '', money(amountNumber(item), preferences), isFinanceRecordOverdue(item) ? 'Atrasada' : item.status || 'Pendente'], { recordId: financeRecordActionKey(item) }));
 
@@ -473,10 +476,11 @@ function FinanceList({ page, notify, navigationContext = null, onNavigationConte
   const pending = records.filter((item) => item.status === 'Pendente' && !isFinanceRecordOverdue(item));
   return <>
     <div className="ns-metrics ns-metrics-three">
-      <Metric label={page === 'despesas' ? 'Despesas registradas' : 'Receitas registradas'} value={money(total, preferences)} note={`${records.length} lançamentos no workspace`} icon={page === 'despesas' ? ArrowUpRight : ArrowDownLeft} />
-      <Metric label="Aguardando" value={money(pending.reduce((sum, item) => sum + amountNumber(item), 0), preferences)} note={`${pending.length} lançamentos pendentes`} icon={Clock3} />
-      <Metric label="Em atraso" value={money(delayed.reduce((sum, item) => sum + amountNumber(item), 0), preferences)} note={`${delayed.length} precisam de atenção`} icon={AlertCircle} />
+      <Metric label={page === 'despesas' ? 'Despesas registradas' : 'Receitas registradas'} value={recordsViewState === 'ready' ? money(total, preferences) : '—'} note={recordsViewState === 'ready' ? `${records.length} lançamentos no workspace` : recordsViewState === 'loading' ? 'Carregando dados do workspace' : 'Dados indisponíveis'} icon={page === 'despesas' ? ArrowUpRight : ArrowDownLeft} />
+      <Metric label="Aguardando" value={recordsViewState === 'ready' ? money(pending.reduce((sum, item) => sum + amountNumber(item), 0), preferences) : '—'} note={recordsViewState === 'ready' ? `${pending.length} lançamentos pendentes` : recordsViewState === 'loading' ? 'Carregando dados do workspace' : 'Dados indisponíveis'} icon={Clock3} />
+      <Metric label="Em atraso" value={recordsViewState === 'ready' ? money(delayed.reduce((sum, item) => sum + amountNumber(item), 0), preferences) : '—'} note={recordsViewState === 'ready' ? `${delayed.length} precisam de atenção` : recordsViewState === 'loading' ? 'Carregando dados do workspace' : 'Dados indisponíveis'} icon={AlertCircle} />
     </div>
+    {recordsError && <div className="dashboard-data-error" role="alert">Não foi possível carregar os lançamentos. {recordsError}<button type="button" disabled={recordsLoading} onClick={() => refreshRecords().catch(() => {})}>Tentar novamente</button></div>}
     {saveError && <div className="dashboard-data-error" role="alert">{saveError}<button type="button" onClick={() => setSaveError('')}>Fechar</button></div>}
     {formOpen && <form className="ns-inline-form" aria-busy={saving} onSubmit={submit}>
       <div><b>{editingRecord ? 'Editar lan\u00e7amento' : verb}</b><small>O registro ser&aacute; gravado na conta do workspace.</small></div>
@@ -493,7 +497,7 @@ function FinanceList({ page, notify, navigationContext = null, onNavigationConte
       <IconButton label="Fechar formul&aacute;rio" onClick={closeForm}><X size={16} /></IconButton>
     </form>}
     <div className="ns-finance-filters"><label>Categoria<select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}><option>Todos</option>{[...new Set(records.map((item) => item.category || 'Sem categoria'))].sort((a, b) => a.localeCompare(b, 'pt-BR')).map((categoryName) => <option key={categoryName}>{categoryName}</option>)}</select></label><label>Período<select value={periodFilter} onChange={(event) => setPeriodFilter(event.target.value)}>{['Todos', 'Este mês', 'Mês passado', 'Este ano'].map((period) => <option key={period}>{period}</option>)}</select></label><label>Cliente<select value={clientFilter} onChange={(event) => setClientFilter(event.target.value)}><option>Todos</option><option value="">Sem vínculo</option>{clientsStore.records.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}</select></label><span>{visibleFinanceRecords.length} de {records.length} lançamentos</span><button className="ns-secondary" type="button" disabled={!visibleFinanceRecords.length} onClick={exportFinanceCsv}><Download size={14} />Exportar CSV</button></div>
-    <div aria-busy={Boolean(actionId)}><DataTable columns={titles[page]} rows={moneyRows} search onAction={doAction} onEdit={startEditing} /></div>
+    <div aria-busy={Boolean(actionId || recordsLoading)}><DataTable columns={titles[page]} rows={moneyRows} search onAction={doAction} onEdit={startEditing} empty={recordsViewState === 'loading' ? 'Carregando lançamentos do workspace...' : recordsViewState === 'error' ? 'Não foi possível carregar os lançamentos.' : undefined} /></div>
     <div className="ns-page-bottom"><span><ShieldCheck size={15} /> Lançamentos vinculados ao workspace; cliente pode ser associado para abrir o financeiro pela ficha.</span><button className="ns-secondary" type="button" disabled={saving || Boolean(actionId)} onClick={() => { if (formOpen) closeForm(); else { setEditingRecord(null); setName(''); setAmount(''); setCounterparty(''); setClientId(''); setCategory(''); setEntryDate(localDateInput()); setDueDate(''); setSaveError(''); setFormOpen(true); } }}><Plus size={15} />{verb}</button></div>
   </>;
 }

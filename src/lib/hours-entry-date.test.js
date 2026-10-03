@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { formatHoursEntryEnd, hoursDateRange, hoursEntryIsInDateRange, hoursEntryLocalDate } from './hours-entry-date.js';
+import { defaultManualHoursDate, formatHoursEntryEnd, hoursDateRange, hoursEntryIsInDateRange, hoursEntryLocalDate } from './hours-entry-date.js';
+
+test('manual Hours entry defaults to the workspace date across midnight boundaries', () => {
+  const now = new Date('2026-10-03T02:30:00.000Z');
+  assert.equal(defaultManualHoursDate(now, 'America/Sao_Paulo'), '2026-10-02');
+  assert.equal(defaultManualHoursDate(now, 'Asia/Tokyo'), '2026-10-03');
+});
 
 test('classifies timestamped hours in the workspace timezone, independent of browser timezone', () => {
   assert.equal(hoursEntryLocalDate({ endedAt: '2026-10-03T02:00:00.000Z' }, 'America/Sao_Paulo'), '2026-10-02');
