@@ -112,7 +112,7 @@ const pageInfo = {
 };
 
 function normalizePage(page) {
-  const raw = String(page ?? 'financeiro').trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[\s/-]+/g, '_');
+  const raw = String(page ?? 'financeiro').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[\s/-]+/g, '_');
   const aliases = { inbox: 'caixa_entrada', entrada: 'caixa_entrada', atendimento: 'caixa_entrada', 'caixa_de_entrada': 'caixa_entrada', 'sites_dominios_hospedagens': 'sites', operacoes: 'monitoramento', integracoes_e_automacoes: 'integracoes' };
   return aliases[raw] || (pageInfo[raw] ? raw : 'financeiro');
 }
