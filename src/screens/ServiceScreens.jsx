@@ -38,7 +38,7 @@ import { normalizeWhatsAppChatId } from '../lib/whatsapp-phone.js';
 import { emptyInboxComposerDraft } from '../lib/inbox-composer.js';
 import { canManageWahaSessions, canOfferWahaConnectAction, canShowWahaQr, wahaQrSessionMessage } from '../lib/waha-session-access.js';
 import { createAsyncActionLock } from '../lib/async-action-lock.js';
-import { beginSiteCheck, finishSiteCheck } from '../lib/site-check-state.js';
+import { beginSiteCheck, finishSiteCheck, siteCheckFailureMessage } from '../lib/site-check-state.js';
 import { filterTableRows, tableStatusOptions } from '../lib/table-status-filter.js';
 import { countOverdueTickets, ticketSlaDeadline, ticketSlaLabel } from '../lib/ticket-sla.js';
 import { normalizeTicketPriority, ticketPriorityLabel } from '../lib/ticket-priority.js';
@@ -969,7 +969,11 @@ function Sites({ page, notify }) {
     try {
       const result = await apiRequest('/api/monitoring/site-assets/' + encodeURIComponent(asset.id) + '/check', { method: 'POST', body: '{}' });
       assetsStore.setRecords((current) => current.map((item) => String(item.id) === String(result.data.id) ? result.data : item));
-      notify(result.data.demo ? 'Verificação simulada registrada no ambiente local.' : result.data.health === 'Online' ? 'Site respondeu. Status e certificado foram atualizados.' : 'Site não respondeu; confira endereço e hospedagem.');
+      if (result.data.lastCheckErrorCode) {
+        const message = siteCheckFailureMessage(result.data.lastCheckErrorCode);
+        setCheckError((current) => ({ ...current, [asset.id]: message }));
+        notify(message);
+      } else notify(result.data.demo ? 'Verificação simulada registrada no ambiente local.' : result.data.health === 'Online' ? 'Site respondeu. Status e certificado foram atualizados.' : 'Site não respondeu; confira endereço e hospedagem.');
     } catch (error) { setCheckError((current) => ({ ...current, [asset.id]: error.message || 'Não foi possível verificar o ativo. Tente novamente.' })); }
     finally {
       const next = finishSiteCheck(checkingIdsRef.current, asset.id);

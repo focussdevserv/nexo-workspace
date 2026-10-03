@@ -17,7 +17,7 @@ import { taskIsCompleted, taskMatchesStatus, taskStatusForEdit, withTaskStatus }
 import { taskDependencyBlocker, taskDependencyBlockMessage, tasksDependingOn } from '../lib/task-dependency.js';
 import { parseAgendaAttendees, validateAgendaAttendees, validateAgendaEvent } from '../lib/agenda-event-validation.js';
 import { deleteAgendaEvent } from '../lib/agenda-event-delete.js';
-import { agendaEventDurationMinutes, agendaEventEndDate } from '../lib/agenda-event-interval.js';
+import { agendaEventDurationMinutes, agendaEventEndDate, defaultAgendaEventEndTime } from '../lib/agenda-event-interval.js';
 import { isAgendaAllDayEvent } from '../lib/agenda-event-presentation.js';
 import { agendaNavigationEventDate, resolveAgendaNavigationEvent } from '../lib/agenda-navigation.js';
 import { agendaEventDeletionIds, confirmAgendaEventDeletion, deleteAgendaEventSeries } from '../lib/agenda-event-series.js';
@@ -639,8 +639,7 @@ function WorkScreen({ page, navigationContext = null, onNavigationContextConsume
     setDraft({ title: '', client: '', clientId: '', project: '', projectId: '', fileId: '', due: '', assignee: '', time: '16:30', detail: '', priority: 'Normal' }); setComposer('aprovacoes');
   };
   const addEvent = (date = selectedDate, time = '16:30') => {
-    const [hour, minute] = time.split(':').map(Number);
-    const endTime = `${String(Math.min(23, hour + (minute >= 30 ? 1 : 0))).padStart(2, '0')}:${minute >= 30 ? '00' : '30'}`;
+    const endTime = defaultAgendaEventEndTime(time);
     setDraft({ title: '', client: '', project: '', due: toLocalDateInput(date), assignee: '', time, endTime, allDay: false, detail: '', priority: 'Normal', syncGoogleCalendar: !localDemo, createMeet: false, attendees: '', recurrence: 'none', recurrenceCount: 2 }); setComposer('agenda');
   };
   const saveAgendaEvent = async () => {

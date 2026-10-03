@@ -614,3 +614,11 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - **Demonstracao local:** contatos ficticios agora tem email e telefone distintos; uma migracao corrige somente os campos que ainda correspondem ao fixture antigo e preserva personalizacoes.
 - **Validacao desta revisao:** 700 testes frontend e 276 testes API passaram; lint, build frontend, build API e `git diff --check` passaram. Nenhuma conta, pagamento ou integracao real foi alterada.
 - **Publicação:** commit `c2917cb960dd8e439d0ed7e842030772454c2e05` publicado; workflow `37127143679` concluiu com sucesso. Manifesto e health confirmam a mesma revisão, banco conectado, home e bundle `200`, endpoints privados sem sessão `401`.
+
+## Onda 13 - validacao de agenda, CRM e monitoramento - 03/10/2026
+
+- **Agenda:** o termino sugerido para novos eventos agora fica 30 minutos depois do inicio, inclusive ao cruzar a meia-noite; antes, um evento iniciado as 23:30 podia terminar as 23:00 do dia seguinte.
+- **CRM:** contratos gerados ao aceitar propostas agora recebem codigos estaveis e exclusivos por proposta, inclusive para varias propostas aceitas no mesmo dia.
+- **Sites e monitoramento:** uma verificacao manual invalida ou inacessivel agora grava estado Offline, remove indicadores de sucesso antigos e registra o motivo no historico; a atualizacao e recusada se a URL mudar durante a consulta.
+- **Validacao local:** 704 testes frontend e 278 testes API passaram; lint, build frontend (2.095 modulos), build TypeScript da API e `git diff --check` passaram. A tela Financeiro publicada abriu com console limpo; health e manifesto responderam 200 com banco conectado na revisao `c2917cb960dd8e439d0ed7e842030772454c2e05`.
+- **Limites:** as alteracoes desta onda ainda nao foram publicadas nesta validacao. Testes nao acionaram login, OAuth, pagamentos, calendario, Drive ou provedores externos. A producao verificada continua na revisao anterior.

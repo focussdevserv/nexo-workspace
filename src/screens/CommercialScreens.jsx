@@ -17,6 +17,7 @@ import { leadConversionPayload, leadFieldsBeforeConversion } from "../lib/lead-c
 import { persistPipelineLeadDeal } from "../lib/pipeline-deal-save.js";
 import { proposalDeletionBlockReason } from "../lib/proposal-deletion.js";
 import { proposalAcceptanceState } from "../lib/proposal-acceptance-state.js";
+import { commercialContractCode } from "../lib/commercial-contract-code.js";
 import { activeContractMonthlyRevenue } from "../lib/commercial-contract-revenue.js";
 import { commercialStatusPatch } from "../lib/commercial-status-patch.js";
 import { commercialServicePayload } from "../lib/commercial-service-payload.js";
@@ -891,7 +892,6 @@ export default function CommercialScreen({
       return false;
     }
     const now = (new Date()).toISOString();
-    const suffix = now.replace(/\D/g, "").slice(0, 8);
     const selectedServices = resolveProposalServices(records.services || datasets.services, proposal.serviceIds, proposal.serviceId);
     const serviceSummary = summarizeProposalServices(selectedServices);
     const serviceTemplate = selectedServices[0] || (records.services || datasets.services).find(item => String(item.name || "").toLocaleLowerCase("pt-BR") === String(proposal.service || "").toLocaleLowerCase("pt-BR"));
@@ -900,7 +900,7 @@ export default function CommercialScreen({
       client: proposal.client,
       clientId: proposal.clientId,
       sourceProposalId: proposal.id,
-      code: `CTR-${suffix}`,
+      code: commercialContractCode(proposal.id, new Date(now)),
       value: proposal.value,
       status: "Rascunho",
       tone: "gray",

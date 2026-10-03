@@ -3379,13 +3379,12 @@ app.post('/api/monitoring/site-assets/:id/check', { preHandler: app.authenticate
   if (!recordMatchesWorkspaceScope('site-assets', asset.id, asset.data, request.user.permissions?.scope)) return reply.code(403).send({ error: 'record_scope_denied', message: 'Este ativo não pertence ao seu escopo.' });
   const target = String(asset.data.url ?? asset.data.domain ?? asset.data.name ?? '').trim();
   const checkedTarget = siteCheckTargetFor(asset.data);
-  let result;
+  let result: Awaited<ReturnType<typeof checkPublicSite>> | undefined;
+  let failureReason: 'host_not_public' | 'invalid_url' | 'check_failed' | null = null;
   try { result = await checkPublicSite(target); }
   catch (error) {
     const code = error instanceof Error ? error.message : '';
-    if (code === 'host_not_public') return reply.code(400).send({ error: 'host_not_public', message: 'O endereço precisa ser público; IPs privados e locais não podem ser verificados.' });
-    if (code === 'invalid_url') return reply.code(400).send({ error: 'invalid_url', message: 'Informe um domínio ou URL HTTP/HTTPS válido.' });
-    return reply.code(422).send({ error: 'site_check_failed', message: 'Não foi possível consultar o domínio. Confira o endereço e tente novamente.' });
+    failureReason = code === 'host_not_public' ? 'host_not_public' : code === 'invalid_url' ? 'invalid_url' : 'check_failed';
   }
   const saved = await db.transaction(async (tx) => {
     const [current] = await tx.select().from(workspaceRecords).where(and(
@@ -3393,7 +3392,17 @@ app.post('/api/monitoring/site-assets/:id/check', { preHandler: app.authenticate
       eq(workspaceRecords.resource, 'site-assets'), isNull(workspaceRecords.archivedAt),
     )).for('update').limit(1);
     if (!current || !recordMatchesWorkspaceScope('site-assets', current.id, current.data, request.user.permissions?.scope)) return { row: undefined, changed: false };
-    if (!siteCheckResultMatchesAsset(current.data, result) || siteCheckTargetFor(current.data) !== checkedTarget) return { row: undefined, changed: true };
+    if (siteCheckTargetFor(current.data) !== checkedTarget || (result && !siteCheckResultMatchesAsset(current.data, result))) return { row: undefined, changed: true };
+    if (!result && failureReason) {
+      const checkedAt = new Date().toISOString();
+      const [updated] = await tx.update(workspaceRecords).set({
+        data: siteCheckFailureData(current.data, checkedAt, failureReason), updatedAt: new Date(),
+      }).where(and(eq(workspaceRecords.id, current.id), eq(workspaceRecords.organizationId, request.user.organizationId), isNull(workspaceRecords.archivedAt))).returning();
+      if (!updated) return { row: undefined, changed: false };
+      await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'site-assets', entityId: asset.id, action: 'checked', payload: { status: 'Offline', httpStatus: null, latencyMs: null, checkedAt, source: 'manual', reason: failureReason } });
+      return { row: updated, changed: false };
+    }
+    if (!result) return { row: undefined, changed: false };
     const [updated] = await tx.update(workspaceRecords).set({
       data: siteCheckResultData(current.data, result), updatedAt: new Date(),
     }).where(and(eq(workspaceRecords.id, current.id), eq(workspaceRecords.organizationId, request.user.organizationId), isNull(workspaceRecords.archivedAt))).returning();

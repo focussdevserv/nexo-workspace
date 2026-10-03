@@ -7,6 +7,15 @@ export function agendaEventEndDate(date, start, end) {
   return `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, '0')}-${String(next.getUTCDate()).padStart(2, '0')}`;
 }
 
+export function defaultAgendaEventEndTime(start, durationMinutes = 30) {
+  const match = /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(String(start || ''));
+  const duration = Number(durationMinutes);
+  if (!match || !Number.isFinite(duration) || duration <= 0) return '';
+  const [hour, minute] = String(start).split(':').map(Number);
+  const endMinutes = (hour * 60 + minute + Math.trunc(duration)) % (24 * 60);
+  return `${String(Math.floor(endMinutes / 60)).padStart(2, '0')}:${String(endMinutes % 60).padStart(2, '0')}`;
+}
+
 export function agendaEventDurationMinutes(start, end) {
   const timePattern = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
   if (!timePattern.test(String(start || '')) || !timePattern.test(String(end || '')) || start === end) return 0;

@@ -20,3 +20,19 @@ test('scheduled monitoring failure clears stale success data but preserves asset
   assert.equal(failed.checkedAt, '2026-10-02T10:00:00.000Z');
   assert.equal(failed.lastCheckErrorCode, 'check_failed');
 });
+
+test('manual and scheduled failures share the same stale-success clearing contract', () => {
+  const previous = {
+    name: 'Site principal', url: 'https://private.example', health: 'Online', status: 'Online',
+    httpStatus: 200, latencyMs: 30, sslExpiresAt: '2027-01-01T00:00:00.000Z', checkedAt: '2026-10-01T10:00:00.000Z',
+  };
+  for (const reason of ['host_not_public', 'invalid_url', 'check_failed'] as const) {
+    const failed = siteCheckFailureData(previous, '2026-10-02T10:00:00.000Z', reason);
+    assert.equal(failed.health, 'Offline', reason);
+    assert.equal(failed.status, 'Offline', reason);
+    assert.equal(failed.httpStatus, null, reason);
+    assert.equal(failed.latencyMs, null, reason);
+    assert.equal(failed.sslExpiresAt, null, reason);
+    assert.equal(failed.lastCheckErrorCode, reason);
+  }
+});
