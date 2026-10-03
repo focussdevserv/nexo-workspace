@@ -2,7 +2,7 @@ import React, { useEffect, useLayoutEffect, useState } from 'react';
 import { ArrowRight, KeyRound, LoaderCircle, LockKeyhole, Moon, ShieldCheck, Sparkles, Sun } from 'lucide-react';
 import { apiRequest, parseApiResponse } from '../lib/workspace-api.js';
 import { activateLocalDemo, getLocalDemoUser, isLocalDemoActive, isLocalDemoRequested } from '../lib/local-demo.js';
-import { publishWorkspacePreferences, readCachedWorkspacePreferences, rememberWorkspaceThemePreference } from '../lib/workspace-preferences.js';
+import { applyWorkspaceTheme, publishWorkspacePreferences, readCachedWorkspacePreferences, rememberWorkspaceThemePreference } from '../lib/workspace-preferences.js';
 import { normalizeAuthEmail, passwordConfirmationMatches, prefillRecoveryEmail, readPasswordResetToken, readWorkspaceAccessMode, stripWorkspaceAccessTokens, workspaceAccessModeUrl } from './workspace-access-helpers.js';
 import './workspace-access.css';
 
@@ -46,8 +46,7 @@ export default function WorkspaceAccess({ children }) {
   const [darkMode, setDarkMode] = useState(() => readCachedWorkspacePreferences().darkMode);
 
   useLayoutEffect(() => {
-    document.documentElement.dataset.theme = darkMode ? 'dark' : 'light';
-    document.documentElement.style.colorScheme = darkMode ? 'dark' : 'light';
+    applyWorkspaceTheme(darkMode);
   }, [darkMode]);
 
   const toggleTheme = () => {

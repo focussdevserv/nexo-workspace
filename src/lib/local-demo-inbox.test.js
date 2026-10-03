@@ -37,7 +37,10 @@ test('local demo inbox supports filtering, read/resolve state and an isolated si
     const sessions = handleLocalDemoRequest('/api/integrations/waha/sessions');
     assert.deepEqual(status.data.map((item) => item.name), ['Mercado Pago', 'Evolution API', 'WAHA', 'Resend', 'Hostinger E-mail', 'Google Workspace', 'Clicksign', 'GitHub', 'n8n', 'Sentry']);
     assert.ok(status.data.every((item) => item.demo === true));
-    assert.equal(status.data.find((item) => item.provider === 'waha')?.configured, false);
+    assert.equal(status.data.find((item) => item.provider === 'waha')?.configured, true);
+    assert.equal(status.data.find((item) => item.provider === 'waha')?.enabled, true);
+    assert.equal(status.data.find((item) => item.provider === 'waha')?.lastTestStatus, 'demo');
+    assert.ok(status.data.filter((item) => item.provider !== 'waha').every((item) => !item.configured && !item.enabled));
     assert.equal(status.data.find((item) => item.provider === 'google')?.configured, false);
     assert.equal(status.data.find((item) => item.provider === 'waha')?.demo, true);
     assert.equal(sessions.data[0].status, 'WORKING');

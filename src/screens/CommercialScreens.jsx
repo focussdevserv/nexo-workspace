@@ -5,6 +5,7 @@ import { Archive, ArrowDown, ArrowDownRight, ArrowRight, ArrowUpRight, Building2
 import "../screens/commercial.css";
 import { apiRequest, fetchAllRecords, useWorkspaceRecords } from "../lib/workspace-api.js";
 import { dateAfterDays } from "../lib/payment-due-date.js";
+import { buildSubscriptionSchedule, minimumSubscriptionEndDate } from "../lib/subscription-schedule.js";
 import { createBillingRequestUuid, reuseBillingRequestKey } from "../lib/billing-request-idempotency.js";
 import { completeRequestedServiceCatalog, mergeRequestedServiceCatalog, requestedServiceCatalog } from "../data/service-catalog.js";
 import { resolveProposalServices, summarizeProposalServices } from "../data/proposal-services.js";
@@ -1542,7 +1543,7 @@ function ClientProfileModal({
     dueDate: dateAfterDays(7),
     frequency: "months",
     frequencyInterval: "1",
-    startAt: "",
+    startAt: dateAfterDays(1),
     endAt: "",
     installmentServiceId: "",
     installmentIndex: null
@@ -1608,7 +1609,7 @@ function ClientProfileModal({
           frequency: context.frequency || current.frequency,
           frequencyInterval: String(context.frequencyInterval || current.frequencyInterval),
           payerEmail: context.clientEmail || client.email || current.payerEmail,
-          startAt: context.startAt || current.startAt,
+          startAt: context.startAt || current.startAt || dateAfterDays(1),
           endAt: context.endAt || current.endAt,
           installmentServiceId: context.installmentServiceId || "",
           installmentIndex: Number.isInteger(context.installmentIndex) ? context.installmentIndex : null
@@ -1628,9 +1629,14 @@ function ClientProfileModal({
   const saveClientFinance = async event => {
     event.preventDefault();
     if (financeSaving) return;
-    if (financeDraft.kind === "recurring" && financeDraft.startAt && financeDraft.endAt && financeDraft.endAt < financeDraft.startAt) {
-      onAction("A data final da recorrência precisa ser igual ou posterior à data inicial.");
-      return;
+    let recurringSchedule = null;
+    if (financeDraft.kind === "recurring") {
+      try {
+        recurringSchedule = buildSubscriptionSchedule(financeDraft.startAt, financeDraft.endAt);
+      } catch {
+        onAction("Informe uma primeira cobrança futura e uma data final posterior, se desejar encerrar a recorrência.");
+        return;
+      }
     }
     const recurringTerms = financeDraft.kind === "recurring"
       ? normalizeClientSubscriptionTerms(financeDraft.frequency, financeDraft.frequencyInterval)
@@ -1678,12 +1684,7 @@ function ClientProfileModal({
         ...(recurring ? {
           frequency: recurringTerms.frequency,
           frequencyInterval: recurringTerms.frequencyInterval,
-          ...(financeDraft.startAt ? {
-            startAt: (new Date(`${financeDraft.startAt}T00:00:00`)).toISOString()
-          } : {}),
-          ...(financeDraft.endAt ? {
-            endAt: (new Date(`${financeDraft.endAt}T23:59:59`)).toISOString()
-          } : {})
+          ...recurringSchedule
         } : {
           method: financeDraft.method,
           dueDate: financeDraft.dueDate
@@ -2217,10 +2218,10 @@ function ClientProfileModal({
                     })}><option value="months">Meses</option><option value="days">Dias</option></select></label><label>Repetir a cada<input type="number" min="1" max="24" step="1" required={true} value={financeDraft.frequencyInterval} onChange={event => setFinanceDraft({
                       ...financeDraft,
                       frequencyInterval: event.target.value
-                    })} /><small>{financeDraft.frequency === "days" ? "Use 7 para uma cobrança semanal." : "Use 1 para uma cobrança mensal."}</small></label><label>Data de início<input type="date" value={financeDraft.startAt} onChange={event => setFinanceDraft({
+                    })} /><small>{financeDraft.frequency === "days" ? "Use 7 para uma cobrança semanal." : "Use 1 para uma cobrança mensal."}</small></label><label>Data da primeira cobrança<input required={true} type="date" min={dateAfterDays(1)} value={financeDraft.startAt} onChange={event => setFinanceDraft({
                       ...financeDraft,
                       startAt: event.target.value
-                    })} /></label><label>Encerrar em (opcional)<input type="date" min={financeDraft.startAt || void 0} value={financeDraft.endAt} onChange={event => setFinanceDraft({
+                    })} /><small>A data é enviada no fuso de São Paulo, independentemente do fuso do computador.</small></label><label>Encerrar em (opcional)<input type="date" min={minimumSubscriptionEndDate(financeDraft.startAt)} value={financeDraft.endAt} onChange={event => setFinanceDraft({
                       ...financeDraft,
                       endAt: event.target.value
                     })} /></label></Fragment> : financeDraft.kind === "single" ? <p className="com-client-finance-hint">Cobrança avulsa emitida agora. O vencimento será definido pelo meio de pagamento.</p> : null}</div><footer><button type="button" className="com-secondary" onClick={() => setFinanceDialog(false)}>Cancelar</button><button type="submit" className="com-primary" disabled={financeSaving}><Check size={14} />{financeSaving ? "Salvando..." : financeDraft.kind === "recurring" ? "Criar assinatura" : financeDraft.kind === "revenue" ? "Registrar receita" : financeDraft.kind === "expense" ? "Registrar despesa" : "Gerar cobrança"}</button></footer></form>}<div className="com-client-section-heading"><div><h3>Financeiro e contratos</h3><p>Cobranças, recorrências e vigência dos contratos.</p></div><button className="com-primary" onClick={() => openTab("Cobranças", {

@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { sendInboxMessage } from './inbox-send.js';
+import { sendInboxMessage, whatsappSendPreflight } from './inbox-send.js';
+
+test('requires a recipient for real WhatsApp but allows simulation without personal data', () => {
+  assert.equal(whatsappSendPreflight({ sessionId: 'real-session', chatId: '' }), 'recipient');
+  assert.equal(whatsappSendPreflight({ sessionId: 'demo-session', chatId: '', localDemo: true }), null);
+  assert.equal(whatsappSendPreflight({ sessionId: '', chatId: '', localDemo: true }), 'session');
+});
 
 test('a successful delivery clears the composer even when inbox refresh fails', async () => {
   let sends = 0;

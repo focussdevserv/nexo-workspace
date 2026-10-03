@@ -17,7 +17,7 @@ export function handleLocalDemoInboxRequest(store, pathname, method, body = {}, 
     return {
       changed: false,
       response: { data: providers.map(([name, provider]) => ({
-        name, provider, configured: false, enabled: false, demo: true,
+        name, provider, configured: provider === 'waha', enabled: provider === 'waha', demo: true,
         ...(provider === 'waha' ? { lastTestStatus: 'demo', lastTestMessage: 'Sessão simulada; nenhuma conta WhatsApp foi conectada.' } : {}),
       })) },
     };

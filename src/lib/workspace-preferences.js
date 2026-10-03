@@ -15,13 +15,17 @@ export const workspaceStartPages = Object.freeze([
 ]);
 const startPages = new Set(workspaceStartPages);
 
-function applyWorkspaceTheme(darkMode) {
+export function workspaceColorScheme(darkMode) {
+  return darkMode ? 'dark' : 'only light';
+}
+
+export function applyWorkspaceTheme(darkMode) {
   if (typeof document === 'undefined') return;
   const theme = darkMode ? 'dark' : 'light';
   document.documentElement.dataset.theme = theme;
   // `only light` opts out of Chromium's forced darkening when the user chose
   // the light theme, while preserving native dark controls in dark mode.
-  const colorScheme = darkMode ? 'dark' : 'only light';
+  const colorScheme = workspaceColorScheme(darkMode);
   document.documentElement.style.colorScheme = colorScheme;
   const colorSchemeMeta = document.querySelector('meta[name="color-scheme"]');
   if (colorSchemeMeta) colorSchemeMeta.content = colorScheme;

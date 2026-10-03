@@ -15,7 +15,7 @@ import { PublicClientPortal } from './screens/ClientPortalScreens.jsx';
 import WorkspaceAccess from './screens/WorkspaceAccess.jsx';
 import PublicLegalPage from './screens/PublicLegalPages.jsx';
 import { apiRequest, fetchAllRecords } from './lib/workspace-api.js';
-import { mergeServerWorkspacePreferences, publishWorkspacePreferences, readCachedWorkspacePreferences, rememberWorkspaceThemePreference, useWorkspacePreferences } from './lib/workspace-preferences.js';
+import { applyWorkspaceTheme, mergeServerWorkspacePreferences, publishWorkspacePreferences, readCachedWorkspacePreferences, rememberWorkspaceThemePreference, useWorkspacePreferences } from './lib/workspace-preferences.js';
 import { purgeFictitiousLocalData } from './lib/demo-data.js';
 import { activateLocalDemo, exitLocalDemo, isLocalDemoActive, resetLocalDemo } from './lib/local-demo.js';
 import { completeTaskOccurrence } from './lib/task-recurrence.js';
@@ -259,8 +259,7 @@ function WorkspaceShell() {
   const localDemo = isLocalDemoActive();
   const preferences = useWorkspacePreferences();
   useEffect(() => {
-    document.documentElement.dataset.theme = preferences.darkMode ? 'dark' : 'light';
-    document.documentElement.style.colorScheme = preferences.darkMode ? 'dark' : 'light';
+    applyWorkspaceTheme(preferences.darkMode);
     const themeColor = document.querySelector('meta[name="theme-color"]');
     themeColor?.setAttribute('content', preferences.darkMode ? '#111412' : '#f5f6f2');
   }, [preferences.darkMode]);

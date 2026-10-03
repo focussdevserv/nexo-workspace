@@ -1,4 +1,10 @@
 /** Deliver once, clear the composer, then refresh without treating refresh errors as send failures. */
+export function whatsappSendPreflight({ sessionId, chatId, localDemo = false }) {
+  if (!sessionId) return 'session';
+  if (!localDemo && !chatId) return 'recipient';
+  return null;
+}
+
 export async function sendInboxMessage({ deliver, onSent, refresh, onDeliveryError }) {
   let delivery;
   try {

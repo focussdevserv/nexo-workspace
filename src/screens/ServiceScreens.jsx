@@ -29,7 +29,7 @@ import { preferredInboxSessionId } from '../lib/inbox-session.js';
 import { gmailThreadMetadataRecord, hostingerThreadMetadataRecord, mergeGmailThreadMetadata, mergeHostingerThreadMetadata } from '../lib/gmail-thread-metadata.js';
 import { matchConversationClient } from '../lib/conversation-client-match.js';
 import { canReplyToInboxConversation, isResolvedInboxConversation, nextInboxConversationStatus } from '../lib/inbox-reply.js';
-import { sendInboxMessage } from '../lib/inbox-send.js';
+import { sendInboxMessage, whatsappSendPreflight } from '../lib/inbox-send.js';
 import { clearInboxSendAttempt, inboxSendAttemptId } from '../lib/inbox-send-attempt.js';
 import { createInboxSendLock } from '../lib/inbox-send-lock.js';
 import { buildInboxFollowUpTask, nextInboxFollowUpDate } from '../lib/inbox-follow-up.js';
@@ -693,7 +693,8 @@ function Inbox({ notify, forceWhatsapp = false, navigationContext = null, onNavi
     }
     const sessionId = selectedSessionId || current.whatsappSessionId || activeSessions[0]?.id;
     const chatId = current.whatsappChatId || normalizeWhatsAppChatId(current.phone);
-    if (!sessionId || !chatId) { notify(!sessionId ? 'Conecte uma sessão WAHA ativa em Integrações.' : 'Esta conversa não tem telefone válido para WhatsApp.'); return; }
+    const sendBlocker = whatsappSendPreflight({ sessionId, chatId, localDemo });
+    if (sendBlocker) { notify(sendBlocker === 'session' ? 'Conecte uma sessão WAHA ativa em Integrações.' : 'Esta conversa não tem telefone válido para WhatsApp.'); return; }
     if (!inboxSendLock.current.acquire()) return;
     setSending(true);
     try {
