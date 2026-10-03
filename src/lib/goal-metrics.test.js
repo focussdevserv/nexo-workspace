@@ -76,6 +76,18 @@ test('goals summary retains metric loading or access errors for revenue without 
   assert.deepEqual(result.revenue, { state: 'restricted', value: null });
 });
 
+test('goals summary does not overstate average progress when a visible metric source is unavailable', () => {
+  const result = calculateGoalsSummary([
+    { id: 'manual', period: 'month', metric: 'manual', current: 10, target: 10 },
+    { id: 'linked', period: 'month', metric: 'won_leads', current: 0, target: 5 },
+  ], { leads: [] }, { leads: 'failed', orders: 'ready', revenues: 'ready' }, 'month', now, prefs);
+
+  assert.equal(result.visibleCount, 2);
+  assert.equal(result.measurableCount, 1);
+  assert.equal(result.achieved, 1);
+  assert.equal(result.averageProgress, null);
+});
+
 test('won-lead goals use the conversion update date instead of the original lead creation date', () => {
   const result = calculateGoalMetric('won_leads', {
     leads: [

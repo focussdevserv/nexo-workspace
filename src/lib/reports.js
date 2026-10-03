@@ -68,6 +68,14 @@ export function hasReportSourceFailures(tab, failedSources = []) {
   return reportSourcesForTab(tab).some((source) => failedSources.includes(source));
 }
 
+// Do not produce a CSV that looks complete when one of its contributing
+// modules could not be read for this user. Failures and permission denials
+// both make the active report partial; unrelated sources do not.
+export function canExportReport(tab, restrictedSources = [], failedSources = []) {
+  const sources = reportSourcesForTab(tab);
+  return !sources.some((source) => restrictedSources.includes(source) || failedSources.includes(source));
+}
+
 export function hasReportChartFailures(tab, failedSources = []) {
   const sources = tab === 'Projetos'
     ? ['projects']

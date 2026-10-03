@@ -1,5 +1,6 @@
 import { calendarDateKeyInTimeZone, calendarTimeInTimeZone } from './calendar-preferences.js';
 import { isAgendaAllDayEvent } from './agenda-event-presentation.js';
+import { isAgendaEventVisibleOnDate } from './agenda-event-visibility.js';
 
 const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 const timePattern = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
@@ -10,8 +11,9 @@ export function isAgendaEventUpcoming(event, { now = new Date(), timeZone, fromD
 
   const today = calendarDateKeyInTimeZone(now, timeZone);
   const thresholdDate = fromDateKey > today ? fromDateKey : today;
+  if (isAgendaAllDayEvent(event)) return isAgendaEventVisibleOnDate(event, thresholdDate);
   if (eventDate < thresholdDate) return false;
-  if (eventDate > today || isAgendaAllDayEvent(event)) return true;
+  if (eventDate > today) return true;
 
   const eventTime = String(event?.time || '');
   if (!timePattern.test(eventTime)) return false;

@@ -29,6 +29,7 @@ import { notificationNavigationTarget } from './lib/notification-navigation.js';
 import { filterDashboardTasks } from './lib/dashboard-task-filter.js';
 import { filterDashboardActiveProjects } from './lib/dashboard-active-projects.js';
 import { dashboardMetricPresentation } from './lib/dashboard-metric-presentation.js';
+import { dashboardBillingMetrics } from './lib/dashboard-billing-metrics.js';
 import { selectDashboardHighlightedEvent } from './lib/dashboard-highlighted-event.js';
 import { dashboardInboxConversations } from './lib/dashboard-inbox.js';
 import { dashboardCalendarDayQuery, mergeDashboardCalendarEvents } from './lib/dashboard-calendar-events.js';
@@ -236,7 +237,6 @@ function FirstRunSetup({ onNavigate, notify }) {
 function readLocalValue(key, fallback) { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? fallback; } catch { return fallback; } }
 function readDashboardLayoutSafely(key) { try { return readDashboardLayout(window.localStorage, key); } catch { return readDashboardLayout(null, key); } }
 function writeDashboardLayoutSafely(key, value) { try { return writeDashboardLayout(window.localStorage, key, value); } catch { return false; } }
-function amountValue(value) { return Number(String(value || '').replace(/[^\d,]/g, '').replace(',', '.')) || 0; }
 function workspacePageSlug(label) { return label.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''); }
 function workspacePageFromPath(pathname) {
   if (!pathname.startsWith('/app/')) return null;
@@ -323,8 +323,6 @@ function WorkspaceShell() {
   const dashboardLeads = sourceLeads.map((item) => ({ ...item, company: item.company || item.client || 'Empresa não informada', color: item.color || item.tone || 'blue', initials: item.initials || item.name?.split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase(), note: item.note || item.notes || item.service || 'Sem observações cadastradas', action: item.action || 'Abrir oportunidade', actionType: item.actionType || 'blue' }));
   const dashboardProjects = dashboardRecords.projects;
   const dashboardBills = dashboardRecords.bills;
-  const closedBillStatuses = new Set(['paga', 'cancelada', 'paid', 'approved', 'processed', 'cancelled', 'canceled', 'refunded']);
-  const openBills = dashboardBills.filter((bill) => !closedBillStatuses.has(String(bill.status || '').toLowerCase()));
   const today = calendarDateInTimeZone(new Date(), preferences.timezone);
   const todayIso = calendarDateKeyInTimeZone(new Date(), preferences.timezone);
   const nextMonthDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 30);
@@ -338,10 +336,11 @@ function WorkspaceShell() {
   const highlightedTodayEventState = selectDashboardHighlightedEvent(todayEvents, { now: new Date(), timeZone: preferences.timezone });
   const highlightedTodayEvent = highlightedTodayEventState.event;
   const dashboardInbox = dashboardInboxConversations(dashboardRecords.inbox, 3);
-  const dueDate = (bill) => calendarDateKeyForValue(bill.dueAt || bill.due, preferences.timezone);
-  const overdueBills = openBills.filter((bill) => (dueDate(bill) && dueDate(bill) < todayIso) || ['vencida', 'atrasada', 'overdue'].includes(String(bill.status || '').toLowerCase()));
-  const upcomingBills = openBills.filter((bill) => dueDate(bill) && dueDate(bill) >= todayIso && dueDate(bill) <= nextMonthIso);
-  const upcomingAmount = upcomingBills.reduce((sum, bill) => sum + Number(bill.amount || amountValue(bill.value)), 0);
+  const { overdueBills, upcomingAmount } = dashboardBillingMetrics(dashboardBills, {
+    today: todayIso,
+    through: nextMonthIso,
+    timeZone: preferences.timezone,
+  });
   const activeProjects = filterDashboardActiveProjects(dashboardProjects);
   const dashboardRestricted = (source) => dashboardRestrictedSources.includes(source);
   const restrictedWorkspaceModules = [...new Set(dashboardRestrictedSources.map((source) => ({ leads: 'CRM', projects: 'Projetos', tasks: 'Tarefas', events: 'Agenda', proposals: 'CRM', bills: 'Financeiro', inbox: 'Caixa de entrada' })[source]).filter(Boolean))];
@@ -372,7 +371,13 @@ function WorkspaceShell() {
       { key: 'tasks', load: fetchAllRecords('/api/workspace/tasks') },
       { key: 'events', load: fetchAllRecords('/api/workspace/events') },
       { key: 'proposals', load: isMember ? Promise.resolve([]) : fetchAllRecords('/api/workspace/proposals') },
-      { key: 'bills', load: isMember ? Promise.resolve([]) : fetchAllRecords('/api/billing/orders') },
+      { key: 'bills', load: isMember ? Promise.resolve([]) : Promise.all([
+        fetchAllRecords('/api/billing/orders'),
+        fetchAllRecords('/api/billing/subscriptions'),
+      ]).then(([orders, subscriptions]) => [
+        ...orders.map((item) => ({ ...item, billingKind: 'order' })),
+        ...subscriptions.map((item) => ({ ...item, billingKind: 'subscription' })),
+      ]) },
       { key: 'inbox', load: fetchAllRecords('/api/workspace/inbox') },
     ];
     const results = await Promise.all(sources.map(async ({ key, load }) => {

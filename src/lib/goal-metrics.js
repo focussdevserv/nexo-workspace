@@ -78,7 +78,9 @@ export function calculateGoalsSummary(goals = [], data = {}, states = {}, period
     return [{ current, target }];
   });
   const achieved = measurable.filter(({ current, target }) => current >= target).length;
-  const averageProgress = measurable.length
+  // An average over only the goals whose sources loaded would overstate the
+  // workspace progress when other visible goals are unavailable.
+  const averageProgress = measurable.length && measurable.length === visible.length
     ? Math.round(measurable.reduce((sum, { current, target }) => sum + Math.max(0, Math.min(100, Math.round(current / target * 100))), 0) / measurable.length)
     : null;
 

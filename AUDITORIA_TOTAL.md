@@ -578,3 +578,19 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - Na ficha de Aurora Café, a seção Financeiro e o filtro Cobranças mantiveram a URL em `/app/crm`; Nova cobrança abriu o formulário na própria ficha com o e-mail do cliente preenchido. Cancelar preservou a ficha e não gravou dados.
 - A origem apresentou outra janela HTTP 503 às 05:50 UTC; às 05:55 UTC quatro verificações sequenciais de home e health responderam 200, e health/manifesto confirmaram novamente a revisão implantada. Recomenda-se monitorar a disponibilidade após a retomada.
 - Nenhum login, gravação, pagamento, upload ou chamada de provedor foi executado. A demonstração não valida sessão real nem configuração OAuth e credenciais de terceiros; o endpoint de sessão sem autenticação continua exigindo login.
+
+## Onda 10 - consistência entre módulos e validação local completa - 03/10/2026
+
+- **Meu Dia / Financeiro:** o resumo agora inclui assinaturas recorrentes autorizadas, considera a próxima cobrança e ignora ordens pagas, canceladas, falhas ou expiradas.
+- **Agenda:** eventos de dia inteiro que abrangem várias datas aparecem em todos os dias corretos. Criar, persistir após recarga e excluir evento foi testado pela interface no modo demo.
+- **Horas:** iniciar e parar cronômetro vinculado a tarefa foi testado pela interface; o registro foi removido ao final para não deixar dado de QA na demonstração.
+- **CRM:** limpar o vínculo de empresa também limpa a referência legada, evitando contagem de contatos desatualizada.
+- **Cobranças:** depois de cancelamento confirmado pela API, a linha é atualizada imediatamente; falha ao atualizar a lista não deixa a cobrança aparentando estar pendente.
+- **Atendimento e equipe:** trocar conversa limpa rascunho/anexo da seleção anterior; rascunhos de permissões são protegidos contra descarte acidental.
+- **Relatórios e metas:** exportação é bloqueada se uma fonte necessária estiver indisponível; média de metas não é apresentada como completa quando faltam métricas de metas visíveis.
+- **Repositórios:** URLs externas aceitam somente HTTPS sem credenciais; links em nova janela são isolados.
+- **Automações n8n:** reprocessamento é ofertado e aceito somente se integração, automação, evento e webhook continuarem válidos. Nenhum workflow externo foi chamado.
+- **Validação automatizada:** 691 testes frontend e 271 API passaram; lint, build frontend (2.092 módulos), build TypeScript da API e `git diff --check` passaram.
+- **Navegador local:** os 29 destinos abriram em desktop 1440×900 e mobile 390×844 sem erro de tela, overflow horizontal ou erros de console. A busca automática de campos sinalizou um input `file` oculto em Arquivos; a inspeção confirmou que os controles visíveis têm rótulos/nomes.
+- **Integridade:** testes de escrita usaram exclusivamente a demonstração local; o evento de QA e o registro de horas foram excluídos. Sem gravação real, pagamentos, OAuth ou chamadas externas.
+- **Produção:** antes desta onda, `92cb54e07bc55c53d6832f7fcb8b80f44acf474a` estava publicado, com API `ok` e banco conectado. As mudanças desta onda estão locais até a confirmação da publicação.

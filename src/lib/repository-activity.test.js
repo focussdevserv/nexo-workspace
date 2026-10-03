@@ -1,6 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeRepositoryActivity } from './repository-activity.js';
+import { normalizeRepositoryActivity, safeRepositoryExternalUrl } from './repository-activity.js';
+
+test('repository and deployment links accept credential-free HTTPS URLs only', () => {
+  assert.equal(safeRepositoryExternalUrl('https://github.com/acme/site'), 'https://github.com/acme/site');
+  assert.equal(safeRepositoryExternalUrl('https://preview.example.test/build/42'), 'https://preview.example.test/build/42');
+  for (const value of ['javascript:alert(1)', 'data:text/html,unsafe', 'http://example.test', '//attacker.example', 'https://user:pass@example.test', '/relative/path', 'https://example.test\\\\attacker']) {
+    assert.equal(safeRepositoryExternalUrl(value), '', value);
+  }
+});
 
 test('normalizes a partial GitHub activity response without losing valid data', () => {
   assert.deepEqual(normalizeRepositoryActivity({
@@ -36,4 +44,13 @@ test('handles a missing or non-object activity payload', () => {
     deployment: null,
     syncedAt: null,
   });
+});
+
+test('drops unsafe repository or deployment URLs from normalized activity', () => {
+  const result = normalizeRepositoryActivity({
+    repository: { url: 'javascript:alert(1)' },
+    deployment: { url: 'data:text/html,unsafe', state: 'success' },
+  });
+  assert.equal(result.repository.url, '');
+  assert.equal(result.deployment.url, '');
 });

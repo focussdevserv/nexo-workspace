@@ -1,5 +1,17 @@
 const asText = (value) => typeof value === 'string' ? value : '';
 
+/** GitHub activity can contain user-controlled deployment URLs; only link to credential-free HTTPS destinations. */
+export function safeRepositoryExternalUrl(value) {
+  if (typeof value !== 'string' || /[\\\u0000-\u001f]/.test(value)) return '';
+  try {
+    const url = new URL(value.trim());
+    if (url.protocol !== 'https:' || url.username || url.password) return '';
+    return url.toString();
+  } catch {
+    return '';
+  }
+}
+
 /** Normalize optional GitHub fields so a partial API response cannot break the repositories screen. */
 export function normalizeRepositoryActivity(value) {
   const activity = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
@@ -16,7 +28,7 @@ export function normalizeRepositoryActivity(value) {
   return {
     repository: {
       fullName: asText(repository.fullName),
-      url: asText(repository.url),
+      url: safeRepositoryExternalUrl(repository.url),
       defaultBranch: asText(repository.defaultBranch),
     },
     latestCommit: rawCommit ? {
@@ -33,7 +45,7 @@ export function normalizeRepositoryActivity(value) {
     deployment: rawDeployment ? {
       environment: asText(rawDeployment.environment),
       state: asText(rawDeployment.state) || 'desconhecido',
-      url: asText(rawDeployment.url),
+      url: safeRepositoryExternalUrl(rawDeployment.url),
     } : null,
     syncedAt: typeof activity.syncedAt === 'string' && Number.isFinite(Date.parse(activity.syncedAt))
       ? activity.syncedAt

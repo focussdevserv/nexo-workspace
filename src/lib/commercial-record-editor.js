@@ -58,6 +58,14 @@ export function companyContactCount(company, contacts = [], companies = []) {
   }).length;
 }
 
+export function commercialContactCompanySelection(companies = [], selectedCompanyId = '') {
+  const company = companies.find((item) => String(item.id) === String(selectedCompanyId));
+  return {
+    companyId: company?.id || '',
+    company: company?.name || '',
+  };
+}
+
 export function commercialRecordEditorDraft(page, record = {}, clients = [], companies = []) {
   return Object.fromEntries(commercialRecordEditorFields(page).map(({ key }) => {
     let value = record[key];

@@ -1977,7 +1977,12 @@ app.get('/api/integrations/n8n/deliveries', { preHandler: app.authenticate, conf
   const automations = automationIds.length ? await db.select({ id: workspaceRecords.id, name: sql<string>`coalesce(${workspaceRecords.data}->>'name', 'Automação removida')` })
     .from(workspaceRecords).where(and(eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'automations'), inArray(workspaceRecords.id, automationIds))) : [];
   const names = new Map(automations.map((item) => [item.id, item.name]));
-  return { data: rows.map((row) => ({ id: row.id, automationId: row.automationId, eventKey: row.eventKey, attempts: row.attempts, nextAttemptAt: row.nextAttemptAt, deliveredAt: row.deliveredAt, discardedAt: row.discardedAt, lastError: row.lastError, createdAt: row.createdAt, automationName: names.get(row.automationId) || 'Automação removida', status: row.deliveredAt ? 'delivered' : row.discardedAt ? 'discarded' : 'pending', retryable: n8nDeliveryCanRetry(row) })) };
+  const automationStates = automationIds.length ? await db.select({ id: workspaceRecords.id, data: workspaceRecords.data }).from(workspaceRecords).where(and(
+    eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'automations'), inArray(workspaceRecords.id, automationIds), isNull(workspaceRecords.archivedAt),
+  )) : [];
+  const automationById = new Map(automationStates.map((item) => [item.id, item.data]));
+  const integrationEnabled = await isIntegrationEnabled(request.user.organizationId, 'n8n');
+  return { data: rows.map((row) => ({ id: row.id, automationId: row.automationId, eventKey: row.eventKey, attempts: row.attempts, nextAttemptAt: row.nextAttemptAt, deliveredAt: row.deliveredAt, discardedAt: row.discardedAt, lastError: row.lastError, createdAt: row.createdAt, automationName: names.get(row.automationId) || 'Automação removida', status: row.deliveredAt ? 'delivered' : row.discardedAt ? 'discarded' : 'pending', retryable: n8nDeliveryCanRetry(row, { integrationEnabled, automationActive: automationById.get(row.automationId)?.active === true, automationEventKey: automationById.get(row.automationId)?.eventKey, eventKey: row.eventKey, webhookPath: automationById.get(row.automationId)?.n8nWebhookPath }) })) };
 });
 
 app.post('/api/integrations/n8n/deliveries/:id/retry', { preHandler: app.authenticate, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
@@ -1987,7 +1992,12 @@ app.post('/api/integrations/n8n/deliveries/:id/retry', { preHandler: app.authent
   const result = await db.transaction(async (tx) => {
     const [row] = await tx.select().from(n8nEventDeliveries).where(and(eq(n8nEventDeliveries.id, params.data.id), eq(n8nEventDeliveries.organizationId, request.user.organizationId))).limit(1).for('update', { skipLocked: true });
     if (!row) return 'not_found' as const;
-    if (!n8nDeliveryCanRetry(row)) return 'not_retryable' as const;
+    const [automation] = await tx.select({ data: workspaceRecords.data }).from(workspaceRecords).where(and(
+      eq(workspaceRecords.id, row.automationId), eq(workspaceRecords.organizationId, request.user.organizationId),
+      eq(workspaceRecords.resource, 'automations'), isNull(workspaceRecords.archivedAt),
+    )).limit(1);
+    const integrationEnabled = await isIntegrationEnabled(request.user.organizationId, 'n8n');
+    if (!n8nDeliveryCanRetry(row, { integrationEnabled, automationActive: automation?.data.active === true, automationEventKey: automation?.data.eventKey, eventKey: row.eventKey, webhookPath: automation?.data.n8nWebhookPath })) return 'not_retryable' as const;
     await tx.update(n8nEventDeliveries).set({ attempts: 0, discardedAt: null, lastError: null, nextAttemptAt: now, updatedAt: now }).where(eq(n8nEventDeliveries.id, row.id));
     await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'n8n_delivery', entityId: row.id, action: 'manual_retry', payload: { eventKey: row.eventKey } });
     return 'queued' as const;
@@ -2799,12 +2809,19 @@ app.post('/api/billing/orders/:id/refresh', { preHandler: app.authenticate, conf
     const [saved] = await db.update(billingOrders).set({
       status, statusDetail: details.statusDetail, mpPaymentId: details.paymentId,
       paymentDetails, dueAt: details.expirationAt ? new Date(details.expirationAt) : order.dueAt, updatedAt,
-    }).where(eq(billingOrders.id, order.id)).returning();
-    if (changed) {
+    }).where(and(eq(billingOrders.id, order.id), eq(billingOrders.updatedAt, order.updatedAt))).returning();
+    // The provider response may be older than a webhook or another refresh that
+    // completed while this request was in flight. Do not overwrite that newer
+    // persisted snapshot; return it so the UI reflects the authoritative state.
+    const latest = saved ?? (await db.select().from(billingOrders).where(and(
+      eq(billingOrders.id, order.id), eq(billingOrders.organizationId, request.user.organizationId),
+    )).limit(1))[0];
+    if (!latest) return reply.code(404).send({ error: 'not_found', message: 'Cobrança não encontrada.' });
+    if (saved && changed) {
       await db.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'billing_order', entityId: order.id, action: 'provider_updated', payload: { status } });
       if (status === 'paid' && order.status !== 'paid') await enqueueN8nEvent(request.user.organizationId, 'payment.confirmed', { id: order.id, title: order.description, client: order.clientName, amount: order.amount });
     }
-    return { data: saved, changed };
+    return { data: latest, changed: Boolean(saved) && changed };
   } catch {
     return reply.code(502).send({ error: 'payment_status_refresh_failed', message: 'O Mercado Pago não respondeu. O status salvo foi mantido.' });
   }
@@ -2960,8 +2977,10 @@ app.post('/api/integrations/mercadopago/webhook', async (request, reply) => {
         if (!duplicateSnapshot || needsPaidDateBackfill) {
           const updatedAt = new Date();
           const paymentDetails = withStableBillingPaidAt(local.status, nextStatus, local.paymentDetails, details, local.updatedAt, updatedAt);
-          await db.update(billingOrders).set({ status: nextStatus, statusDetail: details.statusDetail, mpPaymentId: details.paymentId, paymentDetails, updatedAt }).where(eq(billingOrders.id, local.id));
-          if (!duplicateSnapshot) {
+          const [saved] = await db.update(billingOrders).set({ status: nextStatus, statusDetail: details.statusDetail, mpPaymentId: details.paymentId, paymentDetails, updatedAt }).where(and(
+            eq(billingOrders.id, local.id), eq(billingOrders.updatedAt, local.updatedAt),
+          )).returning({ id: billingOrders.id });
+          if (saved && !duplicateSnapshot) {
             await db.insert(activityEvents).values({ organizationId: local.organizationId, entityType: 'billing_order', entityId: local.id, action: 'provider_updated', payload: { status: nextStatus } });
             if (nextStatus === 'paid' && local.status !== 'paid') await enqueueN8nEvent(local.organizationId, 'payment.confirmed', { id: local.id, title: local.description, client: local.clientName, amount: local.amount });
           }

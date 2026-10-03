@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import {
   buildCommercialRecordEditorPatch,
   companyContactCount,
+  commercialContactCompanySelection,
   commercialRecordEditorDraft,
   commercialRecordEditorFields,
   commercialRecordEditorIsDirty,
@@ -10,6 +12,21 @@ import {
 
 const clients = [{ id: 12, name: 'Nexo Ltda', email: 'financeiro@nexo.test' }];
 const companies = [{ id: 34, name: 'Acme Tecnologia' }];
+
+test('creating a contact clears both company ID and legacy name when its company is unlinked', () => {
+  assert.deepEqual(commercialContactCompanySelection(companies, '34'), {
+    companyId: 34, company: 'Acme Tecnologia',
+  });
+  assert.deepEqual(commercialContactCompanySelection(companies, ''), {
+    companyId: '', company: '',
+  });
+});
+
+test('contact create selector replaces the company name even when the selection is cleared', async () => {
+  const source = await readFile(new URL('../screens/CommercialScreens.jsx', import.meta.url), 'utf8');
+  assert.match(source, /commercialContactCompanySelection\(records\.companies \|\| \[\], e\.target\.value\)/);
+  assert.doesNotMatch(source, /company\?\.name \|\| current\.client/);
+});
 
 test('exposes editable business fields for companies and contacts', () => {
   assert.deepEqual(commercialRecordEditorFields('empresas').map(({ key }) => key), ['name', 'segment', 'city', 'size', 'email', 'phone', 'website', 'address', 'notes']);

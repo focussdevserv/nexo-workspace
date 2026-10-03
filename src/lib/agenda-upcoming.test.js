@@ -26,6 +26,13 @@ test('overnight events are future by their start time, not by their next-day end
   assert.equal(isAgendaEventUpcoming(afterStart, { now: new Date('2026-10-03T03:00:00.000Z'), timeZone: 'America/Sao_Paulo' }), false);
 });
 
+test('an all-day event that began earlier remains upcoming while its end date is exclusive', () => {
+  const event = { id: 'conference', date: '2026-10-01', endDate: '2026-10-04', allDay: true };
+  assert.equal(isAgendaEventUpcoming(event, { now: new Date('2026-10-02T15:00:00.000Z'), timeZone: 'America/Sao_Paulo' }), true);
+  assert.equal(isAgendaEventUpcoming(event, { now: new Date('2026-10-04T15:00:00.000Z'), timeZone: 'America/Sao_Paulo' }), false);
+  assert.deepEqual(upcomingAgendaEvents([event], { now, timeZone: 'America/Sao_Paulo' }).map((item) => item.id), ['conference']);
+});
+
 test('day summary picks the first timed event still ahead on the selected day', () => {
   const events = [
     { date: '2026-10-02', time: '15:00' },

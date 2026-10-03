@@ -51,6 +51,7 @@ import { resolveCreatedWorkspaceRecord } from '../lib/workspace-created-record.j
 import { buildTaskRecord } from '../lib/task-create.js';
 import { projectTemplateChoices, buildProjectTemplateTasks } from '../lib/project-templates.js';
 import { buildAgendaRecurrenceSeries } from '../lib/agenda-recurrence.js';
+import { isAgendaEventVisibleInPeriod, isAgendaEventVisibleOnDate } from '../lib/agenda-event-visibility.js';
 import { shouldOpenFileDetailsByDefault } from '../lib/file-primary-action.js';
 import { createAsyncActionLock } from '../lib/async-action-lock.js';
 import { createKeyedActionLock } from '../lib/keyed-action-lock.js';
@@ -205,8 +206,8 @@ function calendarEndDate(date, start, end) { return agendaEventEndDate(date, sta
 function AgendaTimeGrid({ dates, events, selectedDate, now, timeZone, locale, onSelectDate, onCreateEvent, onSelectEvent, eventTone, sameDay }) {
   const firstHour = 7, lastHour = 21, hourHeight = 64;
   const keyOf = (date) => toLocalDateInput(date);
-  const dayEvents = (date, allDay) => events.filter((event) => event.date === keyOf(date) && isAgendaAllDayEvent(event) === allDay);
-  const hasEvents = dates.some((date) => events.some((event) => event.date === keyOf(date)));
+  const dayEvents = (date, allDay) => events.filter((event) => isAgendaAllDayEvent(event) === allDay && (allDay ? isAgendaEventVisibleOnDate(event, keyOf(date)) : event.date === keyOf(date)));
+  const hasEvents = dates.some((date) => events.some((event) => event.date === keyOf(date) || (isAgendaAllDayEvent(event) && isAgendaEventVisibleOnDate(event, keyOf(date)))));
   const offset = (event) => { const [hour, minute] = event.time.split(':').map(Number); return Math.max(0, Math.min((lastHour - firstHour) * hourHeight - 30, ((hour - firstHour) * 60 + minute) / 60 * hourHeight)); };
   const height = (event) => { const [sh, sm] = event.time.split(':').map(Number); const fallbackEnd = `${String((sh + 1) % 24).padStart(2, '0')}:${String(sm).padStart(2, '0')}`; return Math.max(34, Math.min(240, agendaEventDurationMinutes(event.time, event.end || fallbackEnd) / 60 * hourHeight)); };
   return <div className={`agenda-time-grid ${dates.length === 1 ? 'is-day' : 'is-week'}`}>
@@ -230,7 +231,7 @@ function AgendaCalendar({ events, selectedDate, setSelectedDate, agendaView, set
     const dateOrder = String(a.date || '').localeCompare(String(b.date || ''));
     return dateOrder || (a.time || '99:99').localeCompare(b.time || '99:99');
   });
-  const dayEvents = sortEvents(filteredEvents.filter((event) => event.date === selectedKey));
+  const dayEvents = sortEvents(filteredEvents.filter((event) => isAgendaEventVisibleOnDate(event, selectedKey)));
   const movePeriod = (direction) => {
     const next = new Date(selectedDate);
     if (agendaView === 'Dia') next.setDate(next.getDate() + direction);
@@ -243,7 +244,7 @@ function AgendaCalendar({ events, selectedDate, setSelectedDate, agendaView, set
     }
     setSelectedDate(next);
   };
-  const monthItems = (day) => filteredEvents.filter((event) => event.date === toLocalDateInput(new Date(selectedDate.getFullYear(), selectedDate.getMonth(), day)));
+  const monthItems = (day) => filteredEvents.filter((event) => isAgendaEventVisibleOnDate(event, toLocalDateInput(new Date(selectedDate.getFullYear(), selectedDate.getMonth(), day))));
   const weekDate = (index) => { const date = new Date(weekStart); date.setDate(date.getDate() + index); return date; };
   const duration = (event) => {
     if (!event.time || event.allDay) return 0;
@@ -255,7 +256,7 @@ function AgendaCalendar({ events, selectedDate, setSelectedDate, agendaView, set
   const periodEnd = agendaView === 'Dia' ? selectedDate : agendaView === 'Semana' ? new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + 6) : new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 0);
   const periodStartKey = agendaView === 'Dia' ? selectedKey : agendaView === 'Semana' ? toLocalDateInput(weekStart) : toLocalDateInput(monthDate);
   const periodEndKey = toLocalDateInput(periodEnd);
-  const periodEvents = agendaView === 'Dia' ? dayEvents : filteredEvents.filter((event) => event.date >= periodStartKey && event.date <= periodEndKey);
+  const periodEvents = agendaView === 'Dia' ? dayEvents : filteredEvents.filter((event) => isAgendaEventVisibleInPeriod(event, periodStartKey, periodEndKey));
   const visibleEvents = agendaView === 'Dia' ? dayEvents : sortEvents(periodEvents);
   const visibleMinutes = visibleEvents.reduce((total, event) => total + duration(event), 0);
   const visibleDuration = visibleMinutes ? `${Math.floor(visibleMinutes / 60)}h${visibleMinutes % 60 ? ` ${visibleMinutes % 60}min` : ''}` : '0h';

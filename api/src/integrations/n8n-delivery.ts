@@ -11,8 +11,18 @@ export function n8nDeliveryExhausted(attempts: number) {
   return attempts >= N8N_DELIVERY_MAX_ATTEMPTS;
 }
 
-export function n8nDeliveryCanRetry(delivery: { discardedAt: Date | null; deliveredAt: Date | null; record: Record<string, unknown> }) {
-  return Boolean(delivery.discardedAt && !delivery.deliveredAt && delivery.record && Object.keys(delivery.record).length);
+export function n8nDeliveryCanRetry(
+  delivery: { discardedAt: Date | null; deliveredAt: Date | null; record: Record<string, unknown> },
+  context?: { integrationEnabled: boolean; automationActive: boolean; automationEventKey: unknown; eventKey: string; webhookPath: unknown },
+) {
+  const deliveryHasData = Boolean(delivery.discardedAt && !delivery.deliveredAt && delivery.record && Object.keys(delivery.record).length);
+  if (!deliveryHasData) return false;
+  if (!context) return true;
+  return context.integrationEnabled
+    && context.automationActive
+    && context.automationEventKey === context.eventKey
+    && typeof context.webhookPath === 'string'
+    && /^nexo\/[0-9a-f-]{36}$/i.test(context.webhookPath);
 }
 
 export function n8nCallbackRejectionReason(input: {

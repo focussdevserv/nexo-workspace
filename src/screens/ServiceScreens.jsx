@@ -30,6 +30,7 @@ import { gmailThreadMetadataRecord, hostingerThreadMetadataRecord, mergeGmailThr
 import { matchConversationClient } from '../lib/conversation-client-match.js';
 import { canReplyToInboxConversation, isResolvedInboxConversation, nextInboxConversationStatus } from '../lib/inbox-reply.js';
 import { sendInboxMessage, whatsappSendPreflight } from '../lib/inbox-send.js';
+import { inboxReplySelectionKey, shouldClearInboxReplyComposer } from '../lib/inbox-reply-selection.js';
 import { clearInboxSendAttempt, inboxSendAttemptId } from '../lib/inbox-send-attempt.js';
 import { createInboxSendLock } from '../lib/inbox-send-lock.js';
 import { buildInboxFollowUpTask, nextInboxFollowUpDate } from '../lib/inbox-follow-up.js';
@@ -508,6 +509,14 @@ function Inbox({ notify, forceWhatsapp = false, navigationContext = null, onNavi
   const whatsappMessages = messages.filter((item) => item.channel !== 'Gmail' && item.gmailMetadata !== true);
   const activeMessages = channel === 'E-mail' ? emailThreads : whatsappMessages;
   const current = activeMessages.find((item) => String(item.id) === String(selectedId)) || activeMessages[0];
+  const replySelectionKey = inboxReplySelectionKey(channel, current?.id);
+  const previousReplySelectionKey = useRef(replySelectionKey);
+  useEffect(() => {
+    if (!shouldClearInboxReplyComposer(previousReplySelectionKey.current, replySelectionKey)) return;
+    previousReplySelectionKey.current = replySelectionKey;
+    setDraft('');
+    setAttachment(null);
+  }, [replySelectionKey]);
   const canReply = canReplyToInboxConversation(channel, current);
   const linkedClient = current ? matchConversationClient(clientsStore.records, contactsStore.records, current) : null;
   const openClientRecord = () => {

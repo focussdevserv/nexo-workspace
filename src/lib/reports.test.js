@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildChartBuckets, buildProjectReportRows, dateOf, formatReportHours, hasReportChartFailures, hasReportSourceFailures, inPeriod, paidReportPayments, paidReportRevenues, parseReportAmount, periodStart, reportDateLabel, reportHours, reportRevenueDate, reportSourceState, reportSourcesForTab, revenueRecordsForReport } from './reports.js';
+import { buildChartBuckets, buildProjectReportRows, canExportReport, dateOf, formatReportHours, hasReportChartFailures, hasReportSourceFailures, inPeriod, paidReportPayments, paidReportRevenues, parseReportAmount, periodStart, reportDateLabel, reportHours, reportRevenueDate, reportSourceState, reportSourcesForTab, revenueRecordsForReport } from './reports.js';
 
 test('report amounts parse Brazilian and US mixed thousands and decimal separators', () => {
   assert.equal(parseReportAmount('R$ 1.234,56'), 1234.56);
@@ -143,6 +143,15 @@ test('an unrelated source failure does not block export of the current report', 
   assert.equal(hasReportSourceFailures('Financeiro', ['expenses']), true);
   assert.equal(hasReportSourceFailures('Projetos', ['expenses']), false);
   assert.equal(hasReportSourceFailures('Projetos', ['hours']), true);
+});
+
+test('report export is blocked when a contributing source is restricted or failed', () => {
+  assert.equal(canExportReport('Financeiro', ['orders'], []), false);
+  assert.equal(canExportReport('Projetos', [], ['hours']), false);
+  assert.equal(canExportReport('Visão geral', ['expenses'], []), false);
+  assert.equal(canExportReport('Financeiro', ['hours'], []), true);
+  assert.equal(canExportReport('Financeiro', [], ['tasks']), true);
+  assert.equal(canExportReport('Comercial', [], []), true);
 });
 
 test('an unrelated source failure does not hide a report chart with all its own data', () => {

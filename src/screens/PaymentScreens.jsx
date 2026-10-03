@@ -22,6 +22,7 @@ import { recurringBillingEnabled } from '../lib/billing-preferences.js';
 import { matchesPaymentSearch } from '../lib/payment-search.js';
 import { subscriptionStatusUrl } from '../lib/subscription-status-url.js';
 import { updatePaymentAddress, updatePaymentField } from '../lib/payment-form.js';
+import { replacePaymentRecord } from '../lib/payment-record-update.js';
 
 const money = (value) => Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const labels = { pending: 'Aguardando pagamento', creating: 'Criando', processing: 'Em processamento', paid: 'Paga', authorized: 'Autorizada', paused: 'Pausada', canceled: 'Cancelada', cancelled: 'Cancelada', overdue: 'Vencida', failed: 'Falhou', refunded: 'Estornada', rejected: 'Recusada', expired: 'Expirada' };
@@ -278,6 +279,7 @@ export function PaymentConsole({ kind = 'orders', notify = () => {}, navigationC
       const response = await request(`/api/billing/orders/${encodeURIComponent(item.id)}/cancel`, { method: 'POST' });
       const cancellationError = paymentCancellationError(response);
       if (cancellationError) throw new Error(cancellationError);
+      if (response.data) setItems((current) => replacePaymentRecord(current, response.data));
       await refresh();
       notify(demoMode ? 'Cobrança fictícia cancelada neste navegador.' : 'Cancelamento confirmado pelo Mercado Pago.');
     } catch (err) { setError(err.message || 'Não foi possível confirmar o cancelamento.'); }

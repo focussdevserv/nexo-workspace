@@ -35,7 +35,7 @@ import { presentClientContact } from "../lib/client-contact-presentation.js";
 import { archiveClientRecord, isArchivedClient, restoreClientRecord } from "../lib/client-archive.js";
 import { clientFileRecordForUpload } from "../lib/client-file-link.js";
 import { buildClientRelationshipHistory, clientRelationshipHistoryDateLabel } from "../lib/client-relationship-history.js";
-import { buildCommercialRecordEditorPatch, companyContactCount, commercialRecordEditorDraft, commercialRecordEditorFields, commercialRecordEditorIsDirty } from "../lib/commercial-record-editor.js";
+import { buildCommercialRecordEditorPatch, companyContactCount, commercialContactCompanySelection, commercialRecordEditorDraft, commercialRecordEditorFields, commercialRecordEditorIsDirty } from "../lib/commercial-record-editor.js";
 import { filterCommercialRecords } from "../lib/commercial-record-filter.js";
 import { commercialStageTone } from "../lib/commercial-stage-tone.js";
 import { averageProposalApprovalDays, countLeadsWithoutNextAction, formatElapsedDays } from "../lib/commercial-cycle-metrics.js";
@@ -1100,7 +1100,7 @@ export default function CommercialScreen({
             clientId: "",
             ...(key === "contatos" ? { companyId: "" } : {}),
             client: e.target.value
-          })} /></label>}{key === "contatos" && <label>Vincular empresa (opcional)<select value={draft.companyId || ""} onChange={e => { const company = (records.companies || []).find(item => String(item.id) === e.target.value); setDraft(current => ({ ...current, companyId: company?.id || "", client: company?.name || current.client })); }}><option value="">Sem vínculo cadastrado</option>{(records.companies || []).map(company => <option key={company.id} value={company.id}>{company.name}</option>)}</select></label>}{key !== "clientes" && ["leads", "clientes", "contatos"].includes(key) && <label>E-mail<input type="email" value={draft.email} onChange={e => setDraft({
+          })} /></label>}{key === "contatos" && <label>Vincular empresa (opcional)<select value={draft.companyId || ""} onChange={e => { setDraft(current => ({ ...current, ...commercialContactCompanySelection(records.companies || [], e.target.value) })); }}><option value="">Sem vínculo cadastrado</option>{(records.companies || []).map(company => <option key={company.id} value={company.id}>{company.name}</option>)}</select></label>}{key !== "clientes" && ["leads", "clientes", "contatos"].includes(key) && <label>E-mail<input type="email" value={draft.email} onChange={e => setDraft({
             ...draft,
             email: e.target.value
           })} /></label>}{key === "propostas" && <label>E-mail destinatario<input type="email" value={draft.email} onChange={e => setDraft({
