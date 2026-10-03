@@ -14,3 +14,14 @@ test('matches event identifiers across numeric and string representations', () =
   const event = { id: 42, title: 'Review' };
   assert.deepEqual(resolveAgendaNavigationEvent([event], '42', true), { event, consume: true });
 });
+
+test('waits for Google Calendar read before consuming an external event context', () => {
+  assert.deepEqual(resolveAgendaNavigationEvent([], '', true, { googleEventId: 'g-1', googleEventsLoaded: false }), { event: null, consume: false });
+});
+
+test('resolves a Google-only event by its provider ID and prefers a linked workspace record', () => {
+  const google = { id: 'google-g-1', googleEventId: 'g-1', calendarSource: 'google' };
+  const linked = { id: 'workspace-1', googleEventId: 'g-1' };
+  assert.deepEqual(resolveAgendaNavigationEvent([], '', true, { googleEventId: 'g-1', googleEvents: [google], googleEventsLoaded: true }), { event: google, consume: true });
+  assert.deepEqual(resolveAgendaNavigationEvent([linked], '', true, { googleEventId: 'g-1', googleEvents: [google], googleEventsLoaded: true }), { event: linked, consume: true });
+});

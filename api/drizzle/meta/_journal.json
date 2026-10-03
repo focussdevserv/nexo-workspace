@@ -85,6 +85,13 @@
       "when": 1790930000000,
       "tag": "0011_billing_request_idempotency",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1790985600000,
+      "tag": "0012_billing_subscription_schedule",
+      "breakpoints": true
     }
   ]
 }

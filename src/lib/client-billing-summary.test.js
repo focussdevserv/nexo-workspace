@@ -23,3 +23,11 @@ test('prefers per-service billing and labels one-time work as non-recurring', ()
   assert.equal(clientMonthlyRevenueLabel(client), 'Sem recorrência');
   assert.equal(clientMonthlyRevenueLabel({ value: 'R$ 350.00' }), 'R$ 350,00 / mês');
 });
+
+test('lead conversion estimates remain stored but are not counted as recurring client revenue', () => {
+  const client = { leadId: 'lead-1', value: 'R$ 5.500' };
+
+  assert.equal(clientMonthlyRevenue(client), 0);
+  assert.equal(clientMonthlyRevenueLabel(client), 'Sem recorr\u00eancia');
+  assert.equal(client.value, 'R$ 5.500');
+});

@@ -39,6 +39,7 @@ import { confirmWorkspaceDelete, useWorkspacePreferences } from "../lib/workspac
 import { normalizeCommercialScreenRows } from "../lib/commercial-screen-data.js";
 import { createCommercialSubmissionLock } from "../lib/commercial-submission-lock.js";
 import { resolveLeadNavigation } from "../lib/lead-navigation-context.js";
+import { resolveClientBillingCancellation } from "../lib/client-billing-cancellation.js";
 const datasets = {
   leads: [],
   clients: [],
@@ -1439,6 +1440,7 @@ function ClientBillingRecord({
   onCancel,
   onRefresh,
   refreshing,
+  cancelling,
   localDemo
 }) {
   const labels = {
@@ -1464,10 +1466,10 @@ function ClientBillingRecord({
       onAction("Não foi possível copiar o código Pix neste navegador.");
     }
   };
-  return <article className="com-client-row com-client-billing-record"><CircleDollarSign size={15} /><div><b>{item.description || "Cobrança"}</b><small>{item.method || item.paymentDetails?.paymentMethod || "Pagamento"} · {dueLabel}</small></div><strong>{new Intl.NumberFormat("pt-BR", {
+  return <article className="com-client-row com-client-billing-record" aria-busy={refreshing || cancelling}><CircleDollarSign size={15} /><div><b>{item.description || "Cobrança"}</b><small>{item.method || item.paymentDetails?.paymentMethod || "Pagamento"} · {dueLabel}</small></div><strong>{new Intl.NumberFormat("pt-BR", {
         style: "currency",
         currency: "BRL"
-      }).format(Number(item.amount) || 0)}</strong><Badge tone={paid ? "green" : "amber"}>{labels[item.status] || item.status || "Sem status"}</Badge><div className="com-client-finance-row-actions">{(localDemo || item.mpOrderId) && <button type="button" className="com-secondary" disabled={refreshing} onClick={() => onRefresh(item)}><RefreshCw size={13} />{refreshing ? "Consultando..." : "Consultar status"}</button>}{item.paymentDetails?.pixCode && <button type="button" className="com-secondary" onClick={copyCode}>Copiar Pix</button>}{item.paymentDetails?.ticketUrl && <a className="com-secondary" href={item.paymentDetails.ticketUrl} target="_blank" rel="noreferrer">Abrir boleto</a>}{item.status === "pending" && (localDemo || ["created", "action_required"].includes(item.paymentDetails?.status)) && <button type="button" className="com-secondary com-delete-action" onClick={() => onCancel(item)}>Cancelar cobrança</button>}{!paid && <small className="com-client-provider-note">O status é atualizado pelo provedor de pagamento.</small>}</div></article>;
+      }).format(Number(item.amount) || 0)}</strong><Badge tone={paid ? "green" : "amber"}>{labels[item.status] || item.status || "Sem status"}</Badge><div className="com-client-finance-row-actions">{(localDemo || item.mpOrderId) && <button type="button" className="com-secondary" disabled={refreshing || cancelling} onClick={() => onRefresh(item)}><RefreshCw size={13} />{refreshing ? "Consultando..." : "Consultar status"}</button>}{item.paymentDetails?.pixCode && <button type="button" className="com-secondary" disabled={refreshing || cancelling} onClick={copyCode}>Copiar Pix</button>}{item.paymentDetails?.ticketUrl && <a className="com-secondary" href={item.paymentDetails.ticketUrl} target="_blank" rel="noreferrer">Abrir boleto</a>}{item.status === "pending" && (localDemo || ["created", "action_required"].includes(item.paymentDetails?.status)) && <button type="button" className="com-secondary com-delete-action" disabled={refreshing || cancelling} onClick={() => onCancel(item)}>{cancelling ? "Cancelando..." : "Cancelar cobran\u00e7a"}</button>}{!paid && <small className="com-client-provider-note">O status é atualizado pelo provedor de pagamento.</small>}</div></article>;
 }
 function ClientProfileModal({
   client: initialClient,
@@ -1504,6 +1506,8 @@ function ClientProfileModal({
   const [financeDialog, setFinanceDialog] = useState(false);
   const [financeSaving, setFinanceSaving] = useState(false);
   const [billingRefreshingId, setBillingRefreshingId] = useState("");
+  const [billingCancelingId, setBillingCancelingId] = useState("");
+  const billingCancelLock = useRef(new Set());
   const [subscriptionActionId, setSubscriptionActionId] = useState("");
   const [deletingFinanceKeys, setDeletingFinanceKeys] = useState(() => new Set());
   const financeDeleteLocks = useRef(new Set());
@@ -1992,25 +1996,28 @@ function ClientProfileModal({
     }
   };
   const cancelClientBilling = async item => {
-    if (!window.confirm(`Cancelar a cobrança de ${new Intl.NumberFormat("pt-BR", {
+    const key = String(item?.id ?? "");
+    if (!key || billingCancelLock.current.has(key)) return;
+    if (!window.confirm("Cancelar a cobran\u00e7a de " + new Intl.NumberFormat("pt-BR", {
       style: "currency",
       currency: "BRL"
-    }).format(Number(item.amount) || 0)}? O cliente não poderá mais pagar este pedido.`)) return;
+    }).format(Number(item.amount) || 0) + "? O cliente n\u00e3o poder\u00e1 mais pagar este pedido.")) return;
+    billingCancelLock.current.add(key);
+    setBillingCancelingId(key);
     try {
-      const result = await apiRequest(`/api/billing/orders/${encodeURIComponent(item.id)}/cancel`, {
-        method: "POST"
-      });
+      const result = await apiRequest("/api/billing/orders/" + encodeURIComponent(item.id) + "/cancel", { method: "POST" });
+      const resolution = resolveClientBillingCancellation(result, related.billing || [], item.id);
+      if (resolution.error) throw new Error(resolution.error);
       setRelated(current => ({
         ...current,
-        billing: (current.billing || []).map(row => row.id === item.id ? {
-          ...row,
-          ...(result.data || {}),
-          status: result.data?.status || "cancelled"
-        } : row)
+        billing: resolution.rows
       }));
-      onAction(localDemo ? "Cobranca ficticia cancelada neste navegador." : "Cancelamento confirmado pelo Mercado Pago.");
+      onAction(localDemo ? "Cobran\u00e7a fict\u00edcia cancelada neste navegador." : "Cancelamento confirmado pelo Mercado Pago.");
     } catch (error) {
-      onAction(error.message || "Não foi possível confirmar o cancelamento da cobrança.");
+      onAction(error.message || "N\u00e3o foi poss\u00edvel confirmar o cancelamento da cobran\u00e7a.");
+    } finally {
+      billingCancelLock.current.delete(key);
+      setBillingCancelingId("");
     }
   };
   const refreshClientBilling = async item => {
@@ -2213,7 +2220,7 @@ function ClientProfileModal({
             }))} onAction={onAction} onOpenTab={openTab} />)}{["all", "contracts"].includes(financeFilter) && contracts.map((contract, index) => <ClientContractRecord key={contract.id ?? index} item={contract} onSaved={updated => setRelated(current => ({
               ...current,
               contracts: (current.contracts || []).map(row => row.id === updated.id ? updated : row)
-            }))} onAction={onAction} />)}{["all", "subscriptions"].includes(financeFilter) && subscriptions.map((subscription, index) => <ClientSubscriptionRecord key={subscription.id ?? index} item={subscription} busyId={subscriptionActionId} onToggle={changeClientSubscription} onCancel={item => changeClientSubscription(item, "canceled")} />)}{["all", "billing"].includes(financeFilter) && billing.map((bill, index) => <ClientBillingRecord key={bill.id ?? index} item={bill} onAction={onAction} onCancel={cancelClientBilling} onRefresh={refreshClientBilling} refreshing={billingRefreshingId === bill.id} localDemo={localDemo} />)}{["all", "revenues"].includes(financeFilter) && revenues.map((item, index) => <ClientFinancialRecord key={item.id ?? index} item={item} resource="revenues" onUpdate={patch => updateManualFinance("revenues", item, patch)} onDelete={() => deleteManualFinance("revenues", item)} deleting={deletingFinanceKeys.has(`revenues:${String(item.id ?? "")}`)} />)}{["all", "expenses"].includes(financeFilter) && expenses.map((item, index) => <ClientFinancialRecord key={item.id ?? index} item={item} resource="expenses" onUpdate={patch => updateManualFinance("expenses", item, patch)} onDelete={() => deleteManualFinance("expenses", item)} deleting={deletingFinanceKeys.has(`expenses:${String(item.id ?? "")}`)} />)}{!relatedLoading && !financeFilterCounts[financeFilter] && !financeFailedResources.length && <EmptyState noun="registros financeiros" onClear={() => setFinanceFilter("all")} />}{relatedLoading && financeFilterCounts[financeFilter] === 0 && <p role="status">Conferindo os registros financeiros...</p>}</section>}{tab === "Comunicação" && <section className="com-client-info"><div className="com-client-section-heading"><div><h3>Comunicação</h3><p>Conversas e aprovações relacionadas.</p></div><button className="com-primary" onClick={() => openTab("Caixa de entrada", {
+            }))} onAction={onAction} />)}{["all", "subscriptions"].includes(financeFilter) && subscriptions.map((subscription, index) => <ClientSubscriptionRecord key={subscription.id ?? index} item={subscription} busyId={subscriptionActionId} onToggle={changeClientSubscription} onCancel={item => changeClientSubscription(item, "canceled")} />)}{["all", "billing"].includes(financeFilter) && billing.map((bill, index) => <ClientBillingRecord key={bill.id ?? index} item={bill} onAction={onAction} onCancel={cancelClientBilling} onRefresh={refreshClientBilling} refreshing={String(billingRefreshingId) === String(bill.id)} cancelling={String(billingCancelingId) === String(bill.id)} localDemo={localDemo} />)}{["all", "revenues"].includes(financeFilter) && revenues.map((item, index) => <ClientFinancialRecord key={item.id ?? index} item={item} resource="revenues" onUpdate={patch => updateManualFinance("revenues", item, patch)} onDelete={() => deleteManualFinance("revenues", item)} deleting={deletingFinanceKeys.has(`revenues:${String(item.id ?? "")}`)} />)}{["all", "expenses"].includes(financeFilter) && expenses.map((item, index) => <ClientFinancialRecord key={item.id ?? index} item={item} resource="expenses" onUpdate={patch => updateManualFinance("expenses", item, patch)} onDelete={() => deleteManualFinance("expenses", item)} deleting={deletingFinanceKeys.has(`expenses:${String(item.id ?? "")}`)} />)}{!relatedLoading && !financeFilterCounts[financeFilter] && !financeFailedResources.length && <EmptyState noun="registros financeiros" onClear={() => setFinanceFilter("all")} />}{relatedLoading && financeFilterCounts[financeFilter] === 0 && <p role="status">Conferindo os registros financeiros...</p>}</section>}{tab === "Comunicação" && <section className="com-client-info"><div className="com-client-section-heading"><div><h3>Comunicação</h3><p>Conversas e aprovações relacionadas.</p></div><button className="com-primary" onClick={() => openTab("Caixa de entrada", {
                 clientId: client.id,
                 clientName: client.name,
                 clientEmail: client.email,

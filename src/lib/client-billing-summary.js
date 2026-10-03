@@ -33,7 +33,12 @@ export function clientMonthlyRevenue(client) {
   if (Array.isArray(client?.serviceCharges)) {
     return client.serviceCharges.reduce((total, charge) => total + recurringMonthlyAmount(charge), 0);
   }
-  if (Number.isFinite(Number(client?.plannedRevenueMonthly))) return Number(client.plannedRevenueMonthly);
+  if (client?.plannedRevenueMonthly != null && client.plannedRevenueMonthly !== '' && Number.isFinite(Number(client.plannedRevenueMonthly))) {
+    return Number(client.plannedRevenueMonthly);
+  }
+  // A converted lead's value is a one-time opportunity estimate, not verified
+  // recurring revenue. Keep it on the lead/client record without counting it as MRR.
+  if (client?.leadId) return 0;
   return parseDisplayAmount(client?.value);
 }
 
@@ -42,6 +47,11 @@ export function clientMonthlyRevenueLabel(client) {
     const amount = clientMonthlyRevenue(client);
     return amount > 0 ? `${brl.format(amount)} / mês` : 'Sem recorrência';
   }
+  if (client?.plannedRevenueMonthly != null && client.plannedRevenueMonthly !== '' && Number.isFinite(Number(client.plannedRevenueMonthly))) {
+    const amount = Number(client.plannedRevenueMonthly);
+    return amount > 0 ? `${brl.format(amount)} / mês` : 'Sem recorrência';
+  }
+  if (client?.leadId) return 'Sem recorrência';
   const amount = clientMonthlyRevenue(client);
   return amount > 0 ? `${brl.format(amount)} / mês` : client?.value || 'A definir';
 }

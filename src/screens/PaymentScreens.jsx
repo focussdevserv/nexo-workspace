@@ -16,6 +16,7 @@ import { canCancelPaymentOrder, canCancelSubscription, normalizePaymentStatus } 
 import { copyPaymentText } from '../lib/copy-payment-text.js';
 import { createBillingRequestUuid, reuseBillingRequestKey } from '../lib/billing-request-idempotency.js';
 import { paymentCancellationError } from '../lib/payment-cancellation.js';
+import { paymentFrequencyLabel } from '../lib/payment-frequency.js';
 
 const money = (value) => Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const labels = { pending: 'Aguardando pagamento', creating: 'Criando', processing: 'Em processamento', paid: 'Paga', authorized: 'Autorizada', paused: 'Pausada', canceled: 'Cancelada', cancelled: 'Cancelada', overdue: 'Vencida', failed: 'Falhou', refunded: 'Estornada', rejected: 'Recusada', expired: 'Expirada' };
@@ -267,8 +268,9 @@ export function PaymentConsole({ kind = 'orders', notify = () => {}, navigationC
     <div className="pay-record-list">
       {filtered.map((item) => <article className="pay-record" key={item.id}>
         <div className="pay-record-icon">{subscriptionMode ? <RefreshCw size={18} /> : <CreditCard size={18} />}</div>
-        <div className="pay-record-main"><b>{item.clientName}</b><small>{item.description} · {item.payerEmail}</small><small>{subscriptionMode ? item.frequencyInterval + ' ' + (item.frequency === 'months' ? 'mês(es)' : 'dia(s)') : item.method + ' · ' + (demoMode ? 'Registro demonstrativo' : item.mpOrderId || 'Pedido em processamento')}</small>
+        <div className="pay-record-main"><b>{item.clientName}</b><small>{item.description} · {item.payerEmail}</small><small>{subscriptionMode ? paymentFrequencyLabel(item.frequency, item.frequencyInterval) : item.method + ' · ' + (demoMode ? 'Registro demonstrativo' : item.mpOrderId || 'Pedido em processamento')}</small>
           {subscriptionMode && (item.nextPaymentAt || item.startAt) && <small>Próxima cobrança · {formatPaymentDate(item.nextPaymentAt || item.startAt)}</small>}
+          {subscriptionMode && item.endAt && <small>Recorrência até · {formatPaymentDate(item.endAt)}</small>}
           {!subscriptionMode && (item.dueAt || item.dueDate) && <small>Vencimento · {formatPaymentDate(item.dueAt || item.dueDate)}</small>}
         </div><strong>{money(item.amount)}</strong><span className={'pay-status status-' + normalizePaymentStatus(item.status)}>{labels[normalizePaymentStatus(item.status)] || item.status}</span>
         {subscriptionMode ? <div className="pay-record-actions">

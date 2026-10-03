@@ -26,6 +26,22 @@ test('exports workspace content while excluding integration secrets and unsafe r
   assert.equal(JSON.stringify(backup).includes('never-export'), false);
 });
 
+test('preserves recurring billing start and end dates in subscription backups', () => {
+  const startAt = '2026-10-10T12:00:00.000Z';
+  const endAt = '2027-10-10T02:59:59.000Z';
+  const backup = buildWorkspaceBackup({
+    organizationId, records: [], clients: [], billingOrders: [], billingSubscriptions: [{
+      id: '00000000-0000-4000-8000-000000000008', clientId: null, workspaceClientId: null, clientName: 'Cliente', payerEmail: 'cliente@example.com',
+      description: 'Mensalidade', amount: 100, frequency: 'months', frequencyInterval: 1, status: 'pending', mpSubscriptionId: 'mp-sub',
+      mercadoPagoAccountId: null, checkoutUrl: 'https://example.com/authorize', startAt: new Date(startAt), endAt: new Date(endAt),
+      nextPaymentAt: new Date(startAt), createdAt: now, updatedAt: now,
+    }],
+  });
+  assert.equal(backup.billingSubscriptions[0]?.startAt, startAt);
+  assert.equal(backup.billingSubscriptions[0]?.endAt, endAt);
+  assert.deepEqual(parseWorkspaceBackup(backup, organizationId).billingSubscriptions[0], backup.billingSubscriptions[0]);
+});
+
 test('imports only version 1 backups created for the current organization', () => {
   const backup = buildWorkspaceBackup({ organizationId, records: [], clients: [], billingOrders: [], billingSubscriptions: [] });
   assert.equal(parseWorkspaceBackup(backup, organizationId).version, 1);

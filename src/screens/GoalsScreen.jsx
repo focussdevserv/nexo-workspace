@@ -4,6 +4,7 @@ import { confirmWorkspaceDelete, useWorkspacePreferences } from '../lib/workspac
 import { calculateGoalMetric, goalMetricDefinitions } from '../lib/goal-metrics.js';
 import { guardGoalsNavigation } from '../lib/goals-navigation.js';
 import { createLatestRequestGuard } from '../lib/latest-request.js';
+import { goalSourceErrorState } from '../lib/goal-source-error.js';
 import { Activity, ArrowDown, ArrowUp, Check, CircleDollarSign, Clock3, Flag, Pencil, Plus, Target, Trash2, TrendingUp, Users, X } from 'lucide-react';
 import './goals.css';
 
@@ -67,7 +68,7 @@ export default function GoalsScreen({ notify }) {
     setMetricStates(Object.fromEntries(Object.keys(sourcePaths).map((key) => [key, 'loading'])));
     const entries = await Promise.all(Object.entries(sourcePaths).map(async ([key, path]) => {
       try { return [key, await fetchAllRecords(path), 'ready']; }
-      catch (err) { return [key, [], /403|forbidden|permiss|acesso/i.test(err?.message || '') ? 'restricted' : 'failed']; }
+      catch (err) { return [key, [], goalSourceErrorState(err)]; }
     }));
     if (!metricsRequestGuard.current.isCurrent(requestId)) return;
     setMetricData(Object.fromEntries(entries.map(([key, data]) => [key, data])));

@@ -490,3 +490,13 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 
 - Validacao posterior da equipe (2026-10-01): apliquei migracoes 0000-0007 em um PostgreSQL isolado temporario e executei login do owner, convite, ativacao de uso unico, endpoints permitidos e negados, bloqueio de replay e suspensao com revogacao imediata de sessao/login. Todos passaram. O cluster foi parado; a revisao automatica bloqueou a remocao recursiva do diretorio temporario, que permaneceu fora do repositorio.
 - Validacao final local: lint/build do frontend, build da API, 89 testes da API, dois testes de fluxo de caixa e validacao visual da ativacao em viewport 390 px passaram. O E2E isolado nao substitui a aplicacao das migracoes no banco de producao nem a autorizacao das integracoes.
+
+## Revalidação completa da versão local — 03/10/2026
+
+- Estado geral: a revisão do Meu Dia, navegação de evento Agenda/Google, segurança de cancelamento de cobrança em ficha do cliente, conversão CRM/receita recorrente, idempotência de lançamentos financeiros, persistência de datas de assinatura recorrente, validações de configurações e estados de erro foi integrada para validação.
+- Testes: `npm run test` passou com 523 testes frontend e 218 testes API; `npm run lint`, `npm run build`, `npm run api:build` e `git diff --check` passaram.
+- Navegador: a revisão anterior percorreu as 37 rotas principais do menu sem erro de tela nem overflow horizontal; os checks mobile cobriram seis telas críticas. Nesta rodada, o formulário de cobrança recorrente foi conferido em 390×844. O rodapé inicialmente cobria parte dos campos; corrigido para manter título e ações fora da área rolável, deixando somente os campos com rolagem. A tela não apresenta overflow horizontal.
+- Banco/migração: a migration `0012_billing_subscription_schedule` está no journal e o runner de produção aplica migrations na inicialização, salvo `RUN_MIGRATIONS=false`. Build TypeScript passou. A migration ainda não foi executada nesta base de produção.
+- Integridade dos dados: as verificações de interface foram feitas em modo de demonstração local; nenhum cliente, cobrança, assinatura, mensagem, e-mail, evento ou fluxo externo real foi criado ou enviado.
+- Limites desta validação: builds e testes não substituem teste operacional das contas externas. Pareamento/escopos de Google e WhatsApp, tokens Clicksign/GitHub/Sentry e criação de cobranças reais seguem condicionados às configurações já registradas na seção de integrações acima.
+- Publicação: esta revisão ainda precisa ser enviada e o deploy confirmado pelo manifesto de build e health check após a execução da migration.

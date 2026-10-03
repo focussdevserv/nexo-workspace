@@ -145,6 +145,8 @@ export const billingSubscriptions = pgTable('billing_subscriptions', {
   mpSubscriptionId: text('mp_subscription_id'),
   mercadoPagoAccountId: text('mercado_pago_account_id'),
   checkoutUrl: text('checkout_url'),
+  startAt: timestamp('start_at', { withTimezone: true }),
+  endAt: timestamp('end_at', { withTimezone: true }),
   nextPaymentAt: timestamp('next_payment_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),

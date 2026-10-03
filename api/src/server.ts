@@ -50,6 +50,7 @@ import { googleCalendarTestDisposition } from './integrations/google-health.js';
 import { sameMercadoPagoPaymentSnapshot } from './integrations/mercadopago.js';
 import { matchesMercadoPagoExternalReference, mercadoPagoAccountMatchesRecord, mercadoPagoWebhookResource } from './integrations/mercadopago-webhook.js';
 import { calculateFinanceTransferBalances } from './integrations/finance-transfers.js';
+import { financeAccountMovementReplayMatches } from './integrations/finance-account-idempotency.js';
 import { financeTransferReplayMatches } from './integrations/finance-transfer-idempotency.js';
 import { calculateAccountMovementBalance, canUpdateFinanceAccountBalance, isCurrencyAmount, isCurrencyBalance, reverseAccountMovementBalance } from './integrations/account-ledger.js';
 import { paymentDueDateAtEndOfDay, paymentDueDateDuration } from './billing/due-date.js';
@@ -2756,6 +2757,7 @@ app.post('/api/billing/subscriptions', { preHandler: app.authenticate, config: {
       mercadoPagoAccountId: sellerTokens?.accountId ?? null,
       clientName: body.clientName, payerEmail: body.payerEmail, description: body.description,
       amount: body.amount, frequency: body.frequency, frequencyInterval: body.frequencyInterval,
+      startAt: body.startAt ? new Date(body.startAt) : null, endAt: body.endAt ? new Date(body.endAt) : null,
       requestIdempotencyKey: requestKey, requestHash, status: 'creating',
     }).returning();
     return { decision: 'new' as const, subscription: created! };
@@ -2980,7 +2982,7 @@ app.post('/api/workspace/backup/restore', { preHandler: app.authenticate, bodyLi
       }
       for (const row of backup.billingSubscriptions) {
         const [existing] = await tx.select({ id: billingSubscriptions.id }).from(billingSubscriptions).where(and(eq(billingSubscriptions.id, row.id), eq(billingSubscriptions.organizationId, request.user.organizationId))).limit(1);
-        const values = { clientId: row.clientId, workspaceClientId: row.workspaceClientId, clientName: row.clientName, payerEmail: row.payerEmail, description: row.description, amount: row.amount, frequency: row.frequency, frequencyInterval: row.frequencyInterval, status: row.status, mpSubscriptionId: row.mpSubscriptionId, mercadoPagoAccountId: row.mercadoPagoAccountId ?? null, checkoutUrl: row.checkoutUrl, nextPaymentAt: row.nextPaymentAt ? new Date(row.nextPaymentAt) : null, updatedAt: new Date(row.updatedAt) };
+        const values = { clientId: row.clientId, workspaceClientId: row.workspaceClientId, clientName: row.clientName, payerEmail: row.payerEmail, description: row.description, amount: row.amount, frequency: row.frequency, frequencyInterval: row.frequencyInterval, status: row.status, mpSubscriptionId: row.mpSubscriptionId, mercadoPagoAccountId: row.mercadoPagoAccountId ?? null, checkoutUrl: row.checkoutUrl, startAt: row.startAt ? new Date(row.startAt) : null, endAt: row.endAt ? new Date(row.endAt) : null, nextPaymentAt: row.nextPaymentAt ? new Date(row.nextPaymentAt) : null, updatedAt: new Date(row.updatedAt) };
         if (existing) { await tx.update(billingSubscriptions).set(values).where(and(eq(billingSubscriptions.id, row.id), eq(billingSubscriptions.organizationId, request.user.organizationId))); counts.subscriptionsUpdated += 1; }
         else { await tx.insert(billingSubscriptions).values({ id: row.id, organizationId: request.user.organizationId, createdBy: request.user.sub, ...values, createdAt: new Date(row.createdAt) }); counts.subscriptionsCreated += 1; }
       }
@@ -3333,6 +3335,7 @@ app.post('/api/integrations/clicksign/contracts/:id/sync', { preHandler: app.aut
 app.post('/api/workspace/finance-accounts/:id/transactions', { preHandler: app.authenticate }, async (request, reply) => {
   const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
   const body = z.object({
+    idempotencyKey: z.string().uuid().optional(),
     description: z.string().trim().min(1).max(240),
     direction: z.enum(['Entrada', 'Saída']),
     amount: z.number().finite().positive().max(1_000_000_000_000).refine(isCurrencyAmount, 'Amount must use at most two decimal places.'),
@@ -3343,8 +3346,20 @@ app.post('/api/workspace/finance-accounts/:id/transactions', { preHandler: app.a
     }),
   }).safeParse(request.body);
   if (!params.success || !body.success) return reply.code(400).send({ error: 'validation_error', message: 'Invalid account movement.' });
+  const idempotencyKey = body.data.idempotencyKey || randomUUID();
   let invalidAccountBalance = false;
   const result = await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${request.user.organizationId}:finance-account-movement:${idempotencyKey}`}, 0))`);
+    const previousRows = await tx.select().from(workspaceRecords).where(and(
+      eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'finance-transactions'),
+      isNull(workspaceRecords.archivedAt), sql`${workspaceRecords.data}->>'movementId' = ${idempotencyKey}`,
+    )).limit(2);
+    if (previousRows.length) {
+      const previous = previousRows[0];
+      if (!previous) return { conflict: true as const };
+      const replayMatches = financeAccountMovementReplayMatches(previousRows, { ...body.data, accountId: params.data.id, description: body.data.description.trim() });
+      return replayMatches ? { transaction: previous, replayed: true as const } : { conflict: true as const };
+    }
     const [account] = await tx.select().from(workspaceRecords).where(and(
       eq(workspaceRecords.id, params.data.id), eq(workspaceRecords.organizationId, request.user.organizationId),
       eq(workspaceRecords.resource, 'finance-accounts'), isNull(workspaceRecords.archivedAt),
@@ -3360,17 +3375,19 @@ app.post('/api/workspace/finance-accounts/:id/transactions', { preHandler: app.a
     if (!updatedAccount) return undefined;
     const [created] = await tx.insert(workspaceRecords).values({
       organizationId: request.user.organizationId, createdBy: request.user.sub, resource: 'finance-transactions',
-      data: { ...body.data, accountId: account.id, accountName: String(accountData.name ?? ''), status: 'Registrada' },
+      data: { description: body.data.description.trim(), direction: body.data.direction, amount: body.data.amount, date: body.data.date, movementId: idempotencyKey, accountId: account.id, accountName: String(accountData.name ?? ''), status: 'Registrada' },
     }).returning();
+    if (!created) throw new Error('finance_account_movement_not_created');
     await tx.insert(activityEvents).values([
       { organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'finance-accounts', entityId: account.id, action: 'balance_adjusted', payload: { direction: body.data.direction, amount: body.data.amount } },
       { organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'finance-transactions', entityId: created!.id, action: 'created', payload: { accountId: account.id, direction: body.data.direction, amount: body.data.amount } },
     ]);
-    return { account: updatedAccount, transaction: created };
+    return { account: updatedAccount, transaction: created, replayed: false as const };
   });
   if (invalidAccountBalance) return reply.code(409).send({ error: 'finance_account_balance_invalid', message: 'The account balance must use at most two decimal places before new movements can be recorded.' });
+  if (result && 'conflict' in result) return reply.code(409).send({ error: 'finance_account_movement_idempotency_conflict', message: 'Esta chave já registra outra movimentação. Confira o extrato antes de tentar uma nova operação.' });
   if (!result) return reply.code(404).send({ error: 'not_found', message: 'Finance account not found.' });
-  return reply.code(201).send({ data: { ...result.transaction!.data, id: result.transaction!.id, createdAt: result.transaction!.createdAt, updatedAt: result.transaction!.updatedAt }, account: { ...result.account!.data, id: result.account!.id, updatedAt: result.account!.updatedAt } });
+  return reply.code(result.replayed ? 200 : 201).send({ data: { ...result.transaction.data, id: result.transaction.id, createdAt: result.transaction.createdAt, updatedAt: result.transaction.updatedAt }, ...(result.replayed ? { replayed: true } : { account: { ...result.account!.data, id: result.account!.id, updatedAt: result.account!.updatedAt } }) });
 });
 
 app.post('/api/workspace/finance-transfers', { preHandler: app.authenticate, config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request, reply) => {

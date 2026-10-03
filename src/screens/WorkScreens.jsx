@@ -39,6 +39,7 @@ import { nextAgendaEventTime, upcomingAgendaEvents } from '../lib/agenda-upcomin
 import { googleCalendarErrorAction } from '../lib/google-calendar-error.js';
 import { matchesWorkSearch } from '../lib/work-search.js';
 import { recoverWorkspaceRecordsAfterFailure } from '../lib/workspace-mutation-recovery.js';
+import { recoverApprovalShareAfterSaveFailure } from '../lib/approval-save-recovery.js';
 import { withoutTaskAttachment } from '../lib/task-attachment.js';
 import { countActiveWorkProjects } from '../lib/work-project-activity.js';
 import { resolveCreatedWorkspaceRecord } from '../lib/workspace-created-record.js';
@@ -46,6 +47,7 @@ import { buildTaskRecord } from '../lib/task-create.js';
 import { projectTemplateChoices, buildProjectTemplateTasks } from '../lib/project-templates.js';
 import { buildAgendaRecurrenceSeries } from '../lib/agenda-recurrence.js';
 import { shouldOpenFileDetailsByDefault } from '../lib/file-primary-action.js';
+import { createAsyncActionLock } from '../lib/async-action-lock.js';
 
 function projectIsCompleted(project) {
   const status = String(project?.status || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
@@ -308,7 +310,7 @@ function WorkScreen({ page, navigationContext = null, onNavigationContextConsume
   const [driveBrowserError, setDriveBrowserError] = useState(null);
   const [linkingDriveFileId, setLinkingDriveFileId] = useState('');
   const [selectedDate, setSelectedDate] = useState(() => {
-    const value = new URLSearchParams(window.location.search).get('agendaDate') || '';
+    const value = navigationContext?.eventDate || new URLSearchParams(window.location.search).get('agendaDate') || '';
     const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
     if (!match) return calendarDateInTimeZone(new Date(), preferences.timezone);
     const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
@@ -355,11 +357,19 @@ function WorkScreen({ page, navigationContext = null, onNavigationContextConsume
     onNavigationContextConsumed();
   }, [key, navigationContext?.taskId, tasks, tasksLoaded, onNavigationContextConsumed]);
   useEffect(() => {
-    if (key !== 'agenda' || !navigationContext?.eventId || !eventsLoaded) return;
-    const resolution = resolveAgendaNavigationEvent(events, navigationContext.eventId, eventsLoaded);
+    const eventId = navigationContext?.eventId;
+    const googleEventId = navigationContext?.googleEventId;
+    if (key !== 'agenda' || (!eventId && !googleEventId) || !eventsLoaded) return;
+    const linkedGoogleEvent = googleEventId && events.some((item) => String(item.googleEventId || '') === String(googleEventId));
+    if (googleEventId && !linkedGoogleEvent && (calendarSyncBusy || (!calendarSyncedAt && !calendarSyncError))) return;
+    const resolution = resolveAgendaNavigationEvent(events, eventId, eventsLoaded, {
+      googleEventId,
+      googleEvents: googleCalendarEvents,
+      googleEventsLoaded: Boolean(calendarSyncedAt || calendarSyncError),
+    });
     if (resolution.event) setSelectedEvent(resolution.event);
     onNavigationContextConsumed();
-  }, [key, navigationContext?.eventId, events, eventsLoaded, onNavigationContextConsumed]);
+  }, [key, navigationContext?.eventId, navigationContext?.googleEventId, events, eventsLoaded, googleCalendarEvents, calendarSyncBusy, calendarSyncedAt, calendarSyncError, onNavigationContextConsumed]);
   useEffect(() => {
     const action = navigationContext?.quickCreate;
     const target = { project: 'projetos', task: 'tarefas', event: 'agenda' }[action];
@@ -701,9 +711,16 @@ function WorkScreen({ page, navigationContext = null, onNavigationContextConsume
         const shared = await apiRequest(`/api/integrations/google/drive/${encodeURIComponent(file.driveFileId)}/share-for-portal`, { method: 'POST', body: JSON.stringify({ confirmPublicAccess: true, clientId: client.id, ...(draft.projectId ? { projectId: draft.projectId } : {}) }) });
         const record = { id, title: draft.title.trim(), project: draft.project.trim() || 'Sem projeto', projectId: draft.projectId || '', client: String(client.name || client.title || 'Cliente'), clientId: client.id, kind: approvalFileKind(file), sent: new Date().toISOString(), reviewer: String(client.contactName || client.name || 'Cliente'), initials: String(client.name || client.title || 'C').split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase(), status: 'Aguardando', attachment: { name: file.name, url: shared.data.url, mimeType: file.mimeType || '', driveFileId: file.driveFileId, permissionId: shared.data.permissionId || null, publicAccess: true } };
         const saved = await setApprovals((items) => [record, ...items]);
-        if (!saved.ok && shared.data.created && shared.data.permissionId) await apiRequest(`/api/integrations/google/drive/${encodeURIComponent(file.driveFileId)}/share-for-portal`, { method: 'DELETE', body: JSON.stringify({ permissionId: shared.data.permissionId }) }).catch(() => {});
-        if (!saved.ok) { notify(`O arquivo foi compartilhado, mas a aprovação não foi salva: ${saved.error?.message || 'erro na API.'}`); return; }
-        notify('Aprovação vinculada ao cliente e ao arquivo; o material pode ser revogado no Google Drive.');
+        const recovery = await recoverApprovalShareAfterSaveFailure({ saved, approval: record, shared: shared.data }, (permissionId) => apiRequest(`/api/integrations/google/drive/${encodeURIComponent(file.driveFileId)}/share-for-portal`, { method: 'DELETE', body: JSON.stringify({ permissionId }) }));
+        if (!recovery.approvalSaved) {
+          const detail = saved.error?.message || 'erro na API.';
+          if (recovery.saveOutcomeUnknown) notify(`Não foi possível confirmar se a aprovação foi salva (${detail}). Atualize as aprovações antes de alterar o acesso público; se o registro não aparecer, remova “qualquer pessoa com o link” no Google Drive.`);
+          else if (recovery.accessMayRemain) notify(`A aprovação não foi salva (${detail}). O arquivo ainda pode estar público; remova o acesso “qualquer pessoa com o link” nas permissões do Google Drive.`);
+          else if (recovery.accessRevoked) notify(`A aprovação não foi salva (${detail}). O acesso público criado nesta tentativa foi revogado.`);
+          else notify(`Não foi possível salvar a aprovação: ${detail}`);
+          return;
+        }
+        notify(saved.ok ? 'Aprovação vinculada ao cliente e ao arquivo; o material pode ser revogado no Google Drive.' : 'Aprovação salva e confirmada no workspace após uma falha temporária de conexão.');
       } catch (error) { notify(error.message || 'Não foi possível compartilhar o arquivo para o portal.'); return; }
     }
     else { const saved = await setFiles((items) => [{ id, name: draft.title.trim(), project: draft.project || 'Sem projeto', client: draft.client || 'Sem cliente', date: 'Agora', size: '—', type: 'pdf', folder: false, localOnly: localDemo }, ...items]); if (!saved.ok) { notify(`Não foi possível registrar o arquivo: ${saved.error?.message || 'erro na API.'}`); return; } notify('Registro de arquivo salvo.'); }
@@ -1091,10 +1108,30 @@ function ProjectDetail({ project, canArchive = true, clients, tasks, onClose, on
   const [title, setTitle] = useState('');
   const [comment, setComment] = useState('');
   const [saving, setSaving] = useState(false);
+  const [addingTask, setAddingTask] = useState(false);
+  const addTaskLock = useRef(null);
+  if (!addTaskLock.current) addTaskLock.current = createAsyncActionLock();
   const [details, setDetails] = useState(() => ({ status: project.status || 'A fazer', due: project.due || '', team: (project.team || []).filter(Boolean).join(', '), progress: Number(project.progress) || 0 }));
   useEffect(() => { setDetails({ status: project.status || 'A fazer', due: project.due || '', team: (project.team || []).filter(Boolean).join(', '), progress: Number(project.progress) || 0 }); }, [project.id]);
   const comments = project.comments || [];
-  const addTask = async (event) => { event.preventDefault(); if (!title.trim()) return; const client = findProjectClient(project, clients); const result = await onAddTask({ id: Date.now(), title: title.trim(), project: project.name, projectId: project.id, client: client?.name || client?.title || project.client, clientId: client?.id || project.clientId || '', due: project.due || 'A definir', assignee: (project.team || []).filter(Boolean)[0] || '', status: 'A fazer', priority: 'Normal' }); if (result?.ok === false) { onAction(result.error?.message || 'N\u00e3o foi poss\u00edvel adicionar a tarefa.'); return; } setTitle(''); onAction('Tarefa adicionada ao projeto.'); };
+  const addTask = async (event) => {
+    event.preventDefault();
+    if (!title.trim() || addTaskLock.current.locked) return;
+    setAddingTask(true);
+    try {
+      const client = findProjectClient(project, clients);
+      const result = await addTaskLock.current.run(() => onAddTask({
+        id: globalThis.crypto?.randomUUID?.() || `project-task-${Date.now()}`,
+        title: title.trim(), project: project.name, projectId: project.id,
+        client: client?.name || client?.title || project.client,
+        clientId: client?.id || project.clientId || '', due: project.due || 'A definir',
+        assignee: (project.team || []).filter(Boolean)[0] || '', status: 'A fazer', priority: 'Normal',
+      }));
+      if (result?.ok === false) { onAction(result.error?.message || 'Falha ao adicionar a tarefa.'); return; }
+      setTitle('');
+      onAction('Tarefa adicionada ao projeto.');
+    } finally { setAddingTask(false); }
+  };
   const addComment = async (event) => { event.preventDefault(); if (!comment.trim()) return; const result = await onUpdate({ comments: [{ id: Date.now(), text: comment.trim(), at: new Date().toISOString() }, ...comments] }); if (result === false) return; setComment(''); onAction('Coment\u00e1rio salvo no projeto.'); };
   const saveDetails = async () => {
     if (details.status === 'Arquivado' && project.status !== 'Arquivado' && !canArchive) { onAction('Somente um administrador pode arquivar projetos.'); return; }
@@ -1116,7 +1153,7 @@ function ProjectDetail({ project, canArchive = true, clients, tasks, onClose, on
       if (result !== false) { onAction('Projeto arquivado. Você pode encontrá-lo pelo filtro Arquivado e reabri-lo depois.'); onClose(); }
     } finally { setSaving(false); }
   };
-  return <div className="work-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="work-compose-modal project-detail-modal" role="dialog" aria-modal="true" aria-label={`Projeto ${project.name}`}><header><div><span className="eyebrow">PROJETO · {project.client}</span><h2>{project.name}</h2></div><button type="button" aria-label="Fechar" onClick={onClose}><X size={18}/></button></header><div className="project-detail-fields"><label>Etapa<select value={details.status} onChange={(event) => setDetails((current) => ({ ...current, status: event.target.value }))}>{['A fazer', 'Em andamento', 'Aguardando cliente', 'Conclu\u00eddo', 'Arquivado'].map((status) => <option key={status} disabled={!canArchive && status === 'Arquivado'}>{status}</option>)}</select></label><label>Prazo<input value={details.due} onChange={(event) => setDetails((current) => ({ ...current, due: event.target.value }))} placeholder="Ex.: 15 out" /></label><label>Respons&#225;veis<input value={details.team} onChange={(event) => setDetails((current) => ({ ...current, team: event.target.value }))} placeholder="Separe os nomes por v&#237;rgula" /></label><label>Progresso &#183; {details.progress}%<input type="range" min="0" max="100" value={details.progress} onChange={(event) => setDetails((current) => ({ ...current, progress: Number(event.target.value) }))} /></label></div><section className="project-detail-section"><div className="project-detail-heading"><div><h3>Tarefas do projeto</h3><p>{tasks.filter((task) => task.status === 'Concluída').length} de {tasks.length} concluídas</p></div></div><form className="project-detail-add-task" onSubmit={addTask}><input required value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Adicionar tarefa ao projeto"/><button className="work-button work-button-primary"><Plus size={14}/>Adicionar</button></form><div className="project-detail-task-list">{tasks.map((task) => <button type="button" key={task.id} className={task.status === 'Concluída' ? 'done' : ''} onClick={() => onTaskToggle(task.id)}><span>{task.status === 'Concluída' ? <CheckCircle2 size={16}/> : <Circle size={16}/>}</span><b>{task.title}</b><small>{task.due || 'Sem prazo'} · {task.assignee || 'Sem responsável'}</small></button>)}{!tasks.length && <p>Este projeto ainda não possui tarefas vinculadas.</p>}</div></section><section className="project-detail-section"><div className="project-detail-heading"><div><h3>Comentários e decisões</h3><p>Notas internas salvas com este projeto.</p></div></div><form className="project-detail-add-task" onSubmit={addComment}><input value={comment} onChange={(event) => setComment(event.target.value)} placeholder="Registrar uma atualização"/><button className="work-button work-button-quiet"><Send size={14}/>Comentar</button></form>{comments.map((item) => <article className="project-detail-comment" key={item.id}><b>{item.text}</b><small>{new Date(item.at).toLocaleString('pt-BR')}</small></article>)}</section><footer><span>{saving ? 'Salvando detalhes...' : 'Revise os campos e salve as altera\u00e7\u00f5es.'}</span>{canArchive && details.status !== 'Arquivado' && <button type="button" className="work-button work-button-quiet" disabled={saving} onClick={archiveProject}>Arquivar projeto</button>}<button type="button" className="work-button work-button-quiet" onClick={onClose}>Fechar</button><button type="button" className="work-button work-button-primary" disabled={saving} onClick={saveDetails}><Check size={14} />Salvar altera&#231;&#245;es</button></footer></section></div>;
+  return <div className="work-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="work-compose-modal project-detail-modal" role="dialog" aria-modal="true" aria-label={`Projeto ${project.name}`}><header><div><span className="eyebrow">PROJETO · {project.client}</span><h2>{project.name}</h2></div><button type="button" aria-label="Fechar" onClick={onClose}><X size={18}/></button></header><div className="project-detail-fields"><label>Etapa<select value={details.status} onChange={(event) => setDetails((current) => ({ ...current, status: event.target.value }))}>{['A fazer', 'Em andamento', 'Aguardando cliente', 'Conclu\u00eddo', 'Arquivado'].map((status) => <option key={status} disabled={!canArchive && status === 'Arquivado'}>{status}</option>)}</select></label><label>Prazo<input value={details.due} onChange={(event) => setDetails((current) => ({ ...current, due: event.target.value }))} placeholder="Ex.: 15 out" /></label><label>Respons&#225;veis<input value={details.team} onChange={(event) => setDetails((current) => ({ ...current, team: event.target.value }))} placeholder="Separe os nomes por v&#237;rgula" /></label><label>Progresso &#183; {details.progress}%<input type="range" min="0" max="100" value={details.progress} onChange={(event) => setDetails((current) => ({ ...current, progress: Number(event.target.value) }))} /></label></div><section className="project-detail-section"><div className="project-detail-heading"><div><h3>Tarefas do projeto</h3><p>{tasks.filter((task) => task.status === 'Concluída').length} de {tasks.length} concluídas</p></div></div><form className="project-detail-add-task" onSubmit={addTask}><input required value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Adicionar tarefa ao projeto"/><button type="submit" className="work-button work-button-primary" disabled={addingTask}>{addingTask ? 'Adicionando…' : <><Plus size={14}/>Adicionar</>}</button></form><div className="project-detail-task-list">{tasks.map((task) => <button type="button" key={task.id} className={task.status === 'Concluída' ? 'done' : ''} onClick={() => onTaskToggle(task.id)}><span>{task.status === 'Concluída' ? <CheckCircle2 size={16}/> : <Circle size={16}/>}</span><b>{task.title}</b><small>{task.due || 'Sem prazo'} · {task.assignee || 'Sem responsável'}</small></button>)}{!tasks.length && <p>Este projeto ainda não possui tarefas vinculadas.</p>}</div></section><section className="project-detail-section"><div className="project-detail-heading"><div><h3>Comentários e decisões</h3><p>Notas internas salvas com este projeto.</p></div></div><form className="project-detail-add-task" onSubmit={addComment}><input value={comment} onChange={(event) => setComment(event.target.value)} placeholder="Registrar uma atualização"/><button className="work-button work-button-quiet"><Send size={14}/>Comentar</button></form>{comments.map((item) => <article className="project-detail-comment" key={item.id}><b>{item.text}</b><small>{new Date(item.at).toLocaleString('pt-BR')}</small></article>)}</section><footer><span>{saving ? 'Salvando detalhes...' : 'Revise os campos e salve as altera\u00e7\u00f5es.'}</span>{canArchive && details.status !== 'Arquivado' && <button type="button" className="work-button work-button-quiet" disabled={saving} onClick={archiveProject}>Arquivar projeto</button>}<button type="button" className="work-button work-button-quiet" onClick={onClose}>Fechar</button><button type="button" className="work-button work-button-primary" disabled={saving} onClick={saveDetails}><Check size={14} />Salvar altera&#231;&#245;es</button></footer></section></div>;
 }
 
 function ProjectCard({ project, onOpen }) { return <article className={`project-card project-${project.tone || 'lime'}`}><div className="project-card-top"><span className="project-type"><i />{project.type || 'Projeto'}</span><button className="row-more" aria-label={`Mais opções para ${project.name || 'projeto'}`} onClick={onOpen}><MoreHorizontal size={18} /></button></div><button className="project-name" onClick={onOpen}>{project.name || 'Projeto sem título'}<ArrowUpRight size={15} /></button><p className="project-client">{project.client || 'Sem cliente vinculado'}</p><div className="project-progress-label"><span>Progresso</span><strong>{Number(project.progress) || 0}%</strong></div><div className="project-progress"><i style={{ width: `${Math.max(0, Math.min(100, Number(project.progress) || 0))}%` }} /></div><div className="project-card-bottom"><StatusPill status={project.status} /><span className="project-due"><CalendarDays size={13} />{project.due || 'Sem prazo'}</span><div className="avatar-stack">{(Array.isArray(project.team) ? project.team : []).filter(Boolean).map((person) => <Avatar key={person} name={person} />)}</div></div></article>; }

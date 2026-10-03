@@ -15,6 +15,7 @@ import { confirmSettingsImport, normalizeImportedSettings } from '../lib/setting
 import { workspaceStartPages } from '../lib/workspace-preferences.js';
 import { settingsBaseline, settingsDraftHasChanges } from '../lib/settings-draft.js';
 import { resolveSettingsHydration } from '../lib/settings-hydration.js';
+import { validateWorkspaceSettings } from '../lib/settings-validation.js';
 
 const defaults = {
   workspace: { agency: '', timezone: 'America/Sao_Paulo', weekStart: 'monday', currency: 'BRL', dateFormat: 'dd/MM/yyyy', language: 'pt-BR', fiscalName: '', document: '', email: '', phone: '', website: '', address: '', brandLogo: '' },
@@ -93,6 +94,12 @@ export default function SettingsScreen({ notify, navigationContext = null, onNav
     if (!canWriteSettings) { notify('Seu perfil pode consultar estas configurações, mas não pode alterá-las.'); return; }
     if (settingsLoading || settingsLoadError) { notify('Recarregue as configurações antes de salvar para evitar sobrescrever dados existentes.'); return; }
     if (saving) return;
+    const validationIssue = validateWorkspaceSettings(settings);
+    if (validationIssue) {
+      setSaveError(validationIssue);
+      notify(validationIssue);
+      return;
+    }
     const revision = settingsRevision.current;
     setSaving(true);
     setSaveError('');

@@ -31,6 +31,8 @@ import { filterDashboardActiveProjects } from './lib/dashboard-active-projects.j
 import { dashboardMetricPresentation } from './lib/dashboard-metric-presentation.js';
 import { selectDashboardHighlightedEvent } from './lib/dashboard-highlighted-event.js';
 import { dashboardInboxConversations } from './lib/dashboard-inbox.js';
+import { dashboardCalendarDayQuery, mergeDashboardCalendarEvents } from './lib/dashboard-calendar-events.js';
+import { dashboardLayoutStorageKey, defaultDashboardLayout, readDashboardLayout, writeDashboardLayout } from './lib/dashboard-layout-preferences.js';
 import { calendarDateInTimeZone, calendarDateKeyForValue, calendarDateKeyInTimeZone, calendarTimeInTimeZone } from './lib/calendar-preferences.js';
 import { isWithinWorkspaceQuietHours, shouldSendActivityBrowserAlert, taskReminderCandidates } from './lib/browser-alerts.js';
 import { dispatchBeforeWorkspaceNavigation, workspaceRouteDestination } from './lib/navigation-guards.js';
@@ -227,6 +229,8 @@ function FirstRunSetup({ onNavigate, notify }) {
 }
 
 function readLocalValue(key, fallback) { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? fallback; } catch { return fallback; } }
+function readDashboardLayoutSafely(key) { try { return readDashboardLayout(window.localStorage, key); } catch { return readDashboardLayout(null, key); } }
+function writeDashboardLayoutSafely(key, value) { try { return writeDashboardLayout(window.localStorage, key, value); } catch { return false; } }
 function amountValue(value) { return Number(String(value || '').replace(/[^\d,]/g, '').replace(',', '.')) || 0; }
 function workspacePageSlug(label) { return label.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''); }
 function workspacePageFromPath(pathname) {
@@ -277,12 +281,16 @@ function WorkspaceShell() {
   const [navigationContext, setNavigationContext] = useState(null);
   const initialRouteSync = useRef(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [dashboardLayoutOpen, setDashboardLayoutOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [filter, setFilter] = useState('Todos');
   const [taskFilter, setTaskFilter] = useState('Todas');
   const [tasks, setTasks] = useState([]);
   const [dashboardRecords, setDashboardRecords] = useState({ leads: [], projects: [], events: [], proposals: [], bills: [], inbox: [] });
+  const [dashboardGoogleCalendarEvents, setDashboardGoogleCalendarEvents] = useState([]);
+  const [dashboardCalendarRevision, setDashboardCalendarRevision] = useState(0);
+  const dashboardCalendarRequestId = useRef(0);
   const [dashboardRestrictedSources, setDashboardRestrictedSources] = useState([]);
   const [dashboardFailedSources, setDashboardFailedSources] = useState([]);
   const [dashboardLoading, setDashboardLoading] = useState(true);
@@ -290,6 +298,8 @@ function WorkspaceShell() {
   const [updatingTaskIds, setUpdatingTaskIds] = useState(() => new Set());
   const taskMutationLock = useRef(new Set());
   const [dashboardError, setDashboardError] = useState('');
+  const dashboardLayoutKey = dashboardLayoutStorageKey(currentUser?.id);
+  const [dashboardLayout, setDashboardLayout] = useState(() => readDashboardLayoutSafely(dashboardLayoutKey));
   const [chatOpen, setChatOpen] = useState(true);
   const [chatExpanded, setChatExpanded] = useState(false);
   const [notificationOpen, setNotificationOpen] = useState(false);
@@ -315,7 +325,8 @@ function WorkspaceShell() {
   const nextMonthDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 30);
   const nextMonthIso = `${nextMonthDate.getFullYear()}-${String(nextMonthDate.getMonth() + 1).padStart(2, '0')}-${String(nextMonthDate.getDate()).padStart(2, '0')}`;
   const eventStartTime = (event) => event.time || (event.startsAt ? calendarTimeInTimeZone(event.startsAt, preferences.timezone) : '');
-  const todayEvents = dashboardRecords.events.filter((event) => calendarDateKeyForValue(event.date || event.startsAt, preferences.timezone) === todayIso).sort((a, b) => eventStartTime(a).localeCompare(eventStartTime(b)));
+  const dashboardEvents = mergeDashboardCalendarEvents(dashboardRecords.events, dashboardGoogleCalendarEvents);
+  const todayEvents = dashboardEvents.filter((event) => calendarDateKeyForValue(event.date || event.startsAt, preferences.timezone) === todayIso).sort((a, b) => eventStartTime(a).localeCompare(eventStartTime(b)));
   const minutesOfDay = (time) => { const [hours, minutes] = String(time || '').split(':').map(Number); return Number.isFinite(hours) && Number.isFinite(minutes) ? hours * 60 + minutes : -1; };
   const currentMinutes = minutesOfDay(now);
   const activeTodayEvent = todayEvents.find((event) => { const start = minutesOfDay(eventStartTime(event)); return start >= 0 && currentMinutes >= start && currentMinutes < start + (Number(event.durationMinutes ?? event.duration) || 60); });
@@ -347,6 +358,7 @@ function WorkspaceShell() {
 
   const refreshDashboard = useCallback(async () => {
     const refreshId = ++dashboardRefreshId.current;
+    setDashboardCalendarRevision((revision) => revision + 1);
     setDashboardLoading(true);
     const isMember = storedWorkspaceUser()?.role === 'member';
     const sources = [
@@ -374,6 +386,33 @@ function WorkspaceShell() {
     setDashboardLoading(false);
   }, [localDemo]);
 
+  useEffect(() => {
+    const requestId = ++dashboardCalendarRequestId.current;
+    let active = true;
+    if (activeNav !== 'Meu Dia' || localDemo) {
+      setDashboardGoogleCalendarEvents([]);
+      return () => { active = false; };
+    }
+    if (!dashboardCalendarRevision) return () => { active = false; };
+    const query = dashboardCalendarDayQuery(new Date(), preferences.timezone);
+    apiRequest(`/api/integrations/google/calendar/events?${query.toString()}`)
+      .then((result) => { if (active && requestId === dashboardCalendarRequestId.current) setDashboardGoogleCalendarEvents(Array.isArray(result.data) ? result.data : []); })
+      .catch(() => { if (active && requestId === dashboardCalendarRequestId.current) setDashboardGoogleCalendarEvents([]); });
+    return () => { active = false; };
+  }, [activeNav, localDemo, preferences.timezone, dashboardCalendarRevision]);
+
+  useEffect(() => {
+    setDashboardLayout(readDashboardLayoutSafely(dashboardLayoutKey));
+  }, [dashboardLayoutKey]);
+
+  const toggleDashboardSection = (section) => {
+    setDashboardLayout((current) => {
+      const next = { ...current, [section]: !current[section] };
+      writeDashboardLayoutSafely(dashboardLayoutKey, next);
+      return next;
+    });
+  };
+
   const refreshNotifications = useCallback(async () => {
     try {
       const result = await apiRequest('/api/notifications');
@@ -395,6 +434,7 @@ function WorkspaceShell() {
     setMobileMenuOpen(false);
     setSearchOpen(false);
     setCreateOpen(false);
+    setDashboardLayoutOpen(false);
     return true;
   };
 
@@ -546,7 +586,7 @@ function WorkspaceShell() {
   }, []);
 
   useEffect(() => {
-    const closeMenu = (event) => { if (event.key === 'Escape') { setMobileMenuOpen(false); setSearchOpen(false); setCreateOpen(false); setNotificationOpen(false); } };
+    const closeMenu = (event) => { if (event.key === 'Escape') { setMobileMenuOpen(false); setSearchOpen(false); setCreateOpen(false); setDashboardLayoutOpen(false); setNotificationOpen(false); } };
     window.addEventListener('keydown', closeMenu);
     return () => window.removeEventListener('keydown', closeMenu);
   }, []);
@@ -691,11 +731,15 @@ function WorkspaceShell() {
           {activeNav === 'Meu Dia' ? <main className="dashboard-view">
           <div className="welcome-row">
             <div><p className="eyebrow">{dashboardDate.toLocaleUpperCase('pt-BR')}</p><h1>Meu dia</h1><p className="welcome-subtitle">Aqui está o que merece sua atenção hoje.</p></div>
-            <div className="dashboard-header-actions"><button type="button" className="dashboard-refresh-button" onClick={refreshDashboard} disabled={dashboardLoading} aria-label="Atualizar Meu Dia"><RefreshCw size={16} className={dashboardLoading ? 'is-spinning' : ''} />{dashboardLoading ? 'Atualizando' : 'Atualizar'}</button><div className="dashboard-create-wrap"><button className="primary-button" aria-expanded={createOpen} aria-haspopup="menu" onClick={() => setCreateOpen((open) => !open)}><Plus size={17} /> Criar novo <ChevronDown size={15} /></button>{createOpen && <div className="dashboard-create-menu" role="menu">{availableCreateActions.map(([label, page, action]) => <button type="button" role="menuitem" key={page} onClick={() => { const intentId = globalThis.crypto?.randomUUID?.() || `dashboard-create-${Date.now()}`; navigateToPage(page, dashboardCreateContext(action, intentId)); }}>{label}<ArrowRight size={14} /></button>)}</div>}</div></div>
+            <div className="dashboard-header-actions">
+              <button type="button" className="dashboard-refresh-button" onClick={refreshDashboard} disabled={dashboardLoading} aria-label="Atualizar Meu Dia"><RefreshCw size={16} className={dashboardLoading ? 'is-spinning' : ''} />{dashboardLoading ? 'Atualizando' : 'Atualizar'}</button>
+              <div className="dashboard-create-wrap"><button className="primary-button" aria-expanded={createOpen} aria-haspopup="menu" onClick={() => { setCreateOpen((open) => !open); setDashboardLayoutOpen(false); }}><Plus size={17} /> Criar novo <ChevronDown size={15} /></button>{createOpen && <div className="dashboard-create-menu" role="menu">{availableCreateActions.map(([label, page, action]) => <button type="button" role="menuitem" key={page} onClick={() => { const intentId = globalThis.crypto?.randomUUID?.() || `dashboard-create-${Date.now()}`; navigateToPage(page, dashboardCreateContext(action, intentId)); }}>{label}<ArrowRight size={14} /></button>)}</div>}</div>
+              <div className="dashboard-create-wrap"><button type="button" className="dashboard-refresh-button" aria-label="Personalizar Meu Dia" aria-expanded={dashboardLayoutOpen} aria-haspopup="menu" onClick={() => { setDashboardLayoutOpen((open) => !open); setCreateOpen(false); }}><Settings size={16} />Personalizar</button>{dashboardLayoutOpen && <div className="dashboard-create-menu" role="menu" aria-label="Seções visíveis no Meu Dia" style={preferences.darkMode ? { background: '#1b1d22', borderColor: '#34363d' } : undefined}>{[['summary', 'Indicadores'], ['leads', 'Leads'], ['tasks', 'Tarefas de hoje'], ['inbox', 'Atendimento'], ['agenda', 'Agenda de hoje'], ['alerts', 'Alertas']].map(([section, label]) => <button type="button" role="menuitemcheckbox" aria-checked={dashboardLayout[section]} key={section} onClick={() => toggleDashboardSection(section)} style={preferences.darkMode ? { background: '#1b1d22', color: '#f3f4f6' } : undefined}>{label}{dashboardLayout[section] && <Check size={14} aria-hidden="true" />}</button>)}<button type="button" role="menuitem" onClick={() => { setDashboardLayout({ ...defaultDashboardLayout }); writeDashboardLayoutSafely(dashboardLayoutKey, defaultDashboardLayout); }} style={preferences.darkMode ? { background: '#1b1d22', color: '#f3f4f6' } : undefined}>Restaurar padrão</button></div>}</div>
+            </div>
           </div>
 
           {currentUser?.role !== 'member' && !localDemo && <FirstRunSetup notify={notify} onNavigate={(page, context) => navigateToPage(page, context)} />}
-          {currentUser?.role === 'member' ? <section className="stats-grid" aria-label="Resumo">
+          {dashboardLayout.summary && (currentUser?.role === 'member' ? <section className="stats-grid" aria-label="Resumo">
             {(() => { const metric = dashboardMetricPresentation({ restricted: dashboardRestricted('projects'), loading: dashboardLoading, failed: dashboardFailedSources.includes('projects'), value: activeProjects.length, detail: 'em andamento', restrictedDetail: 'sem acesso a Projetos' }); return <StatCard title="Projetos" value={metric.value} change="" detail={metric.detail} icon={FolderKanban} tone="blue" onClick={() => openDashboardMetric('projects')} />; })()}
             {(() => { const metric = dashboardMetricPresentation({ restricted: dashboardRestricted('tasks'), loading: dashboardLoading, failed: dashboardFailedSources.includes('tasks'), value: todaysTasks.filter((task) => !isCompletedTask(task)).length, detail: 'pendentes', restrictedDetail: 'sem acesso a Tarefas' }); return <StatCard title="Tarefas de hoje" value={metric.value} change="" detail={metric.detail} icon={CheckSquare} tone="green" onClick={() => openDashboardMetric('tasks')} />; })()}
             {(() => { const metric = dashboardMetricPresentation({ restricted: dashboardRestricted('events'), loading: dashboardLoading, failed: dashboardFailedSources.includes('events'), value: todayEvents.length, detail: 'na agenda', restrictedDetail: 'sem acesso à Agenda' }); return <StatCard title="Eventos de hoje" value={metric.value} change="" detail={metric.detail} icon={CalendarDays} tone="blue" onClick={() => openDashboardMetric('events')} />; })()}
@@ -704,11 +748,11 @@ function WorkspaceShell() {
             {(() => { const metric = dashboardMetricPresentation({ restricted: dashboardRestricted('projects'), loading: dashboardLoading, failed: dashboardFailedSources.includes('projects'), value: activeProjects.length, detail: 'em andamento', restrictedDetail: 'sem acesso a Projetos' }); return <StatCard title="Projetos" value={metric.value} change="" detail={metric.detail} icon={FolderKanban} tone="blue" onClick={() => openDashboardMetric('projects')} />; })()}
             {(() => { const metric = dashboardMetricPresentation({ restricted: dashboardRestricted('bills'), loading: dashboardLoading, failed: dashboardFailedSources.includes('bills'), value: upcomingAmount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }), detail: 'próximos 30 dias', restrictedDetail: 'sem acesso ao Financeiro' }); return <StatCard title="A receber" value={metric.value} change="" detail={metric.detail} icon={CircleDollarSign} tone="green" onClick={() => openDashboardMetric('receivables')} />; })()}
             {(() => { const metric = dashboardMetricPresentation({ restricted: dashboardRestricted('bills'), loading: dashboardLoading, failed: dashboardFailedSources.includes('bills'), value: overdueBills.length, detail: 'cobranças em atraso', restrictedDetail: 'sem acesso ao Financeiro' }); return <StatCard title="Atrasadas" value={metric.value} change="" detail={metric.detail} icon={Clock3} tone="red" negative onClick={() => openDashboardMetric('overdue')} />; })()}
-          </section>}
+          </section>)}
 
           <section className={`dashboard-grid ${chatOpen ? '' : 'chat-closed'}`}>
             <div className="dashboard-main">
-            {currentUser?.role !== 'member' && (
+            {dashboardLayout.leads && currentUser?.role !== 'member' && (
             <section className="leads-section">
             <div className="section-heading">
               <div className="section-title-group"><h2>Leads novos</h2><span className="count-pill">{dashboardLeads.length} cadastrados</span></div>
@@ -723,21 +767,21 @@ function WorkspaceShell() {
             </div>
             </section>
             )}
-            <div className="tasks-area">
+            {dashboardLayout.tasks && <div className="tasks-area">
               <div className="section-heading task-heading"><div className="section-title-group"><h2>Tarefas de hoje</h2><span className="count-pill">{dashboardLoading ? 'Carregando...' : `${todaysTasks.filter((task) => !isCompletedTask(task)).length} abertas hoje`}</span></div><div className="task-tabs">{['Todas', 'Em andamento', 'Pendente', 'Concluída'].map((item) => <button key={item} className={taskFilter === item ? 'selected' : ''} aria-pressed={taskFilter === item} onClick={() => setTaskFilter(item)}>{item}</button>)}<button className="task-view-all" onClick={() => navigateToPage('Tarefas')}>Ver todas <ChevronRight size={13}/></button></div></div>
               <div className="task-grid">
               {visibleTasks.slice(0, 3).map((task) => <TaskCard key={task.id} task={task} canToggle={canEditTasks && !dashboardRestricted('tasks') && !dashboardLoading} busy={updatingTaskIds.has(task.id)} onToggle={() => toggleTask(task.id)} onOpen={() => navigateToPage('Tarefas', { taskId: task.id })} />)}
                 {visibleTasks.length === 0 && <div className="empty-filter">{dashboardRestricted('tasks') ? 'Seu perfil nao tem leitura de Tarefas.' : dashboardLoading ? 'Carregando tarefas de hoje...' : dashboardFailedSources.includes('tasks') ? 'Nao foi possivel carregar as tarefas. Tente atualizar.' : 'Nenhuma tarefa com vencimento hoje. Crie uma tarefa ou consulte todas em Tarefas.'}</div>}
               </div>
+            </div>}
             </div>
-            </div>
-            {chatOpen && <aside className={`attention-panel ${chatExpanded ? 'expanded' : ''}`} aria-label="Painel de atendimento">
+            {dashboardLayout.inbox && chatOpen && <aside className={`attention-panel ${chatExpanded ? 'expanded' : ''}`} aria-label="Painel de atendimento">
               <div className="attention-header"><div><h2>Atendimento</h2><span className="online-label">{dashboardLoading ? 'Atualizando…' : `${dashboardRecords.inbox.length} conversas`}</span></div><div className="panel-controls"><button aria-label="Expandir atendimento" onClick={() => setChatExpanded(!chatExpanded)}><ArrowUpRight size={16} /></button><button aria-label="Fechar atendimento" onClick={() => setChatOpen(false)}><X size={16} /></button></div></div>
               {dashboardRestricted('inbox') ? <div className="attention-empty"><Inbox size={24} /><b>Caixa de entrada restrita</b><span>Seu perfil não tem acesso às conversas deste workspace.</span></div> : dashboardLoading && !dashboardRecords.inbox.length ? <div className="attention-empty" aria-live="polite">Carregando conversas…</div> : dashboardFailedSources.includes('inbox') ? <div className="attention-empty" role="alert"><Inbox size={24} /><b>Não foi possível carregar conversas</b><span>Verifique o acesso e tente atualizar o Meu Dia.</span><button type="button" onClick={refreshDashboard}>Tentar novamente</button></div> : dashboardInbox.length ? <div className="attention-demo-list"><span className="attention-demo-label">Conversas recentes</span>{dashboardInbox.map((message) => <button type="button" className="attention-demo-message" key={message.id} onClick={() => navigateToPage('Caixa de entrada', { conversationId: message.id, channel: message.channel === 'E-mail' ? 'E-mail' : 'WhatsApp', intentId: globalThis.crypto?.randomUUID?.() || `dashboard-inbox-${Date.now()}` })}><span className="attention-demo-avatar">{(message.name || message.contactName || message.from || 'C').split(/\s+/).map((part) => part[0]).slice(0, 2).join('')}</span><span><b>{message.name || message.contactName || message.from || 'Contato'}</b><small>{message.text || message.lastMessage || message.subject || 'Abrir conversa'}</small></span><time>{message.time || ''}</time></button>)}<button type="button" className="attention-demo-open" onClick={() => navigateToPage('Caixa de entrada')}>Abrir caixa de entrada <ChevronRight size={14}/></button></div> : <div className="attention-empty"><Inbox size={24} /><b>Nenhuma conversa registrada</b><span>As conversas disponíveis aparecerão aqui.</span><button type="button" onClick={() => navigateToPage('Caixa de entrada')}>Abrir caixa de entrada</button></div>}
-            </aside>}{!chatOpen && <button type="button" className="attention-reopen" onClick={() => setChatOpen(true)}><Inbox size={16} /> Reabrir atendimento</button>}
+            </aside>}{dashboardLayout.inbox && !chatOpen && <button type="button" className="attention-reopen" onClick={() => setChatOpen(true)}><Inbox size={16} /> Reabrir atendimento</button>}
           </section>
 
-          <section className="dashboard-agenda" aria-labelledby="dashboard-agenda-title">
+          {dashboardLayout.agenda && <section className="dashboard-agenda" aria-labelledby="dashboard-agenda-title">
             <div className="dashboard-agenda-heading">
               <div><h2 id="dashboard-agenda-title">Agenda de hoje</h2><span className="count-pill">{dashboardLoading ? 'Carregando…' : `${todayEvents.length} ${todayEvents.length === 1 ? 'compromisso' : 'compromissos'}`}</span></div>
               <button type="button" onClick={() => navigateToPage('Agenda')}>Abrir agenda <ArrowRight size={15} /></button>
@@ -750,16 +794,16 @@ function WorkspaceShell() {
               return <li key={event.id || `${event.title}-${index}`}><button type="button" className={`dashboard-agenda-event ${phase === 'Em andamento' ? 'is-current' : ''}`} onClick={() => context ? navigateToPage('Agenda', context) : navigateToPage('Agenda')} aria-label={`Abrir ${event.title || event.name || 'compromisso'} na Agenda`}><time>{startTime}</time><span className="dashboard-agenda-copy"><b>{event.title || event.name || 'Compromisso'}</b><small>{event.client || event.project || event.type || 'Compromisso da equipe'}</small></span><span className={`dashboard-agenda-phase ${phase === 'Em andamento' ? 'is-current' : ''}`}>{phase}</span><ChevronRight size={16} /></button></li>;
             })}</ol> : <div className="dashboard-agenda-empty"><CalendarDays size={18} /><span>Nenhum compromisso para hoje.</span><button type="button" onClick={() => navigateToPage('Agenda', dashboardCreateContext('event', globalThis.crypto?.randomUUID?.() || `dashboard-event-${Date.now()}`))}>Agendar evento <ArrowRight size={14} /></button></div>}
             {todayEvents.length > 5 && <p className="dashboard-agenda-more">+ {todayEvents.length - 5} compromissos. <button type="button" onClick={() => navigateToPage('Agenda')}>Ver todos</button></p>}
-          </section>
+          </section>}
 
           {restrictedWorkspaceModules.length > 0 && <div className="dashboard-access-note" role="status">Parte do resumo foi ocultada pelo seu perfil: {restrictedWorkspaceModules.join(', ')}. Os indicadores afetados aparecem como “—”.</div>}
           {dashboardError && <div className="dashboard-data-error" role="alert"><span>{dashboardError}</span><button type="button" disabled={dashboardLoading} onClick={refreshDashboard}>{dashboardLoading ? 'Atualizando...' : 'Tentar novamente'}</button></div>}
 
-          <section className={`bottom-alerts ${chatOpen ? '' : 'chat-closed'}`}>
+          {dashboardLayout.alerts && <section className={`bottom-alerts ${chatOpen ? '' : 'chat-closed'}`}>
             {currentUser?.role !== 'member' && <button className="alert-card" onClick={() => { navigateToPage('Cobranças', { filter: 'overdue' }); }}><span className="alert-icon red-bg"><CircleDollarSign size={18} /></span><span><b>Cobranças vencidas</b><small>{dashboardRestricted('bills') ? 'Seu perfil não tem acesso ao Financeiro' : overdueBills.length ? `${overdueBills.length} aguardando pagamento` : 'Nenhuma cobrança vencida'}</small></span><span className="alert-count red-count">{dashboardRestricted('bills') ? '—' : overdueBills.length}</span><ChevronRight size={17} /></button>}
             {currentUser?.role !== 'member' && <button className="alert-card" onClick={() => navigateToPage('Propostas')}><span className="alert-icon blue-bg"><FileText size={18} /></span><span><b>Propostas pendentes</b><small>{dashboardRestricted('proposals') ? 'Seu perfil não tem leitura de CRM' : dashboardRecords.proposals.filter((item) => !['Aprovada', 'Recusada', 'accepted', 'rejected'].includes(item.status)).length ? 'Aguardando retorno de clientes' : 'Nenhuma proposta pendente'}</small></span><span className="alert-count blue-count">{dashboardRestricted('proposals') ? '—' : dashboardRecords.proposals.filter((item) => !['Aprovada', 'Recusada', 'accepted', 'rejected'].includes(item.status)).length}</span><ChevronRight size={17} /></button>}
             <button className="alert-card" onClick={() => navigateToPage('Agenda')}><span className="alert-icon blue-bg"><CalendarDays size={18} /></span><span><b>Eventos de hoje</b><small>{dashboardRestricted('events') ? 'Seu perfil não tem leitura da Agenda' : todayEvents.length ? `${todayEvents.length} compromisso${todayEvents.length === 1 ? '' : 's'} na agenda` : 'Nenhum compromisso agendado'}</small></span><span className="alert-count blue-count">{dashboardRestricted('events') ? '—' : todayEvents.length}</span><ChevronRight size={17} /></button>
-          </section>
+          </section>}
           </main> : <Sentry.ErrorBoundary fallback={ModuleErrorFallback} onError={recoverFromStaleModuleAssets} key={activeNav}><ModuleScreen page={activeNav} navigationContext={navigationContext} onNavigationContextConsumed={() => setNavigationContext(null)} /></Sentry.ErrorBoundary>}
         </div>
       </section>

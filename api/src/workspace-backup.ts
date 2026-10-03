@@ -39,7 +39,7 @@ const billingSubscription = z.object({
   id: uuid, clientId: uuid.nullable(), workspaceClientId: uuid.nullable(), clientName: z.string().min(1).max(180),
   payerEmail: z.string().email().max(254), description: z.string().min(1).max(250), amount: z.number().finite().nonnegative().max(1_000_000), frequency: z.enum(['days', 'months']),
   frequencyInterval: z.number().int().positive().max(366), status: z.string().min(1).max(40), mpSubscriptionId: z.string().max(200).nullable(), mercadoPagoAccountId: z.string().max(100).nullable().optional(),
-  checkoutUrl: z.string().max(2048).nullable(), nextPaymentAt: nullableTimestamp, createdAt: timestamp, updatedAt: timestamp,
+  checkoutUrl: z.string().max(2048).nullable(), startAt: nullableTimestamp.optional(), endAt: nullableTimestamp.optional(), nextPaymentAt: nullableTimestamp, createdAt: timestamp, updatedAt: timestamp,
 }).strict();
 
 export const workspaceBackupSchema = z.object({
@@ -110,7 +110,7 @@ export function buildWorkspaceBackup(input: BackupInput): WorkspaceBackup {
   });
   const billingSubscriptions = input.billingSubscriptions.map((row) => ({
     ...pick(row, ['id', 'clientId', 'workspaceClientId', 'clientName', 'payerEmail', 'description', 'amount', 'frequency', 'frequencyInterval', 'status', 'mpSubscriptionId', 'mercadoPagoAccountId', 'checkoutUrl']),
-    nextPaymentAt: iso(row.nextPaymentAt), createdAt: iso(row.createdAt), updatedAt: iso(row.updatedAt),
+    startAt: iso(row.startAt), endAt: iso(row.endAt), nextPaymentAt: iso(row.nextPaymentAt), createdAt: iso(row.createdAt), updatedAt: iso(row.updatedAt),
   }));
   return workspaceBackupSchema.parse({
     format: 'nexo-workspace-backup', version: 1, organizationId: input.organizationId,
