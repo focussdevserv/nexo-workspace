@@ -75,6 +75,18 @@ test('contact editor links a registered company and preserves legacy free-text c
   assert.equal(unlinked.patch.company, 'Consultoria sem cadastro');
 });
 
+test('legacy contact with a duplicate company name is not silently linked to the first homonym', () => {
+  const duplicateCompanies = [
+    { id: 'company-a', name: 'Acme Tecnologia' },
+    { id: 'company-b', name: 'Acme Tecnologia' },
+  ];
+  const legacyContact = { id: 'contact-legacy', name: 'Ana', company: 'Acme Tecnologia' };
+  const draft = commercialRecordEditorDraft('contatos', legacyContact, [], duplicateCompanies);
+  assert.equal(draft.companyId, '');
+  assert.equal(draft.company, 'Acme Tecnologia');
+  assert.equal(commercialRecordEditorIsDirty('contatos', legacyContact, draft, [], duplicateCompanies), false);
+});
+
 test('contact editor rejects a company identifier outside the loaded company list', () => {
   const result = buildCommercialRecordEditorPatch('contatos', {
     name: 'Ana', companyId: 'missing', company: 'Acme Tecnologia', role: '', email: '', phone: '', last: '',
@@ -160,6 +172,15 @@ test('resolves proposal clients by stringified ID and never substitutes a stale 
   assert.equal(resolveCommercialClient(records, '', 'Nexo Ltda'), null, 'ambiguous duplicate names must not be guessed');
   assert.equal(resolveCommercialClient(records, 'deleted-id', 'Nexo Ltda'), null, 'a stale explicit ID must not fall back to the display name');
   assert.equal(resolveCommercialClient(clients, '', ' Nexo Ltda ')?.id, 12, 'unique legacy name fallback remains supported');
+});
+
+test('legacy proposal or contract with duplicate client names requires an explicit client choice', () => {
+  const duplicateClients = [
+    { id: 'client-a', name: 'Nexo Ltda' },
+    { id: 'client-b', name: 'Nexo Ltda' },
+  ];
+  assert.equal(commercialRecordEditorDraft('propostas', { title: 'Proposta', client: 'Nexo Ltda' }, duplicateClients).clientId, '');
+  assert.equal(commercialRecordEditorDraft('contratos', { title: 'Contrato', client: 'Nexo Ltda' }, duplicateClients).clientId, '');
 });
 
 test('proposal creation and client select use the safe shared client resolver', async () => {

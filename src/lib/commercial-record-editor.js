@@ -109,12 +109,12 @@ export function commercialRecordEditorDraft(page, record = {}, clients = [], com
     let value = record[key];
     if (key === 'progress' && value === undefined) value = 0;
     if (key === 'clientId' && !value) {
-      const normalizedName = normalizeName(record.client);
-      value = clients.find((client) => normalizeName(client.name) === normalizedName)?.id || record.clientId || '';
+      value = resolveCommercialClient(clients, '', record.client)?.id || record.clientId || '';
     }
     if (key === 'companyId' && !value) {
       const normalizedName = normalizeName(record.company);
-      value = companies.find((company) => normalizeName(company.name) === normalizedName)?.id || '';
+      const matches = companies.filter((company) => normalizeName(company.name) === normalizedName);
+      value = matches.length === 1 ? matches[0].id : '';
     }
     return [key, String(value ?? '')];
   }));

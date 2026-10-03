@@ -39,6 +39,7 @@ import { buildInboxFollowUpTask, createInboxFollowUpOnce, nextInboxFollowUpDate 
 import { normalizeWhatsAppChatId } from '../lib/whatsapp-phone.js';
 import { emptyInboxComposerDraft, inboxConversationClientId } from '../lib/inbox-composer.js';
 import { canManageWahaSessions, canOfferWahaConnectAction, canShowWahaQr, wahaIntegrationAvailability, wahaQrSessionMessage, wahaSessionStatusLabel, wahaSessionStatusSummary } from '../lib/waha-session-access.js';
+import { wahaActionFeedback } from '../lib/waha-action-feedback.js';
 import { createAsyncActionLock } from '../lib/async-action-lock.js';
 import { beginSiteCheck, finishSiteCheck, siteCheckFailureMessage } from '../lib/site-check-state.js';
 import { filterTableRows, tableStatusOptions } from '../lib/table-status-filter.js';
@@ -1441,7 +1442,7 @@ function WahaSessions({ notify }) {
   const refresh = async ({ clearError = false } = {}) => sessionRefreshLock.current.run(async () => {
     try {
       const result = await apiRequest('/api/integrations/waha/sessions');
-      if (!sessionRefreshMounted.current) return;
+      if (!sessionRefreshMounted.current) return { ok: false, stale: true };
       const nextSessions = Array.isArray(result.data) ? result.data : [];
       setSessions(nextSessions);
       setStatusQueryError('');
@@ -1452,9 +1453,10 @@ function WahaSessions({ notify }) {
           : nextSessions.find((item) => item.status === 'SCAN_QR_CODE')?.id || null;
       });
       if (clearError) setError('');
+      return { ok: true };
     }
     catch (err) {
-      if (!sessionRefreshMounted.current) return;
+      if (!sessionRefreshMounted.current) return { ok: false, stale: true, error: err };
       if (['waha_not_configured', 'integration_not_configured', 'integration_disconnected'].includes(err.code)) {
         const availability = err.code === 'integration_disconnected'
           ? { state: 'disconnected', message: err.message || 'O WAHA está desativado. Reative-o em Integrações para gerenciar números.' }
@@ -1465,6 +1467,7 @@ function WahaSessions({ notify }) {
         setSelected(null);
         setStatusQueryError('');
       } else setStatusQueryError(err.message || 'Falha ao consultar o status das sessões WAHA.');
+      return { ok: false, error: err };
     }
     finally { if (sessionRefreshMounted.current) setLoading(false); }
   });
@@ -1523,7 +1526,7 @@ function WahaSessions({ notify }) {
     setBusy(true); setError('');
     try {
       if (action === 'delete') { await apiRequest(`/api/integrations/waha/sessions/${item.id}`, { method: 'DELETE' }); setSessions((rows) => rows.filter((row) => row.id !== item.id)); if (selected === item.id) { setSelected(null); setQr(''); } notify('Sessão apagada.'); }
-      else { await apiRequest(`/api/integrations/waha/sessions/${item.id}/${action}`, { method: 'POST', body: '{}' }); if (['start', 'restart', 'logout'].includes(action)) { setSelected(item.id); setQr(''); setQrError(''); } await refresh({ clearError: true }); notify(action === 'stop' ? 'Sessão pausada; o vínculo do celular foi preservado.' : action === 'logout' ? 'WhatsApp desconectado. Leia o novo QR para vincular novamente.' : 'Sessão WAHA atualizada.'); }
+      else { await apiRequest(`/api/integrations/waha/sessions/${item.id}/${action}`, { method: 'POST', body: '{}' }); if (['start', 'restart', 'logout'].includes(action)) { setSelected(item.id); setQr(''); setQrError(''); } const refreshed = await refresh({ clearError: true }); notify(wahaActionFeedback(action, { statusConfirmed: refreshed?.ok === true, localDemo })); }
     } catch (err) { setError(err.message || 'A WAHA não concluiu esta ação.'); }
     finally { setBusy(false); }
   };
