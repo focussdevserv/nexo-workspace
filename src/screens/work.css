@@ -547,3 +547,13 @@ html[data-theme='dark'] .work-data-error{border-color:#613a3a;background:#2b1b1c
 
 .hours-create-task{margin-top:10px;min-height:38px;align-self:flex-start}
 @media(max-width:640px){.hours-create-task{width:100%;justify-content:center}}
+
+/* Very narrow phones: let approval text use its grid column instead of forcing page overflow. */
+@media(max-width:340px){
+  .work-screen .approval-card{grid-template-columns:64px minmax(0,1fr);gap:7px;padding:7px}
+  .work-screen .approval-title-line{min-width:0}
+  .work-screen .approval-title-line>div{min-width:0;flex:1}
+  .work-screen .approval-title-line h3{overflow-wrap:anywhere}
+  .work-screen .approval-project{max-width:100%}
+  .work-screen .approval-title-line>.status-pill{flex:none}
+}

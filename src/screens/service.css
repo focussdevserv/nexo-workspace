@@ -392,3 +392,9 @@ html[data-theme='dark'] #root .app-shell .ns-screen .ns-link-task:disabled {
 html[data-theme='dark'] #root .app-shell .ns-screen .ns-message > small.ns-delivery-unknown { color: #ffd580 !important; }
 html[data-theme='dark'] #root .app-shell .ns-screen .ns-message > small.ns-delivery-sending { color: #c2c9d4 !important; }
 html[data-theme='dark'] #root .app-shell .ns-screen .ns-message > small.ns-delivery-failed { color: #ffb4a9 !important; }
+
+/* Keep compact finance headings inside the main column on narrow phones. */
+@media(max-width:390px){
+  #root .app-shell .ns-screen .ns-heading{flex-wrap:wrap}
+  #root .app-shell .ns-screen .ns-heading>.ns-primary{margin-left:auto}
+}
