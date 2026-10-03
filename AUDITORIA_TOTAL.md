@@ -613,4 +613,4 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - **OAuth:** callbacks de Google e Mercado Pago retornam para Integracoes com resultado e motivo, onde a interface apresenta o feedback.
 - **Demonstracao local:** contatos ficticios agora tem email e telefone distintos; uma migracao corrige somente os campos que ainda correspondem ao fixture antigo e preserva personalizacoes.
 - **Validacao desta revisao:** 700 testes frontend e 276 testes API passaram; lint, build frontend, build API e `git diff --check` passaram. Nenhuma conta, pagamento ou integracao real foi alterada.
-- **Publicacao:** em andamento; apos publicar, confirmar manifesto, API, banco, pagina inicial e rotas protegidas sem sessao.
+- **Publicação:** commit `c2917cb960dd8e439d0ed7e842030772454c2e05` publicado; workflow `37127143679` concluiu com sucesso. Manifesto e health confirmam a mesma revisão, banco conectado, home e bundle `200`, endpoints privados sem sessão `401`.
