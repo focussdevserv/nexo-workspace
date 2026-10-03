@@ -575,4 +575,6 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 
 - Depois de um período transitório HTTP 503 durante a publicação, o site voltou a responder normalmente. `https://focussdev.space/api/health` retornou `ok` e banco `connected`; health e `/nexo-build.json` confirmam `3ad06c05c069b3f2cbe8c22a76fbbf5c02a54269`.
 - No modo de demonstração local da versão publicada, as 29 rotas principais abriram em 1440 px claro e 390 px claro/escuro, com cabeçalho de página correto e sem overflow horizontal. As nove abas comerciais do CRM trocaram o conteúdo e o título em 1440 px. Console sem novos erros durante a navegação.
+- Na ficha de Aurora Café, a seção Financeiro e o filtro Cobranças mantiveram a URL em `/app/crm`; Nova cobrança abriu o formulário na própria ficha com o e-mail do cliente preenchido. Cancelar preservou a ficha e não gravou dados.
+- A origem apresentou outra janela HTTP 503 às 05:50 UTC; às 05:55 UTC quatro verificações sequenciais de home e health responderam 200, e health/manifesto confirmaram novamente a revisão implantada. Recomenda-se monitorar a disponibilidade após a retomada.
 - Nenhum login, gravação, pagamento, upload ou chamada de provedor foi executado. A demonstração não valida sessão real nem configuração OAuth e credenciais de terceiros; o endpoint de sessão sem autenticação continua exigindo login.
