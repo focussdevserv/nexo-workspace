@@ -27,6 +27,11 @@ export function canSendPortalMessage(message, busy = false) {
   return !busy && String(message || '').trim().length > 0;
 }
 
+/** Payment instructions are actionable only while the invoice remains payable. */
+export function canOfferClientPortalPaymentAction(status) {
+  return ['pending', 'overdue'].includes(normalizePaymentStatus(status));
+}
+
 /** A synchronous guard for UI actions whose React disabled state updates on the next render. */
 export function createClientPortalActionLock() {
   let locked = false;
@@ -48,6 +53,8 @@ export function acquireClientPortalActionAfterConfirmation(lock, needsConfirmati
 }
 
 /** Only expose web URLs or same-origin root-relative paths as public links. */
+import { normalizePaymentStatus } from './payment-status.js';
+
 export function safeClientPortalHref(value) {
   if (typeof value !== 'string') return '';
   const candidate = value.trim();

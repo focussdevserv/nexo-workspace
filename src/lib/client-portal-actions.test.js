@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { acquireClientPortalActionAfterConfirmation, appendSentPortalMessage, canSendPortalMessage, canSubmitPortalApprovalDecision, copyPortalLink, createClientPortalActionLock, portalLinkActionLabel, safeClientPortalHref, shouldConfirmPortalLinkRotation, splitClientPortalApprovals } from './client-portal-actions.js';
+import { acquireClientPortalActionAfterConfirmation, appendSentPortalMessage, canOfferClientPortalPaymentAction, canSendPortalMessage, canSubmitPortalApprovalDecision, copyPortalLink, createClientPortalActionLock, portalLinkActionLabel, safeClientPortalHref, shouldConfirmPortalLinkRotation, splitClientPortalApprovals } from './client-portal-actions.js';
+
+test('client portal payment actions are available only for payable invoices', () => {
+  for (const status of ['pending', 'Aguardando pagamento', 'overdue', 'Vencida']) assert.equal(canOfferClientPortalPaymentAction(status), true, status);
+  for (const status of ['paid', 'canceled', 'cancelled', 'rejected', 'expired', 'refunded', 'failed', 'processing', '']) assert.equal(canOfferClientPortalPaymentAction(status), false, status);
+});
 
 test('client portal prevents duplicate UI actions until the active request settles', () => {
   const lock = createClientPortalActionLock();

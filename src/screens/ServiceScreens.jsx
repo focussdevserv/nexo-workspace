@@ -772,7 +772,7 @@ function Inbox({ notify, forceWhatsapp = false, navigationContext = null, onNavi
   useDialogEscapeClose(taskOpen, taskCreating, closeFollowUpDialog, taskDialogTriggerRef);
   const createConversation = async (event) => {
     event.preventDefault();
-    if (sending) return;
+    if (sending || inboxSendLock.current.locked) return;
     if (channel === 'E-mail') {
       if (!newContact.email.trim() || !newContact.subject?.trim() || !newContact.body?.trim()) {
         setConversationError('Preencha destinatário, assunto e mensagem antes de enviar.');
@@ -782,6 +782,7 @@ function Inbox({ notify, forceWhatsapp = false, navigationContext = null, onNavi
         setConversationError('Conecte uma conta Google Workspace ou Hostinger em Integrações para enviar e-mails.');
         return;
       }
+      if (!inboxSendLock.current.acquire()) return;
       setSending(true);
       setConversationError('');
       try {
@@ -802,7 +803,7 @@ function Inbox({ notify, forceWhatsapp = false, navigationContext = null, onNavi
         notify(result.refreshed ? `E-mail enviado por ${providerName}.` : `E-mail enviado por ${providerName}, mas a caixa não atualizou. Atualize para conferir.`);
       } catch (error) {
         setConversationError(error.message || 'Não foi possível enviar o e-mail. Revise a conexão e tente novamente.');
-      } finally { setSending(false); }
+      } finally { setSending(false); inboxSendLock.current.release(); }
       return;
     }
     if (!newContact.name.trim() || !newContact.company.trim() || !newContact.phone.trim()) {
@@ -814,6 +815,7 @@ function Inbox({ notify, forceWhatsapp = false, navigationContext = null, onNavi
       setConversationError('Informe um telefone válido com DDD e país quando necessário.');
       return;
     }
+    if (!inboxSendLock.current.acquire()) return;
     const assignee = teamMembers.find((member) => member.name === owner);
     const item = { id: globalThis.crypto?.randomUUID?.() || `conversation-${Date.now()}`, ...newContact, status: 'open', assigneeId: assignee?.id || '', initials: newContact.name.split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase(), time: new Date().toISOString(), text: '', unread: 0, color: 'blue', channel: 'WhatsApp', owner, whatsappSessionId: selectedSessionId || activeSessions[0]?.id || '', whatsappChatId, history: [] };
     setSending(true);
@@ -827,7 +829,7 @@ function Inbox({ notify, forceWhatsapp = false, navigationContext = null, onNavi
       notify('Conversa criada. Selecione uma sessão WAHA ativa para enviar mensagens.');
     } catch (error) {
       setConversationError(error.message || 'Não foi possível criar a conversa. Seus dados continuam no formulário.');
-    } finally { setSending(false); }
+    } finally { setSending(false); inboxSendLock.current.release(); }
   };
   const updateConversationMetadata = async (patch) => {
     if (!current) throw new Error('Selecione uma conversa primeiro.');

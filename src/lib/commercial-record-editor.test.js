@@ -8,6 +8,7 @@ import {
   commercialRecordEditorDraft,
   commercialRecordEditorFields,
   commercialRecordEditorIsDirty,
+  synchronizeCompanyContactNames,
 } from './commercial-record-editor.js';
 
 const clients = [{ id: 12, name: 'Nexo Ltda', email: 'financeiro@nexo.test' }];
@@ -90,6 +91,27 @@ test('company contact counts use linked IDs and only unambiguous legacy names', 
   assert.equal(companyContactCount(companies[0], contacts, [...companies, otherCompany]), 2);
   const duplicateNameCompany = { id: 36, name: 'Acme Tecnologia' };
   assert.equal(companyContactCount(companies[0], contacts, [...companies, duplicateNameCompany, otherCompany]), 1);
+});
+
+test('renaming a company updates linked contact labels and only unique legacy name links', () => {
+  const otherCompany = { id: 35, name: 'Outra Empresa' };
+  const contacts = [
+    { id: 1, companyId: 34, company: 'Acme Tecnologia' },
+    { id: 2, company: 'Acme Tecnologia' },
+    { id: 3, companyId: 35, company: 'Acme Tecnologia' },
+    { id: 4, company: 'Fornecedor' },
+  ];
+  const renamed = synchronizeCompanyContactNames(companies[0], 'Acme Digital', contacts, [...companies, otherCompany]);
+  assert.equal(renamed[0].company, 'Acme Digital');
+  assert.equal(renamed[1].company, 'Acme Digital');
+  assert.equal(renamed[2].company, 'Acme Tecnologia');
+  assert.equal(renamed[3], contacts[3]);
+  assert.equal(contacts[0].company, 'Acme Tecnologia');
+
+  const duplicateCompany = { id: 36, name: 'Acme Tecnologia' };
+  const ambiguousLegacy = synchronizeCompanyContactNames(companies[0], 'Acme Digital', contacts, [...companies, duplicateCompany]);
+  assert.equal(ambiguousLegacy[0].company, 'Acme Digital');
+  assert.equal(ambiguousLegacy[1].company, 'Acme Tecnologia');
 });
 
 test('keeps draft values as strings and detects unsaved changes', () => {

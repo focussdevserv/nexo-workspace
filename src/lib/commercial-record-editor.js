@@ -58,6 +58,21 @@ export function companyContactCount(company, contacts = [], companies = []) {
   }).length;
 }
 
+export function synchronizeCompanyContactNames(company, nextName, contacts = [], companies = []) {
+  const previousName = String(company?.name ?? '').trim();
+  const normalizedPreviousName = normalizeName(previousName);
+  const normalizedNextName = normalizeName(nextName);
+  if (!normalizedPreviousName || !normalizedNextName || normalizedPreviousName === normalizedNextName) return contacts;
+
+  const legacyNameIsUnique = companies.filter((item) => normalizeName(item.name) === normalizedPreviousName).length === 1;
+  return contacts.map((contact) => {
+    const linkedById = contact.companyId != null && String(contact.companyId).trim()
+      ? String(contact.companyId) === String(company.id)
+      : legacyNameIsUnique && normalizeName(contact.company) === normalizedPreviousName;
+    return linkedById ? { ...contact, company: String(nextName).trim() } : contact;
+  });
+}
+
 export function commercialContactCompanySelection(companies = [], selectedCompanyId = '') {
   const company = companies.find((item) => String(item.id) === String(selectedCompanyId));
   return {

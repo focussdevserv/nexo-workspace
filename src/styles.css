@@ -45,3 +45,5 @@ html[data-theme='dark'] .app-shell .theme-toggle-button:hover{color:#a8edcc;back
 html[data-theme='dark'] .attention-demo-label,html[data-theme='dark'] .attention-demo-message small,html[data-theme='dark'] .attention-demo-message time{color:#a1a1aa}
 html[data-theme='dark'] .attention-demo-message{border-color:#34353a;background:#202126;color:#f4f4f5}
 html[data-theme='dark'] .attention-demo-message:hover,html[data-theme='dark'] .attention-demo-open{border-color:#405443;background:#202a23;color:#b5f38c}
+
+@media(max-width:340px){body{min-width:0}}

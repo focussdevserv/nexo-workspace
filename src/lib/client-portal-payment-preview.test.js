@@ -5,7 +5,7 @@ import { buildClientPortalPaymentPreview } from './client-portal-payment-preview
 test('portal payment preview includes only the exact client-linked public fields and actions', () => {
   const result = buildClientPortalPaymentPreview([
     { id: 'due-later', workspaceClientId: 'client-a', createdAt: '2026-01-03', description: 'Cobrança futura', amount: 100, status: 'pending', paymentDetails: { pixCode: 'secret-code', ticketUrl: 'https://pay.example/boleto', accessToken: 'private' } },
-    { id: 'paid', workspaceClientId: 'client-a', createdAt: '2026-01-02', description: 'Já paga', amount: 50, status: 'paid', paymentDetails: { ticketUrl: 'javascript:alert(1)' } },
+    { id: 'paid', workspaceClientId: 'client-a', createdAt: '2026-01-02', description: 'Já paga', amount: 50, status: 'paid', paymentDetails: { pixCode: 'old-code', ticketUrl: 'https://pay.example/old-ticket' } },
     { id: 'other-client', workspaceClientId: 'client-b', createdAt: '2026-01-04', description: 'Não compartilhar', amount: 9, status: 'pending' },
   ], [
     { id: 'subscription', workspaceClientId: 'client-a', createdAt: '2026-01-05', description: 'Plano mensal', amount: 25, status: 'authorized', nextPaymentAt: '2026-02-01' },
@@ -18,6 +18,7 @@ test('portal payment preview includes only the exact client-linked public fields
   });
   assert.equal('paymentDetails' in result[1], false);
   assert.equal(result[2].hasTicketAction, false);
+  assert.equal(result[2].hasPixAction, false);
   assert.equal(result[0].hasPixAction, false);
 });
 

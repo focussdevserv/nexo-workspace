@@ -36,7 +36,7 @@ import { archiveClientRecord, isArchivedClient, restoreClientRecord } from "../l
 import { clientFileRecordForUpload } from "../lib/client-file-link.js";
 import { clientFileDeleteConfirmation, clientFileMetadataPatch, safeClientFileHref } from "../lib/client-file-actions.js";
 import { buildClientRelationshipHistory, clientRelationshipHistoryDateLabel } from "../lib/client-relationship-history.js";
-import { buildCommercialRecordEditorPatch, companyContactCount, commercialContactCompanySelection, commercialRecordEditorDraft, commercialRecordEditorFields, commercialRecordEditorIsDirty } from "../lib/commercial-record-editor.js";
+import { buildCommercialRecordEditorPatch, companyContactCount, commercialContactCompanySelection, commercialRecordEditorDraft, commercialRecordEditorFields, commercialRecordEditorIsDirty, synchronizeCompanyContactNames } from "../lib/commercial-record-editor.js";
 import { filterCommercialRecords } from "../lib/commercial-record-filter.js";
 import { commercialStageTone } from "../lib/commercial-stage-tone.js";
 import { averageProposalApprovalDays, countLeadsWithoutNextAction, formatElapsedDays } from "../lib/commercial-cycle-metrics.js";
@@ -982,6 +982,9 @@ export default function CommercialScreen({
   const updateCommercialRecord = async (record, patch) => {
     if (key === "leads") return updateLead(record, patch);
     const rowKey = String(record.id || record.title || record.name);
+    const nextContacts = key === "empresas" && patch.name !== undefined
+      ? synchronizeCompanyContactNames(record, patch.name, records.contacts || [], records.companies || [])
+      : records.contacts;
     const next = {
       ...records,
       [recordType]: (records[recordType] || []).map(item => String(item.id || item.title || item.name) === rowKey ? {
@@ -989,6 +992,7 @@ export default function CommercialScreen({
         ...patch
       } : item)
     };
+    if (nextContacts !== records.contacts) next.contacts = nextContacts;
     try {
       await persistRecords(next);
       notify("Registro atualizado.");

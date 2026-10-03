@@ -1,4 +1,4 @@
-import { safeClientPortalHref } from './client-portal-actions.js';
+import { canOfferClientPortalPaymentAction, safeClientPortalHref } from './client-portal-actions.js';
 
 function createdAtDescending(left, right) {
   return new Date(right.createdAt || 0).valueOf() - new Date(left.createdAt || 0).valueOf();
@@ -17,8 +17,8 @@ export function buildClientPortalPaymentPreview(orders = [], subscriptions = [],
     amount: item.amount,
     status: item.status,
     dueAt: item.dueAt,
-    hasPixAction: Boolean(item.paymentDetails?.pixCode),
-    hasTicketAction: Boolean(safeClientPortalHref(item.paymentDetails?.ticketUrl)),
+    hasPixAction: canOfferClientPortalPaymentAction(item.status) && Boolean(item.paymentDetails?.pixCode),
+    hasTicketAction: canOfferClientPortalPaymentAction(item.status) && Boolean(safeClientPortalHref(item.paymentDetails?.ticketUrl)),
   }));
   const subscriptionPayments = subscriptions.filter(belongsToClient).sort(createdAtDescending).slice(0, 100).map((item) => ({
     id: item.id,
