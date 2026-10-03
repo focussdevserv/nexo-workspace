@@ -3,7 +3,7 @@ import { ArrowRight, Check, CheckCircle2, CircleDollarSign, Copy, ExternalLink, 
 import './client-portal.css';
 import { apiRequest, useWorkspaceRecords } from '../lib/workspace-api.js';
 import { isLocalDemoActive } from '../lib/local-demo.js';
-import { canSendPortalMessage, canSubmitPortalApprovalDecision, portalLinkActionLabel, shouldConfirmPortalLinkRotation, splitClientPortalApprovals } from '../lib/client-portal-actions.js';
+import { appendSentPortalMessage, canSendPortalMessage, canSubmitPortalApprovalDecision, portalLinkActionLabel, shouldConfirmPortalLinkRotation, splitClientPortalApprovals } from '../lib/client-portal-actions.js';
 import { recordBelongsToPortalClient } from '../lib/client-portal-scope.js';
 
 const money = (value) => Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -94,6 +94,7 @@ export function PublicClientPortal({ slug }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [sentMessages, setSentMessages] = useState([]);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
   const [approvalNotes, setApprovalNotes] = useState({});
@@ -112,6 +113,7 @@ export function PublicClientPortal({ slug }) {
     setLoading(true);
     setError('');
     setData(null);
+    setSentMessages([]);
     const headers = accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
     fetch(`/api/public/client-portal/${encodeURIComponent(slug)}`, { credentials: 'same-origin', headers, signal: controller.signal }).then(async (response) => {
       const payload = await response.json().catch(() => ({}));
@@ -151,7 +153,7 @@ export function PublicClientPortal({ slug }) {
     event.preventDefault();
     if (!canSendPortalMessage(message, busy)) { flash('Escreva sua mensagem antes de enviar.'); return; }
     setBusy(true);
-    try { await portalRequest(`/api/public/client-portal/${encodeURIComponent(slug)}/messages`, { method: 'POST', body: JSON.stringify({ message: message.trim() }) }); setMessage(''); flash('Mensagem enviada para a equipe.'); }
+    try { const result = await portalRequest(`/api/public/client-portal/${encodeURIComponent(slug)}/messages`, { method: 'POST', body: JSON.stringify({ message: message.trim() }) }); setSentMessages((current) => appendSentPortalMessage(current, message, result.data?.id)); setMessage(''); flash('Mensagem enviada para a equipe.'); }
     catch (err) { flash(err.message || 'Não foi possível enviar sua mensagem.'); }
     finally { setBusy(false); }
   };
@@ -180,6 +182,6 @@ export function PublicClientPortal({ slug }) {
     </div>
     {!!pendingApprovals.length && <section className="cp-activity"><div className="cp-section-title"><div><h3>Aprovações pendentes</h3><p>Revise os materiais enviados pela equipe.</p></div></div>{pendingApprovals.map((item) => { const comment = approvalNotes[item.id] || ''; const canRequestChanges = canSubmitPortalApprovalDecision('changes_requested', comment, busy); return <article className="cp-activity-row" key={item.id}><FileCheck2 size={15} /><span className="cp-approval-content"><b>{item.title || item.name}</b>{item.project && <small>{item.project}</small>}{item.attachment?.url && <a href={item.attachment.url} target="_blank" rel="noreferrer">Revisar {item.attachment.name || 'arquivo'}</a>}{item.clientComment && <small>{item.clientComment}</small>}<label className="cp-approval-comment"><span>Comentário ou ajuste solicitado</span><textarea aria-label={`Comentário para ${item.title || 'aprovação'}`} maxLength={2000} rows={2} value={comment} onChange={(event) => setApprovalNotes((notes) => ({ ...notes, [item.id]: event.target.value }))} placeholder="Adicione contexto se precisar de uma alteração" aria-describedby={`approval-comment-hint-${item.id}`} /></label><small id={`approval-comment-hint-${item.id}`} className="cp-approval-hint">{comment.trim().length < 3 ? 'Para pedir um ajuste, descreva a mudança (mínimo de 3 caracteres).' : 'Seu comentário será enviado junto com o pedido de ajuste.'}</small></span><button type="button" disabled={!canRequestChanges} className="admin-secondary" onClick={() => decide(item, 'changes_requested')}>Pedir ajuste</button><button type="button" disabled={!canSubmitPortalApprovalDecision('approved', comment, busy)} className="admin-primary" onClick={() => decide(item, 'approved')}><Check size={13} />Aprovar</button></article>;})}</section>}
     {!!approvalHistory.length && <section className="cp-activity cp-approval-history"><div className="cp-section-title"><div><h3>Hist&#243;rico de aprova&#231;&#245;es</h3><p>Decis&#245;es anteriores continuam dispon&#237;veis para consulta.</p></div></div>{approvalHistory.map((item) => { const date = item.decidedAt || item.sent; const parsedDate = date ? new Date(date) : null; return <article className="cp-activity-row" key={item.id}><FileCheck2 size={15} /><span className="cp-approval-content"><b>{item.title || item.name}</b><small>{item.status || 'Sem status'}{parsedDate && !Number.isNaN(parsedDate.valueOf()) ? ` ? ${parsedDate.toLocaleString('pt-BR')}` : ''}</small>{item.project && <small>{item.project}</small>}{item.clientComment && <small>{item.clientComment}</small>}</span></article>;})}</section>}
-    <section className="cp-public-message"><div><span className="cp-card-icon indigo"><MessageCircle size={17} /></span><h2>Fale com a equipe</h2><p>As mensagens entram no histórico de atendimento da agência.</p></div><form onSubmit={sendMessage}><textarea required maxLength={2000} rows={3} value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Escreva sua mensagem…" /><button className="admin-primary" disabled={!canSendPortalMessage(message, busy)}><Send size={14} />{busy ? 'Enviando…' : 'Enviar mensagem'}</button></form></section>
+    <section className="cp-public-message"><div><span className="cp-card-icon indigo"><MessageCircle size={17} /></span><h2>Fale com a equipe</h2><p>As mensagens entram no histórico de atendimento da agência.</p></div><div className="cp-message-conversation">{sentMessages.length > 0 && <div className="cp-sent-messages" aria-live="polite"><h3>Enviadas nesta visita</h3>{sentMessages.map((item) => <article key={item.id}><p>{item.text}</p><small>Enviada para a equipe · {new Date(item.sentAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</small></article>)}</div>}<form onSubmit={sendMessage}><textarea required maxLength={2000} rows={3} value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Escreva sua mensagem…" /><button className="admin-primary" disabled={!canSendPortalMessage(message, busy)}><Send size={14} />{busy ? 'Enviando…' : 'Enviar mensagem'}</button></form></div></section>
   </section>{notice && <div className="cp-toast" role="status">{notice}</div>}</main>;
 }

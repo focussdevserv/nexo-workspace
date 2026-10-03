@@ -156,7 +156,7 @@ export default function SettingsScreen({ notify, navigationContext = null, onNav
       setDirty(settingsDraftHasChanges(imported, settingsBaseline(defaults, savedSettings?.settings)));
       notify('Configurações importadas. Salve para aplicar.');
     } catch { notify('Esse arquivo não contém uma exportação válida do Focusshub.'); }
-    event.target.value = '';
+    finally { event.target.value = ''; }
   };
   const uploadBrandLogo = async (event) => {
     const file = event.target.files?.[0];

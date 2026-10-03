@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { fetchAllRecords, useWorkspaceRecords } from '../lib/workspace-api.js';
 import { Check, Copy, MoreHorizontal, Pencil, Plus, Search, ShieldCheck, Trash2, UserMinus, UserRound, Users, X } from 'lucide-react';
 import { apiRequest } from '../lib/workspace-api.js';
+import { copyTextToClipboard } from '../lib/copy-to-clipboard.js';
 import { isLocalDemoActive } from '../lib/local-demo.js';
 import { effectiveModulePermissionDraft, permissionDraftForAccount, permissionsPayload, setModulePermissionMode, setModulePermissionValue, validatePermissionDraft } from '../lib/team-permissions.js';
 import './team.css';
@@ -155,7 +156,10 @@ function TeamAccessPanel({ notify, onAccountCountChange }) {
     catch (err) { setError(err.message || 'Nao foi possivel suspender este acesso.'); }
     finally { setBusy(false); }
   };
-  const copyInvite = async () => { try { await navigator.clipboard.writeText(inviteUrl); notify('Link de convite copiado.'); } catch { setError('Nao foi possivel copiar o link neste navegador.'); } };
+  const copyInvite = async () => {
+    if (await copyTextToClipboard(inviteUrl)) notify('Link de convite copiado.');
+    else setError('Nao foi possivel copiar o link neste navegador. Selecione e copie o link exibido.');
+  };
   const renewInvite = (account) => {
     setDraft({ name: account.name, email: account.email, role: account.role });
     setInviteUrl(''); setInviteRecipient('');

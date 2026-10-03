@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { canSendPortalMessage, canSubmitPortalApprovalDecision, portalLinkActionLabel, shouldConfirmPortalLinkRotation, splitClientPortalApprovals } from './client-portal-actions.js';
+import { appendSentPortalMessage, canSendPortalMessage, canSubmitPortalApprovalDecision, portalLinkActionLabel, shouldConfirmPortalLinkRotation, splitClientPortalApprovals } from './client-portal-actions.js';
 
 test('an active portal link is clearly labeled as a replacement and requires confirmation', () => {
   assert.equal(portalLinkActionLabel(true), 'Substituir link atual');
@@ -37,4 +37,14 @@ test('portal messages reject whitespace-only text and disable duplicate sends', 
   assert.equal(canSendPortalMessage('  \n  '), false);
   assert.equal(canSendPortalMessage(' Olá, preciso de ajuda. '), true);
   assert.equal(canSendPortalMessage('mensagem válida', true), false);
+});
+
+test('a successfully saved portal message is visible in the current session without duplicating it', () => {
+  const sent = appendSentPortalMessage([], '  Olá, preciso de ajuda.  ', 'inbox-record-1');
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].id, 'inbox-record-1');
+  assert.equal(sent[0].text, 'Olá, preciso de ajuda.');
+  assert.ok(Number.isFinite(Date.parse(sent[0].sentAt)));
+  assert.equal(appendSentPortalMessage(sent, 'Olá, preciso de ajuda.', 'inbox-record-1'), sent);
+  assert.deepEqual(appendSentPortalMessage(sent, '  '), sent);
 });

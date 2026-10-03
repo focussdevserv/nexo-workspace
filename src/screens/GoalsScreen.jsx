@@ -3,6 +3,7 @@ import { fetchAllRecords, useWorkspaceRecords } from '../lib/workspace-api.js';
 import { confirmWorkspaceDelete, useWorkspacePreferences } from '../lib/workspace-preferences.js';
 import { calculateGoalMetric, goalMetricDefinitions } from '../lib/goal-metrics.js';
 import { guardGoalsNavigation } from '../lib/goals-navigation.js';
+import { createLatestRequestGuard } from '../lib/latest-request.js';
 import { Activity, ArrowDown, ArrowUp, Check, CircleDollarSign, Clock3, Flag, Pencil, Plus, Target, Trash2, TrendingUp, Users, X } from 'lucide-react';
 import './goals.css';
 
@@ -19,6 +20,8 @@ export default function GoalsScreen({ notify }) {
   const { records: savedGoals, loading, error, refresh, create, update, remove: deleteRecord } = useWorkspaceRecords('goals');
   const preferences = useWorkspacePreferences();
   const [metricData, setMetricData] = useState({});
+  const metricsRequestGuard = useRef(null);
+  if (!metricsRequestGuard.current) metricsRequestGuard.current = createLatestRequestGuard();
   const [metricStates, setMetricStates] = useState(Object.fromEntries(Object.keys(sourcePaths).map((key) => [key, 'loading'])));
   const [metricsLoading, setMetricsLoading] = useState(false);
   const [draftGoals, setDraftGoals] = useState(null);
@@ -59,17 +62,22 @@ export default function GoalsScreen({ notify }) {
     };
   }, [dirty]);
   const refreshMetrics = async () => {
+    const requestId = metricsRequestGuard.current.begin();
     setMetricsLoading(true);
     setMetricStates(Object.fromEntries(Object.keys(sourcePaths).map((key) => [key, 'loading'])));
     const entries = await Promise.all(Object.entries(sourcePaths).map(async ([key, path]) => {
       try { return [key, await fetchAllRecords(path), 'ready']; }
       catch (err) { return [key, [], /403|forbidden|permiss|acesso/i.test(err?.message || '') ? 'restricted' : 'failed']; }
     }));
+    if (!metricsRequestGuard.current.isCurrent(requestId)) return;
     setMetricData(Object.fromEntries(entries.map(([key, data]) => [key, data])));
     setMetricStates(Object.fromEntries(entries.map(([key, , state]) => [key, state])));
     setMetricsLoading(false);
   };
-  useEffect(() => { refreshMetrics(); }, []);
+  useEffect(() => {
+    refreshMetrics();
+    return () => metricsRequestGuard.current.invalidate();
+  }, []);
   const metricResult = (goal) => calculateGoalMetric(goal.metric || 'manual', metricData, metricStates, goal.period || period, new Date(), preferences);
   const goalCurrent = (goal) => goal.metric && goal.metric !== 'manual' ? metricResult(goal).value : safeCurrent(goal);
   const goalProgress = (goal) => { const current = goalCurrent(goal); return current === null ? null : safeTarget(goal) ? Math.max(0, Math.min(100, Math.round(current / safeTarget(goal) * 100))) : 0; };

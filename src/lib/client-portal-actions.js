@@ -26,3 +26,11 @@ export function canSubmitPortalApprovalDecision(decision, comment, busy = false)
 export function canSendPortalMessage(message, busy = false) {
   return !busy && String(message || '').trim().length > 0;
 }
+
+export function appendSentPortalMessage(messages = [], message, responseId = '') {
+  const text = String(message || '').trim();
+  if (!text) return Array.isArray(messages) ? messages : [];
+  const current = Array.isArray(messages) ? messages : [];
+  if (responseId && current.some((item) => String(item.id) === String(responseId))) return current;
+  return [{ id: responseId || `local-${Date.now()}`, text, sentAt: new Date().toISOString() }, ...current];
+}

@@ -28,3 +28,12 @@ test('latest request guard ignores a result after the user changes the search ta
 
   assert.equal(guard.isCurrent(oldRepositoryRequest), false);
 });
+
+test('latest request guard ignores an overlapping stale refresh', () => {
+  const guard = createLatestRequestGuard();
+  const olderRequest = guard.begin();
+  const newerRequest = guard.begin();
+
+  assert.equal(guard.isCurrent(olderRequest), false);
+  assert.equal(guard.isCurrent(newerRequest), true);
+});
