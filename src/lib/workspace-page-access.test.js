@@ -8,6 +8,13 @@ test('client portal administration follows CRM permissions, matching its client 
   assert.equal(roleCanOpenWorkspacePage('member', 'Portal do cliente', { support: { read: false }, crm: { read: true } }), true);
 });
 
+test('Files navigation follows the support permission used by file APIs', () => {
+  assert.equal(workspacePagePermissionModule('Arquivos'), 'support');
+  assert.equal(roleCanOpenWorkspacePage('member', 'Arquivos', { support: { read: true } }), true);
+  assert.equal(roleCanOpenWorkspacePage('member', 'Arquivos', { support: { read: false } }), false);
+  assert.equal(roleCanOpenWorkspacePage('member', 'Arquivos', { support: { read: false }, delivery: { read: true } }), false);
+});
+
 test('member navigation honors explicit module read permissions and safe baseline pages', () => {
   assert.equal(roleCanOpenWorkspacePage('member', 'Clientes', { crm: { read: true } }), true);
   assert.equal(roleCanOpenWorkspacePage('member', 'Clientes', { crm: { read: false } }), false);

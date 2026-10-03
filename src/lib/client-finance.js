@@ -103,6 +103,26 @@ export function clientFinanceScheduleForCreate(context, defaultStartAt) {
   };
 }
 
+/** Build each in-profile finance creation form from current context, never stale draft data. */
+export function clientFinanceDraftForCreate({ currentDraft, page, context = {}, client, defaultDueDate, defaultStartAt }) {
+  const kinds = { Assinaturas: 'recurring', Receitas: 'revenue', Despesas: 'expense', 'Cobranças': 'single' };
+  const schedule = clientFinanceScheduleForCreate(context, defaultStartAt);
+  return {
+    ...currentDraft,
+    kind: kinds[page] || 'single',
+    description: context.description ?? '',
+    amount: context.amount == null ? '' : String(context.amount),
+    dueDate: context.dueDate || defaultDueDate,
+    frequency: context.frequency || 'months',
+    frequencyInterval: String(context.frequencyInterval || 1),
+    payerEmail: context.clientEmail || client?.email || '',
+    startAt: schedule.startAt,
+    endAt: schedule.endAt,
+    installmentServiceId: context.installmentServiceId || '',
+    installmentIndex: Number.isInteger(context.installmentIndex) ? context.installmentIndex : null,
+  };
+}
+
 export function clientFinanceLegacyClientValue(resource, record) {
   // Expense counterparties are usually vendors, so only use an explicit
   // client field for legacy records that predate clientId linking.

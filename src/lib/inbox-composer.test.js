@@ -14,7 +14,8 @@ test('a new inbox composer always starts without a previous recipient or message
 test('inbox composer open and discard paths clear recipient, message, attachment and assignee state', () => {
   const source = readFileSync(fileURLToPath(new URL('../screens/ServiceScreens.jsx', import.meta.url)), 'utf8');
   assert.match(source, /const closeNewConversation = \(\) => \{ setNewOpen\(false\); setNewContact\(emptyInboxComposerDraft\(\)\); setAttachment\(null\); setOwner\(''\); setConversationError\(''\); \};/);
-  assert.match(source, /label="Nova conversa" onClick=\{\(\) => \{ setConversationError\(''\); setNewContact\(emptyInboxComposerDraft\(\)\); setAttachment\(null\); setOwner\(''\); setNewOpen\(true\); \}\}/);
+  assert.match(source, /const openNewConversation = \(trigger\) => \{ newDialogTriggerRef\.current = trigger \|\| null; setConversationError\(''\); setNewContact\(emptyInboxComposerDraft\(\)\); setAttachment\(null\); setOwner\(''\); setNewOpen\(true\); \};/);
+  assert.match(source, /label="Nova conversa" onClick=\{\(event\) => openNewConversation\(event\.currentTarget\)\}/);
   assert.match(source, /onClick=\{closeNewConversation\}>Cancelar<\/button>/);
   assert.match(source, /event\.target === event\.currentTarget\) closeNewConversation\(\);/);
 });

@@ -23,6 +23,7 @@ import { matchesPaymentSearch } from '../lib/payment-search.js';
 import { subscriptionStatusUrl } from '../lib/subscription-status-url.js';
 import { updatePaymentAddress, updatePaymentField } from '../lib/payment-form.js';
 import { replacePaymentRecord } from '../lib/payment-record-update.js';
+import { paymentNavigationContextKey } from '../lib/payment-navigation-context.js';
 
 const money = (value) => Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const labels = { pending: 'Aguardando pagamento', creating: 'Criando', processing: 'Em processamento', paid: 'Paga', authorized: 'Autorizada', paused: 'Pausada', canceled: 'Cancelada', cancelled: 'Cancelada', overdue: 'Vencida', failed: 'Falhou', refunded: 'Estornada', rejected: 'Recusada', expired: 'Expirada' };
@@ -110,6 +111,7 @@ export function PaymentConsole({ kind = 'orders', notify = () => {}, navigationC
   const billingRequestAttempt = useRef(null);
   const endpoint = subscriptionMode ? '/api/billing/subscriptions' : '/api/billing/orders';
   const creatingSubscription = subscriptionMode || form.billingType === 'recurring';
+  const navigationContextKey = paymentNavigationContextKey(navigationContext);
   const billingRequestKey = useCallback((operation, payload) => {
     billingRequestAttempt.current = reuseBillingRequestKey(billingRequestAttempt.current, operation, payload, createBillingRequestUuid);
     return billingRequestAttempt.current.key;
@@ -215,7 +217,7 @@ export function PaymentConsole({ kind = 'orders', notify = () => {}, navigationC
     else setForm((current) => ({ ...current, clientId: navigationContext.clientId || '', clientName: navigationContext.clientName, payerEmail: navigationContext.clientEmail || current.payerEmail, description: navigationContext.description || current.description, amount: navigationContext.amount != null ? String(navigationContext.amount) : current.amount, frequency: navigationContext.frequency || current.frequency, frequencyInterval: navigationContext.frequencyInterval || current.frequencyInterval }));
     if (navigationContext.action === 'create') setModal(true);
     onNavigationContextConsumed();
-  }, [defaultDueDays, navigationContext?.intentId, navigationContext?.filter, navigationContext?.action, navigationContext?.clientName]);
+  }, [defaultDueDays, navigationContextKey]);
   const submit = async (event) => {
     event.preventDefault();
     if (creatingSubscription && !subscriptionsEnabled) { setError('Novas assinaturas recorrentes estão desativadas nas Configurações financeiras.'); return; }

@@ -3,7 +3,9 @@ const pageModules = new Map([
   ['contatos', 'crm'], ['propostas', 'crm'], ['servicos', 'crm'], ['contratos', 'crm'],
   ['portal do cliente', 'crm'],
   ['agenda', 'delivery'], ['tarefas', 'delivery'], ['projetos', 'delivery'], ['horas', 'delivery'],
-  ['arquivos', 'delivery'],
+  // File records and their Drive upload/metadata endpoints are authorized
+  // through the support module on the API; keep navigation aligned with it.
+  ['arquivos', 'support'],
   ['caixa de entrada', 'support'], ['aprovacoes', 'support'], ['whatsapp', 'support'], ['tickets', 'support'],
   ['sites', 'sites'], ['dominios', 'sites'], ['hospedagens', 'sites'], ['repositorios', 'sites'], ['monitoramento', 'sites'],
   ['financeiro', 'finance'], ['receitas', 'finance'], ['despesas', 'finance'], ['contas', 'finance'],

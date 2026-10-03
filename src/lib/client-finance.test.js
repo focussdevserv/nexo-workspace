@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { advanceClientInstallmentProgress, buildClientFinanceHistory, clientBillingRecordState, clientFinanceDateKey, clientFinanceDueDateLabel, clientFinanceEditPatch, clientFinanceFailedResources, clientFinanceFilterCounts, clientFinanceFilterForPage, clientFinanceLegacyClientValue, clientFinanceOpenBillingCount, clientFinanceScheduleForCreate, isClientFinanceCancelled, isClientFinanceSettled, manualFinanceSettlementPatch, normalizeClientSubscriptionTerms, prepareClientContractTrackingPatch, prepareClientServiceChargeUpdate, resolveClientInstallmentRequest, safeClientFinanceExternalHref } from './client-finance.js';
+import { advanceClientInstallmentProgress, buildClientFinanceHistory, clientBillingRecordState, clientFinanceDateKey, clientFinanceDraftForCreate, clientFinanceDueDateLabel, clientFinanceEditPatch, clientFinanceFailedResources, clientFinanceFilterCounts, clientFinanceFilterForPage, clientFinanceLegacyClientValue, clientFinanceOpenBillingCount, clientFinanceScheduleForCreate, isClientFinanceCancelled, isClientFinanceSettled, manualFinanceSettlementPatch, normalizeClientSubscriptionTerms, prepareClientContractTrackingPatch, prepareClientServiceChargeUpdate, resolveClientInstallmentRequest, safeClientFinanceExternalHref } from './client-finance.js';
 import { belongsToClient } from '../data/client-link.js';
 
 test('client finance shortcuts map to an in-profile filter', () => {
@@ -22,12 +22,43 @@ test('a new client subscription does not inherit the prior subscription schedule
   });
 });
 
+test('new in-profile finance actions clear stale client, amount, description and installment context', () => {
+  const currentDraft = {
+    kind: 'recurring', description: 'Old service', amount: '1450', payerEmail: 'old@example.test',
+    method: 'boleto', dueDate: '2026-12-01', frequency: 'days', frequencyInterval: '14',
+    startAt: '2026-12-01', endAt: '2027-12-01', installmentServiceId: 'old-service', installmentIndex: 2,
+  };
+  const next = clientFinanceDraftForCreate({
+    currentDraft, page: 'Receitas', context: { clientEmail: 'client@example.test' },
+    client: { email: 'client@example.test' }, defaultDueDate: '2026-10-10', defaultStartAt: '2026-10-04',
+  });
+
+  assert.equal(next.kind, 'revenue');
+  assert.equal(next.description, '');
+  assert.equal(next.amount, '');
+  assert.equal(next.payerEmail, 'client@example.test');
+  assert.equal(next.dueDate, '2026-10-10');
+  assert.equal(next.frequency, 'months');
+  assert.equal(next.frequencyInterval, '1');
+  assert.equal(next.startAt, '2026-10-04');
+  assert.equal(next.endAt, '');
+  assert.equal(next.installmentServiceId, '');
+  assert.equal(next.installmentIndex, null);
+  assert.equal(next.method, 'boleto');
+});
+
+test('prefilled zero amounts remain explicit instead of inheriting an earlier value', () => {
+  const next = clientFinanceDraftForCreate({
+    currentDraft: { amount: '900' }, page: 'Cobranças', context: { amount: 0 },
+    client: {}, defaultDueDate: '2026-10-10', defaultStartAt: '2026-10-04',
+  });
+  assert.equal(next.amount, '0');
+});
+
 test('every new client finance action starts with a fresh recurring schedule', async () => {
   const source = await readFile(new URL('../screens/CommercialScreens.jsx', import.meta.url), 'utf8');
   const openTab = source.slice(source.indexOf('const openTab ='), source.indexOf('const saveClientFinance ='));
-  assert.match(openTab, /const recurringSchedule = clientFinanceScheduleForCreate\(context, dateAfterDays\(1\)\)/);
-  assert.match(openTab, /startAt: recurringSchedule\.startAt/);
-  assert.match(openTab, /endAt: recurringSchedule\.endAt/);
+  assert.match(openTab, /clientFinanceDraftForCreate\(/);
 });
 
 test('client profile shows billing deadlines in the workspace timezone', () => {

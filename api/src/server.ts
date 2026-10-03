@@ -23,6 +23,7 @@ import { isSafeWorkspaceData } from './security/workspace-data.js';
 import { buildWorkspaceBackup, parseWorkspaceBackup } from './workspace-backup.js';
 import { findDuplicateLead, findLeadDuplicateMatch } from './crm/lead-identity.js';
 import { buildClientFromLead, mergeLeadServiceIntoClient } from './crm/lead-conversion.js';
+import { teamAccessStatus } from './team/account-status.js';
 import { detachCatalogServiceReference } from './crm/service-reference.js';
 import { canChangeProjectArchiveState, isWorkspaceRequestAllowed, type WorkspaceRecordScope } from './security/authorization.js';
 import { billingClientIdsForWorkspaceScope, clientLinkedWorkspaceResources, recordMatchesWorkspaceScope, workspaceClientReferenceFields, workspaceProjectReferenceFields } from './security/record-scope.js';
@@ -2339,7 +2340,15 @@ app.delete('/api/integrations/google/drive/:fileId/share-for-portal', { preHandl
 app.get('/api/team/users', { preHandler: app.authenticate }, async (request, reply) => {
   if (request.user.role !== 'owner') return reply.code(403).send({ error: 'owner_required', message: 'Somente a pessoa proprietaria pode administrar os acessos.' });
   const rows = await db.select({ id: users.id, name: users.name, email: users.email, role: users.role, active: users.active, permissions: users.permissions, createdAt: users.createdAt }).from(users).where(eq(users.organizationId, request.user.organizationId)).orderBy(asc(users.createdAt));
-  return { data: rows };
+  const ids = rows.map((row) => row.id);
+  const lifecycleEvents = ids.length ? await db.select({ entityId: activityEvents.entityId, action: activityEvents.action, payload: activityEvents.payload, createdAt: activityEvents.createdAt })
+    .from(activityEvents).where(and(
+      eq(activityEvents.organizationId, request.user.organizationId), eq(activityEvents.entityType, 'team-user'),
+      inArray(activityEvents.entityId, ids), inArray(activityEvents.action, ['invited', 'invite_renewed', 'invite_accepted', 'deactivated']),
+    )).orderBy(desc(activityEvents.createdAt)) : [];
+  const latestByUser = new Map<string, (typeof lifecycleEvents)[number]>();
+  for (const event of lifecycleEvents) if (event.entityId && !latestByUser.has(event.entityId)) latestByUser.set(event.entityId, event);
+  return { data: rows.map((row) => ({ ...row, ...teamAccessStatus({ active: row.active, latestInviteActivity: latestByUser.get(row.id) }) })) };
 });
 
 app.patch('/api/team/users/:id/permissions', { preHandler: app.authenticate }, async (request, reply) => {
@@ -2377,19 +2386,20 @@ app.post('/api/team/invites', { preHandler: app.authenticate, config: { rateLimi
   const existingUser = existing[0];
   if (existingUser && (existingUser.organizationId !== request.user.organizationId || existingUser.role === 'owner' || existingUser.active)) return reply.code(409).send({ error: 'team_user_exists', message: 'Este e-mail ja tem uma conta ativa, pertence a outro workspace ou esta reservado a uma conta proprietaria.' });
   const inviteVersion = (existingUser?.inviteVersion ?? 0) + 1;
+  const inviteExpiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString();
   const invite = await db.transaction(async (tx) => {
     const passwordHash = await argon2.hash(randomBytes(32).toString('base64url'));
     const [user] = existingUser
       ? await tx.update(users).set({ name: body.name, email: body.email, role: body.role, permissions: null, active: false, inviteVersion, sessionVersion: sql`${users.sessionVersion} + 1`, passwordHash }).where(and(eq(users.id, existingUser.id), eq(users.organizationId, request.user.organizationId), eq(users.active, false), eq(users.inviteVersion, existingUser.inviteVersion))).returning({ id: users.id, name: users.name, email: users.email, role: users.role, active: users.active, createdAt: users.createdAt })
       : await tx.insert(users).values({ organizationId: request.user.organizationId, name: body.name, email: body.email, role: body.role, active: false, inviteVersion, passwordHash }).returning({ id: users.id, name: users.name, email: users.email, role: users.role, active: users.active, createdAt: users.createdAt });
     if (!user) return undefined;
-    await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'team-user', entityId: user.id, action: existingUser ? 'invite_renewed' : 'invited', payload: { role: body.role, email: user.email } });
+    await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'team-user', entityId: user.id, action: existingUser ? 'invite_renewed' : 'invited', payload: { role: body.role, email: user.email, inviteExpiresAt } });
     return user;
   });
   if (!invite) return reply.code(409).send({ error: 'team_user_changed', message: 'A conta mudou enquanto o convite era criado. Atualize a lista e tente novamente.' });
   const token = app.jwt.sign({ sub: invite.id, organizationId: request.user.organizationId, role: body.role, purpose: 'team-invite', inviteVersion }, { expiresIn: '48h' });
   const appOrigin = env.APP_ORIGIN.split(',')[0]!.trim().replace(/\/+$/, '');
-  return reply.code(201).send({ data: invite, inviteUrl: `${appOrigin}/#invite=${encodeURIComponent(token)}`, expiresInHours: 48 });
+  return reply.code(201).send({ data: invite, inviteUrl: `${appOrigin}/#invite=${encodeURIComponent(token)}`, expiresInHours: 48, inviteExpiresAt });
 });
 
 app.post('/api/team/users/:id/deactivate', { preHandler: app.authenticate }, async (request, reply) => {

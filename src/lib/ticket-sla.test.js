@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { countOverdueTickets, ticketSlaDeadline, ticketSlaLabel, ticketSlaState } from './ticket-sla.js';
+import { countOverdueTickets, ticketSlaDeadline, ticketSlaForReopen, ticketSlaLabel, ticketSlaReopenNotice, ticketSlaState } from './ticket-sla.js';
 
 test('computes an explicitly selected ticket SLA deadline', () => {
   const now = new Date('2026-10-01T09:00:00.000Z');
@@ -49,4 +49,36 @@ test('ticket SLA labels show accurate minute-level timing around the one-hour bo
   assert.equal(ticketSlaLabel({ status: 'Aberto', slaDueAt: new Date(now + 59 * 60_000 + 30_000).toISOString() }, now), 'Restam 1 h');
   assert.equal(ticketSlaLabel({ status: 'Aberto', slaDueAt: new Date(now - 60 * 60_000).toISOString() }, now), 'Vencido há 1 h');
   assert.equal(ticketSlaLabel({ status: 'Aberto', slaDueAt: new Date(now + 60 * 60_000).toISOString() }, now), 'Restam 1 h');
+});
+
+test('reopening a resolved ticket starts a fresh deadline and preserves the old SLA history', () => {
+  const now = new Date('2026-10-03T12:00:00.000Z');
+  const previousDueAt = '2026-10-01T17:00:00.000Z';
+  const priorHistory = [{ type: 'reopened', previousDueAt: '2026-09-20T17:00:00.000Z', renewedAt: '2026-09-25T12:00:00.000Z' }];
+  const ticket = { status: 'Resolvido', slaHours: 8, slaDueAt: previousDueAt, slaHistory: priorHistory, createdAt: '2026-10-01T09:00:00.000Z' };
+  const patch = ticketSlaForReopen(ticket, now);
+  assert.equal(patch.slaDueAt, '2026-10-03T20:00:00.000Z');
+  assert.equal(patch.slaHours, 8);
+  assert.equal(patch.originalSlaDueAt, previousDueAt);
+  assert.equal(patch.slaHistory.length, 2);
+  assert.equal(patch.slaHistory[0], priorHistory[0]);
+  assert.deepEqual(patch.slaHistory[1], { type: 'reopened', previousDueAt, renewedAt: now.toISOString() });
+  assert.match(ticketSlaReopenNotice(ticket, now), /8 horas.*prazo anterior.*histórico/i);
+});
+
+test('legacy ticket reopening infers its duration and uses a safe 24-hour fallback when needed', () => {
+  const now = new Date('2026-10-03T12:00:00.000Z');
+  const inferred = ticketSlaForReopen({ status: 'Resolvido', createdAt: '2026-10-01T09:00:00Z', slaDueAt: '2026-10-01T17:00:00Z' }, now);
+  assert.equal(inferred.slaHours, 8);
+  assert.equal(inferred.slaDueAt, '2026-10-03T20:00:00.000Z');
+  const fallback = ticketSlaForReopen({ status: 'Resolvido', slaDueAt: '2026-10-01T17:00:00Z' }, now);
+  assert.equal(fallback.slaHours, 24);
+  assert.equal(fallback.slaDueAt, '2026-10-04T12:00:00.000Z');
+});
+
+test('reopening a ticket explicitly configured without SLA keeps it without SLA and shows that clearly', () => {
+  const now = new Date('2026-10-03T12:00:00.000Z');
+  const ticket = { status: 'Resolvido', slaHours: null, slaDueAt: null };
+  assert.deepEqual(ticketSlaForReopen(ticket, now), { slaHours: null, slaDueAt: null, originalSlaDueAt: null, slaHistory: [] });
+  assert.match(ticketSlaReopenNotice(ticket, now), /continuará sem prazo/i);
 });

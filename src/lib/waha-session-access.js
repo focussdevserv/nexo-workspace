@@ -16,3 +16,16 @@ export function wahaQrSessionMessage(status) {
   if (status === 'STARTING') return 'Iniciando sessão...';
   return 'Aguardando QR Code...';
 }
+
+export function wahaSessionStatusLabel(status, unavailable = false) {
+  if (unavailable) return 'Status indisponível';
+  return ({ WORKING: 'Conectado', SCAN_QR_CODE: 'Aguardando QR Code', STARTING: 'Iniciando', STOPPED: 'Pausado', FAILED: 'Falhou', NOT_FOUND: 'Sessão não encontrada' }[status] || status || 'Status desconhecido');
+}
+
+export function wahaSessionStatusSummary(sessions, unavailable = false) {
+  if (unavailable) return { connected: '—', needsAction: '—' };
+  return {
+    connected: String(sessions.filter((item) => item.status === 'WORKING').length),
+    needsAction: String(sessions.filter((item) => item.status !== 'WORKING').length),
+  };
+}
