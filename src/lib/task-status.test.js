@@ -31,3 +31,10 @@ test('task detail status edits keep legacy state and status fields in sync', () 
   assert.equal(taskIsCompleted(completed), true);
   assert.equal(taskStatusForEdit(completed), 'Concluída');
 });
+
+test('task detail normalizes legacy statuses to visible options', () => {
+  assert.equal(taskStatusForEdit({ status: '  pendente ' }), 'A fazer');
+  assert.equal(taskStatusForEdit({ status: 'TODO' }), 'A fazer');
+  assert.equal(taskStatusForEdit({ status: ' em andamento ' }), 'Em andamento');
+  assert.equal(taskStatusForEdit({ state: 'Pendente', status: 'Concluída' }), 'Concluída');
+});

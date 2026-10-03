@@ -10,7 +10,11 @@ export function taskIsCompleted(task) {
 
 export function taskStatusForEdit(task) {
   if (taskIsCompleted(task)) return 'Concluída';
-  return task?.status || task?.state || 'A fazer';
+  const status = task?.status || task?.state || 'A fazer';
+  const normalized = normalizeTaskStatus(status);
+  if (['a fazer', 'pendente', 'pending', 'todo', 'aberta', 'novo'].includes(normalized)) return 'A fazer';
+  if (['em andamento', 'in progress'].includes(normalized)) return 'Em andamento';
+  return String(status).trim() || 'A fazer';
 }
 
 export function withTaskStatus(task, status) {

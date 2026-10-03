@@ -402,6 +402,7 @@ export default function CommercialScreen({
     nextAction: "",
     closeDate: "",
     stage: "Novo lead",
+    chance: 50,
     serviceId: "",
     serviceIds: [],
     scope: "",
@@ -672,7 +673,7 @@ export default function CommercialScreen({
       nextAction: draft.nextAction.trim(),
       closeDate: draft.closeDate,
       notes: draft.notes.trim(),
-      chance: 50
+      chance: Number(draft.chance ?? 50)
     };else if (key === "clientes") {
       const serviceCharges = Object.values(draft.serviceCharges || {}).map(charge => ({
         ...charge,
@@ -1150,7 +1151,7 @@ export default function CommercialScreen({
           })} /></label>}{["leads", "pipeline", "crm"].includes(key) && <Fragment><label>Origem<select value={draft.source} onChange={e => setDraft({
               ...draft,
               source: e.target.value
-            })}><option value="">Manual</option><option>Indicação</option><option>Site</option><option>WhatsApp</option><option>E-mail</option><option>Instagram</option><option>Campanha</option><option>Outro</option></select></label><label>Próxima ação<input value={draft.nextAction} onChange={e => setDraft({
+              })}><option value="">Manual</option><option>Indicação</option><option>Site</option><option>WhatsApp</option><option>E-mail</option><option>Instagram</option><option>Campanha</option><option>Outro</option></select></label><label>Chance de fechamento (%)<input type="number" min="0" max="100" step="1" value={draft.chance ?? 50} onChange={e => setDraft(current => ({ ...current, chance: Number(e.target.value) }))} /></label><label>Próxima ação<input value={draft.nextAction} onChange={e => setDraft({
               ...draft,
               nextAction: e.target.value
             })} placeholder="Ex.: ligar para apresentar a proposta" /></label><label>Responsável<input value={draft.owner} onChange={e => setDraft({
@@ -2851,6 +2852,9 @@ function LeadRecordModal({
     source: lead.source || "Manual",
     service: lead.service || "",
     amount: String(lead.value || "").replace(/^R\$\s*/i, ""),
+    chance: lead.chance === null || lead.chance === undefined || lead.chance === "" || !Number.isFinite(Number(lead.chance))
+      ? 50
+      : Math.min(100, Math.max(0, Number(lead.chance))),
     owner: lead.owner || "",
     nextAction: lead.nextAction || "",
     closeDate: lead.closeDate || "",
@@ -2881,6 +2885,7 @@ function LeadRecordModal({
         source: draft.source,
         service: draft.service.trim(),
         value: cleanAmount ? "R$ " + cleanAmount : "A definir",
+        chance: Number(draft.chance),
         owner: draft.owner.trim(),
         nextAction: draft.nextAction.trim(),
         closeDate: draft.closeDate,
@@ -2901,7 +2906,7 @@ function LeadRecordModal({
         initials: draft.name.trim().split(/\s+/).slice(0, 2).map(part => part[0]).join("").toUpperCase(),
         company: draft.company.trim(), email: draft.email.trim().toLowerCase(), phone: draft.phone.trim(),
         source: draft.source, service: draft.service.trim(),
-        value: cleanAmount ? "R$ " + cleanAmount : "A definir", owner: draft.owner.trim(),
+        value: cleanAmount ? "R$ " + cleanAmount : "A definir", chance: Number(draft.chance), owner: draft.owner.trim(),
         nextAction: draft.nextAction.trim(), closeDate: draft.closeDate, notes: draft.notes.trim(), stage: draft.stage
       }, followUpDue);
     } finally {
@@ -2910,7 +2915,7 @@ function LeadRecordModal({
   };
   return <div className="com-modal-backdrop" onMouseDown={event => {
     if (event.target === event.currentTarget && !saving) onClose();
-  }}><form className="com-create-modal com-lead-record-modal" role="dialog" aria-modal="true" aria-labelledby="lead-record-title" onSubmit={save}><header><div><small>LEAD · EDIÇÃO</small><h2 id="lead-record-title">Editar lead</h2></div><button type="button" aria-label="Fechar" onClick={onClose} disabled={saving}><X size={15} /></button></header><div className="com-lead-edit-fields"><label>Nome<input required={true} maxLength={160} value={draft.name} onChange={event => update("name", event.target.value)} /></label><label>Cliente / empresa<input maxLength={200} value={draft.company} onChange={event => update("company", event.target.value)} /></label><label>E-mail<input type="email" maxLength={254} value={draft.email} onChange={event => update("email", event.target.value)} /></label><label>Telefone<input type="tel" maxLength={40} value={draft.phone} onChange={event => update("phone", event.target.value)} /></label><label>Origem<select value={draft.source} onChange={event => update("source", event.target.value)}>{["Manual", "Indicação", "Site", "WhatsApp", "E-mail", "Instagram", "Campanha", "Outro"].map(value => <option key={value}>{value}</option>)}</select></label><label>Etapa<select value={draft.stage} onChange={event => update("stage", event.target.value)}>{["Novo lead", "Contato realizado", "Reunião agendada", "Diagnóstico", "Proposta enviada", "Negociação", "Fechado", "Perdido"].map(value => <option key={value}>{value}</option>)}</select></label><label>Serviço / oportunidade<input maxLength={240} value={draft.service} onChange={event => update("service", event.target.value)} /></label><label>Valor estimado<input inputMode="decimal" maxLength={32} value={draft.amount} onChange={event => update("amount", event.target.value)} placeholder="Ex.: 2500,00" /></label><label>Responsável<input maxLength={160} value={draft.owner} onChange={event => update("owner", event.target.value)} /></label><label>Fechamento previsto<input type="date" value={draft.closeDate} onChange={event => update("closeDate", event.target.value)} /></label><label className="wide">Próxima ação<input maxLength={240} value={draft.nextAction} onChange={event => update("nextAction", event.target.value)} /></label>{canSchedule && <><label className="wide">Prazo da tarefa<input type="date" min={dateAfterDays(0)} value={followUpDue} onChange={event => setFollowUpDue(event.target.value)} /></label><p className="com-muted wide" role="status">{existingFollowUp ? "Uma tarefa aberta ja esta vinculada a este lead; ela sera atualizada." : "A acao sera adicionada a lista Tarefas e vinculada a este lead."}</p></> }<label className="wide">Observações<textarea rows={3} maxLength={5e3} value={draft.notes} onChange={event => update("notes", event.target.value)} /></label></div><footer><button type="button" className="com-secondary" onClick={onClose} disabled={saving}>Cancelar</button><button type="button" className="com-secondary com-delete-action" onClick={onDelete} disabled={saving}>Excluir</button><span />{canSchedule && <button type="button" className="com-secondary" onClick={saveAndSchedule} disabled={saving || !followUpDue}>{saving ? "Agendando..." : existingFollowUp ? "Salvar e atualizar tarefa" : "Salvar e agendar tarefa"}</button>}<button type="submit" className="com-primary" disabled={saving}>{saving ? "Salvando?" : "Salvar alterações"}</button></footer></form></div>;
+  }}><form className="com-create-modal com-lead-record-modal" role="dialog" aria-modal="true" aria-labelledby="lead-record-title" onSubmit={save}><header><div><small>LEAD · EDIÇÃO</small><h2 id="lead-record-title">Editar lead</h2></div><button type="button" aria-label="Fechar" onClick={onClose} disabled={saving}><X size={15} /></button></header><div className="com-lead-edit-fields"><label>Nome<input required={true} maxLength={160} value={draft.name} onChange={event => update("name", event.target.value)} /></label><label>Cliente / empresa<input maxLength={200} value={draft.company} onChange={event => update("company", event.target.value)} /></label><label>E-mail<input type="email" maxLength={254} value={draft.email} onChange={event => update("email", event.target.value)} /></label><label>Telefone<input type="tel" maxLength={40} value={draft.phone} onChange={event => update("phone", event.target.value)} /></label><label>Origem<select value={draft.source} onChange={event => update("source", event.target.value)}>{["Manual", "Indicação", "Site", "WhatsApp", "E-mail", "Instagram", "Campanha", "Outro"].map(value => <option key={value}>{value}</option>)}</select></label><label>Etapa<select value={draft.stage} onChange={event => update("stage", event.target.value)}>{["Novo lead", "Contato realizado", "Reunião agendada", "Diagnóstico", "Proposta enviada", "Negociação", "Fechado", "Perdido"].map(value => <option key={value}>{value}</option>)}</select></label><label>Serviço / oportunidade<input maxLength={240} value={draft.service} onChange={event => update("service", event.target.value)} /></label><label>Valor estimado<input inputMode="decimal" maxLength={32} value={draft.amount} onChange={event => update("amount", event.target.value)} placeholder="Ex.: 2500,00" /></label><label>Chance de fechamento (%)<input type="number" min="0" max="100" step="1" value={draft.chance} onChange={event => update("chance", Number(event.target.value))} /></label><label>Responsável<input maxLength={160} value={draft.owner} onChange={event => update("owner", event.target.value)} /></label><label>Fechamento previsto<input type="date" value={draft.closeDate} onChange={event => update("closeDate", event.target.value)} /></label><label className="wide">Próxima ação<input maxLength={240} value={draft.nextAction} onChange={event => update("nextAction", event.target.value)} /></label>{canSchedule && <><label className="wide">Prazo da tarefa<input type="date" min={dateAfterDays(0)} value={followUpDue} onChange={event => setFollowUpDue(event.target.value)} /></label><p className="com-muted wide" role="status">{existingFollowUp ? "Uma tarefa aberta ja esta vinculada a este lead; ela sera atualizada." : "A acao sera adicionada a lista Tarefas e vinculada a este lead."}</p></> }<label className="wide">Observações<textarea rows={3} maxLength={5e3} value={draft.notes} onChange={event => update("notes", event.target.value)} /></label></div><footer><button type="button" className="com-secondary" onClick={onClose} disabled={saving}>Cancelar</button><button type="button" className="com-secondary com-delete-action" onClick={onDelete} disabled={saving}>Excluir</button><span />{canSchedule && <button type="button" className="com-secondary" onClick={saveAndSchedule} disabled={saving || !followUpDue}>{saving ? "Agendando..." : existingFollowUp ? "Salvar e atualizar tarefa" : "Salvar e agendar tarefa"}</button>}<button type="submit" className="com-primary" disabled={saving}>{saving ? "Salvando..." : "Salvar alterações"}</button></footer></form></div>;
 }
 function Identity({
   name,
