@@ -67,7 +67,7 @@ import { billingRequestFingerprint, billingRequestIdempotencyKey, decideBillingI
 import { canTransitionBillingSubscription, normalizeBillingSubscriptionStatus } from './billing/subscription-transitions.js';
 import { buildFinanceRecurrenceDates } from './integrations/finance-recurrence.js';
 import { buildWahaSendFilePayload, classifyWahaQrResponse, classifyWahaSessionReadiness } from './integrations/waha.js';
-import { claimWahaMessage } from './integrations/waha-send-claim.js';
+import { claimWahaMessage, markWahaDeliveryUnknown, markWahaPreflightFailure } from './integrations/waha-send-claim.js';
 import { appendWahaIncomingMessage, applyWahaMessageAck } from './integrations/waha-webhook.js';
 import { clicksignBaseUrl, createClicksignEnvelope, getClicksignEnvelope, notifyClicksignEnvelope } from './integrations/clicksign.js';
 import { mapN8nCollections, n8nAutomationTemplates, buildN8nAutomationWorkflow, n8nApiKeyFailureMessage, n8nApiValidationMessage, n8nProposalTaskMatchesSource, n8nWorkflowActionEndpoint, n8nWorkflowsEndpoint, type N8nAutomationTemplateId } from './integrations/n8n.js';
@@ -77,6 +77,7 @@ import { checkPublicSite } from './monitoring/site-check.js';
 import { siteCheckFailureData } from './monitoring/site-check-failure.js';
 import { siteCheckResultData, siteCheckResultMatchesAsset, siteCheckTargetFor } from './monitoring/site-check-result.js';
 import { siteAssetScheduleIds } from './monitoring/site-asset-removal.js';
+import { planSiteMonitorConfiguration } from './monitoring/site-monitor-config.js';
 import { findOtherRunningHoursTimer } from './security/active-hours-timer.js';
 import { isTaskCompleted, taskOccurrenceMatches, taskRecurrenceIdentity, validNextTaskOccurrence } from './tasks/recurring-task-transition.js';
 import { recurringAgendaSeriesMatches, validateRecurringAgendaSeries, type RecurringAgendaInput } from './agenda/recurring-series.js';
@@ -659,6 +660,13 @@ app.post('/api/integrations/waha/send', { preHandler: app.authenticate, bodyLimi
     const currentData = conversation.data as Record<string, any>;
     if (!isWahaChatIdBoundToConversation(body.chatId, currentData)) return { kind: 'recipient_mismatch' as const };
     const outcome = claimWahaMessage(currentData, body);
+    if (outcome.kind === 'delivery_unknown') {
+      await tx.update(workspaceRecords).set({ data: outcome.data, updatedAt: new Date() }).where(and(
+        eq(workspaceRecords.id, conversation.id), eq(workspaceRecords.organizationId, request.user.organizationId),
+        eq(workspaceRecords.resource, 'inbox'), isNull(workspaceRecords.archivedAt),
+      ));
+      return { ...outcome, conversationId: conversation.id };
+    }
     if (outcome.kind !== 'claimed') return outcome;
     await tx.update(workspaceRecords).set({ data: outcome.data, updatedAt: new Date() }).where(and(
       eq(workspaceRecords.id, conversation.id), eq(workspaceRecords.organizationId, request.user.organizationId),
@@ -668,11 +676,13 @@ app.post('/api/integrations/waha/send', { preHandler: app.authenticate, bodyLimi
   });
   if (claim.kind === 'missing') return reply.code(404).send({ error: 'conversation_not_found', message: 'A conversa n\u00e3o est\u00e1 mais dispon\u00edvel no workspace.' });
   if (claim.kind === 'recipient_mismatch') return reply.code(409).send({ error: 'waha_recipient_mismatch', message: 'O destinat\u00e1rio n\u00e3o corresponde ao telefone desta conversa. Atualize os dados do contato antes de enviar.' });
+  if (claim.kind === 'idempotency_conflict') return reply.code(409).send({ error: 'waha_idempotency_conflict', message: 'Este identificador de mensagem j\u00e1 foi usado com outro conte\u00fado. Atualize a conversa antes de tentar novamente.' });
   if (claim.kind === 'already_sent') return { data: { messageId: claim.messageId, status: 'sent', duplicated: true } };
   if (claim.kind === 'already_sending') return reply.code(202).send({ data: { messageId: claim.messageId, status: 'sending', duplicated: true } });
+  if (claim.kind === 'delivery_unknown') return reply.code(409).send({ error: 'waha_delivery_unknown', message: 'A WAHA pode ter recebido esta mensagem, mas n\u00e3o confirmou o resultado. Ela n\u00e3o ser\u00e1 reenviada automaticamente. Confira a conversa no WhatsApp antes de enviar outra mensagem.' });
   const conversation = { id: claim.conversationId, data: claim.data };
-  const data = claim.data;
   const pending = claim.pending;
+  let sendPostStarted = false;
   try {
     const remote = await wahaRequest<Array<{ name?: string; status?: string }>>('/api/sessions');
     const remoteSession = remote.find((session) => String(session.name || '') === wahaSessionName(sessionRow));
@@ -680,22 +690,53 @@ app.post('/api/integrations/waha/send', { preHandler: app.authenticate, bodyLimi
       const error = Object.assign(new Error('waha_session_not_connected'), { statusCode: 409 });
       throw error;
     }
-    const result = body.attachment && attachmentData
-      ? await wahaRequest<{ id?: string }>('/api/sendFile', { method: 'POST', body: JSON.stringify(buildWahaSendFilePayload({ session: wahaSessionName(sessionRow), chatId: body.chatId, filename: body.attachment.filename, mimeType: body.attachment.mimeType, data: attachmentData.toString('base64'), caption: body.text })) })
-      : await wahaRequest<{ id?: string }>('/api/sendText', { method: 'POST', body: JSON.stringify({ session: wahaSessionName(sessionRow), chatId: body.chatId, text: body.text }) });
-    const [fresh] = await db.select().from(workspaceRecords).where(eq(workspaceRecords.id, conversation.id)).limit(1);
-    const freshData = (fresh?.data || data) as Record<string, any>;
-    const history = Array.isArray(freshData.history) ? freshData.history as Array<Record<string, any>> : [pending];
-    const savedMessage = { ...pending, providerMessageId: result.id || '', status: 'sent' };
-    await db.update(workspaceRecords).set({ data: { ...freshData, whatsappSessionId: sessionRow.id, whatsappChatId: body.chatId, channel: 'WhatsApp', text: body.text || (body.attachment ? `Arquivo: ${body.attachment.filename}` : ''), time: savedMessage.time, history: history.map((message) => message.clientMessageId === body.clientMessageId ? savedMessage : message) }, updatedAt: new Date() }).where(eq(workspaceRecords.id, conversation.id));
+    const sendPath = body.attachment && attachmentData ? '/api/sendFile' : '/api/sendText';
+    const sendBody = body.attachment && attachmentData
+      ? JSON.stringify(buildWahaSendFilePayload({ session: wahaSessionName(sessionRow), chatId: body.chatId, filename: body.attachment.filename, mimeType: body.attachment.mimeType, data: attachmentData.toString('base64'), caption: body.text }))
+      : JSON.stringify({ session: wahaSessionName(sessionRow), chatId: body.chatId, text: body.text });
+    // Any failure after this point is ambiguous: WAHA may have accepted the POST.
+    sendPostStarted = true;
+    const result = await wahaRequest<{ id?: string }>(sendPath, { method: 'POST', body: sendBody });
+    const savedMessage = { ...pending, providerMessageId: result.id || '', status: 'sent', retryable: false };
+    await db.transaction(async (tx) => {
+      const [fresh] = await tx.select().from(workspaceRecords).where(and(
+        eq(workspaceRecords.id, conversation.id), eq(workspaceRecords.organizationId, request.user.organizationId),
+        eq(workspaceRecords.resource, 'inbox'), isNull(workspaceRecords.archivedAt),
+      )).for('update').limit(1);
+      if (!fresh) throw new Error('waha_conversation_unavailable_after_send');
+      const freshData = fresh.data as Record<string, any>;
+      const history = Array.isArray(freshData.history) ? freshData.history as Array<Record<string, any>> : [];
+      if (!history.some((message) => message.clientMessageId === body.clientMessageId)) throw new Error('waha_pending_message_missing_after_send');
+      const nextData = { ...freshData, whatsappSessionId: sessionRow.id, whatsappChatId: body.chatId, channel: 'WhatsApp', text: body.text || (body.attachment ? `Arquivo: ${body.attachment.filename}` : ''), time: savedMessage.time, history: history.map((message) => message.clientMessageId === body.clientMessageId ? savedMessage : message) };
+      const [updated] = await tx.update(workspaceRecords).set({ data: nextData, updatedAt: new Date() }).where(and(
+        eq(workspaceRecords.id, fresh.id), eq(workspaceRecords.organizationId, request.user.organizationId),
+        eq(workspaceRecords.resource, 'inbox'), isNull(workspaceRecords.archivedAt),
+      )).returning({ id: workspaceRecords.id });
+      if (!updated) throw new Error('waha_conversation_unavailable_after_send');
+    });
     return { data: { messageId: result.id || body.clientMessageId, status: 'sent' } };
   } catch (error) {
-    const [fresh] = await db.select().from(workspaceRecords).where(eq(workspaceRecords.id, conversation.id)).limit(1);
-    const freshData = (fresh?.data || data) as Record<string, any>;
-    const history = Array.isArray(freshData.history) ? freshData.history as Array<Record<string, any>> : [pending];
-    await db.update(workspaceRecords).set({ data: { ...freshData, history: history.map((message) => message.clientMessageId === body.clientMessageId ? { ...pending, status: 'failed' } : message) }, updatedAt: new Date() }).where(eq(workspaceRecords.id, conversation.id));
+    await db.transaction(async (tx) => {
+      const [fresh] = await tx.select().from(workspaceRecords).where(and(
+        eq(workspaceRecords.id, conversation.id), eq(workspaceRecords.organizationId, request.user.organizationId),
+        eq(workspaceRecords.resource, 'inbox'), isNull(workspaceRecords.archivedAt),
+      )).for('update').limit(1);
+      if (!fresh) return;
+      const freshData = fresh.data as Record<string, any>;
+      const failedData = sendPostStarted
+        ? markWahaDeliveryUnknown(freshData, body.clientMessageId, pending)
+        : markWahaPreflightFailure(freshData, body.clientMessageId);
+      await tx.update(workspaceRecords).set({ data: failedData, updatedAt: new Date() }).where(and(
+        eq(workspaceRecords.id, fresh.id), eq(workspaceRecords.organizationId, request.user.organizationId),
+        eq(workspaceRecords.resource, 'inbox'), isNull(workspaceRecords.archivedAt),
+      ));
+    }).catch((persistError) => app.log.error({ conversationId: conversation.id, error: persistError instanceof Error ? persistError.name : 'unknown', sendPostStarted }, 'Could not persist WAHA send outcome'));
     const statusCode = (error as { statusCode?: number }).statusCode;
-    return reply.code(statusCode === 409 ? 409 : 502).send({ error: 'waha_send_failed', message: statusCode === 409 ? 'A sessão WhatsApp não está conectada. Escaneie o QR e tente novamente.' : 'WAHA não confirmou o envio. Confira a conexão da sessão antes de tentar novamente.' });
+    if (sendPostStarted) {
+      app.log.warn({ sessionId: sessionRow.id, error: error instanceof Error ? error.name : 'unknown' }, 'WAHA delivery outcome is unknown');
+      return reply.code(502).send({ error: 'waha_delivery_unknown', message: 'A WAHA pode ter aceitado a mensagem, mas o resultado ficou desconhecido. Ela não será reenviada automaticamente; confira a conversa no WhatsApp antes de enviar outra mensagem.' });
+    }
+    return reply.code(statusCode === 409 ? 409 : 502).send({ error: 'waha_send_preflight_failed', message: statusCode === 409 ? 'Sessao WAHA desconectada. Nenhuma mensagem foi enviada; reconecte e tente novamente.' : 'Falha ao confirmar a sessao WAHA antes do envio. Nenhuma mensagem foi enviada; tente novamente quando estiver disponivel.' });
   }
 });
 
@@ -3233,6 +3274,64 @@ app.get('/api/monitoring/site-assets/:id/history', { preHandler: app.authenticat
       eq(activityEvents.entityId, asset.id), eq(activityEvents.action, 'checked'),
     )).orderBy(desc(activityEvents.createdAt)).limit(50);
   return { data: rows };
+});
+
+app.post('/api/workspace/site-assets/:id/monitor', { preHandler: app.authenticate }, async (request, reply) => {
+  const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
+  const body = parseBody(z.object({ enabled: z.boolean(), intervalMinutes: z.union([z.literal(5), z.literal(15), z.literal(30), z.literal(60)]) }), request.body, reply);
+  if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Identificador de ativo inválido.' });
+  if (!body) return;
+  if (!isWorkspaceRequestAllowed(request.user.role, 'POST', '/api/workspace/site-assets', request.user.permissions)) return reply.code(403).send({ error: 'forbidden', message: 'Você não tem permissão para configurar o monitoramento deste ativo.' });
+
+  const result = await db.transaction(async (tx) => {
+    const [asset] = await tx.select({ id: workspaceRecords.id, data: workspaceRecords.data }).from(workspaceRecords).where(and(
+      eq(workspaceRecords.id, params.data.id), eq(workspaceRecords.organizationId, request.user.organizationId),
+      eq(workspaceRecords.resource, 'site-assets'), isNull(workspaceRecords.archivedAt),
+    )).for('update').limit(1);
+    if (!asset) return { kind: 'missing' as const };
+    if (!recordMatchesWorkspaceScope('site-assets', asset.id, asset.data, request.user.permissions?.scope)) return { kind: 'scope_denied' as const };
+
+    const schedules = await tx.select({ id: workspaceRecords.id, data: workspaceRecords.data, createdAt: workspaceRecords.createdAt }).from(workspaceRecords).where(and(
+      eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'monitors'),
+      isNull(workspaceRecords.archivedAt), sql`${workspaceRecords.data}->>'siteAssetId' = ${asset.id}`,
+    )).orderBy(asc(workspaceRecords.createdAt)).for('update');
+    const plan = planSiteMonitorConfiguration(asset, schedules, body.enabled, body.intervalMinutes,
+      body.enabled ? new Date(Date.now() + body.intervalMinutes * 60_000).toISOString() : null);
+    let canonical: { id: string; data: Record<string, unknown>; createdAt: Date; updatedAt: Date } | undefined;
+    if (plan.canonicalId) {
+      [canonical] = await tx.update(workspaceRecords).set({ data: plan.data, updatedAt: new Date() }).where(and(
+        eq(workspaceRecords.id, plan.canonicalId), eq(workspaceRecords.organizationId, request.user.organizationId),
+        eq(workspaceRecords.resource, 'monitors'), isNull(workspaceRecords.archivedAt),
+      )).returning();
+    } else {
+      [canonical] = await tx.insert(workspaceRecords).values({
+        organizationId: request.user.organizationId, createdBy: request.user.sub, resource: 'monitors', data: plan.data,
+      }).returning();
+    }
+    if (!canonical) return { kind: 'missing' as const };
+
+    const archivedAt = new Date();
+    if (plan.duplicateIds.length) {
+      const archived = await tx.update(workspaceRecords).set({ archivedAt, updatedAt: archivedAt }).where(and(
+        eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'monitors'),
+        inArray(workspaceRecords.id, plan.duplicateIds), isNull(workspaceRecords.archivedAt),
+      )).returning({ id: workspaceRecords.id });
+      if (archived.length) await tx.insert(activityEvents).values(archived.map((row) => ({
+        organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'monitors', entityId: row.id,
+        action: 'archived', payload: { siteAssetId: asset.id, reason: 'duplicate_schedule' },
+      })));
+    }
+    await tx.insert(activityEvents).values({
+      organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'monitors', entityId: canonical.id,
+      action: plan.canonicalId ? 'configured' : 'created', payload: { siteAssetId: asset.id, enabled: body.enabled, intervalMinutes: body.intervalMinutes },
+    });
+    return { kind: 'saved' as const, canonical };
+  });
+
+  if (result.kind === 'missing') return reply.code(404).send({ error: 'not_found', message: 'Ativo não encontrado.' });
+  if (result.kind === 'scope_denied') return reply.code(403).send({ error: 'record_scope_denied', message: 'Este ativo não pertence ao seu escopo.' });
+  const schedule = { ...result.canonical.data, id: result.canonical.id, createdAt: result.canonical.createdAt, updatedAt: result.canonical.updatedAt };
+  return { data: { siteAssetId: params.data.id, schedules: [schedule], enabled: body.enabled, intervalMinutes: body.intervalMinutes } };
 });
 
 app.post('/api/monitoring/site-assets/:id/check', { preHandler: app.authenticate }, async (request, reply) => {

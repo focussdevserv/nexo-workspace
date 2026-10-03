@@ -39,7 +39,7 @@ test('keeps the composer intact when WAHA reports the idempotent send is still p
   assert.equal(refreshes, 1);
 });
 
-test('a delivery failure preserves the composer and never starts a refresh', async () => {
+test('a delivery failure preserves the composer and does not refresh unless a handler requests it', async () => {
   let clears = 0;
   let refreshes = 0;
   await assert.rejects(sendInboxMessage({
@@ -50,4 +50,16 @@ test('a delivery failure preserves the composer and never starts a refresh', asy
 
   assert.equal(clears, 0);
   assert.equal(refreshes, 0);
+});
+
+test('an uncertain delivery can refresh history while preserving the original send error', async () => {
+  const expected = Object.assign(new Error('Confira o WhatsApp antes de enviar outra mensagem.'), { code: 'waha_delivery_unknown' });
+  let refreshed = false;
+  await assert.rejects(sendInboxMessage({
+    deliver: async () => { throw expected; },
+    onSent: () => {},
+    refresh: async () => {},
+    onDeliveryError: async (error) => { if (error.code === 'waha_delivery_unknown') refreshed = true; },
+  }), (error) => error === expected);
+  assert.equal(refreshed, true);
 });

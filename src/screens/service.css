@@ -381,3 +381,10 @@ html[data-theme='dark'] #root .app-shell .ns-screen .ns-link-task:hover:not(:dis
 html[data-theme='dark'] #root .app-shell .ns-screen .ns-link-task:disabled {
   color: #929a8d !important;
 }
+
+.ns-message > small.ns-delivery-unknown { align-self: flex-start !important; max-width: 30ch; color: #895a08 !important; font-size: 11px !important; line-height: 1.4; }
+.ns-message > small.ns-delivery-sending { align-self: flex-start !important; color: #687487 !important; font-size: 11px !important; }
+.ns-message > small.ns-delivery-failed { align-self: flex-start !important; color: #b42318 !important; font-size: 11px !important; }
+html[data-theme='dark'] #root .app-shell .ns-screen .ns-message > small.ns-delivery-unknown { color: #ffd580 !important; }
+html[data-theme='dark'] #root .app-shell .ns-screen .ns-message > small.ns-delivery-sending { color: #c2c9d4 !important; }
+html[data-theme='dark'] #root .app-shell .ns-screen .ns-message > small.ns-delivery-failed { color: #ffb4a9 !important; }
