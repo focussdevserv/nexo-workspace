@@ -73,7 +73,7 @@ html[data-theme='dark'] .work-screen :is(.status-aguardando,.status-aguardando-c
 html[data-theme='dark'] .work-screen .status-ajustes-solicitados { background: #482a30; color: #f0a0a5; }
 html[data-theme='dark'] .work-screen :is(.work-metric b,.work-metric strong,.project-card h3,.project-name,.approval-card b,.drive-card b,.work-empty b) { color: var(--nexo-text); }
 html[data-theme='dark'] .work-screen :is(.work-metric p,.work-metric small,.project-client,.project-type,.project-progress-label,.work-empty p,.approval-card small,.drive-card small) { color: var(--nexo-muted); }
-html[data-theme='dark'] .work-screen .work-button:not(.work-button-primary) { background: var(--nexo-surface-raised); border-color: var(--nexo-border); color: var(--nexo-text); }
+html[data-theme='dark'] .work-screen .work-button:not(.work-button-primary):not(.work-button-approve):not(.file-remove) { background: var(--nexo-surface-raised); border-color: var(--nexo-border); color: var(--nexo-text); }
 html[data-theme='dark'] :is(.pay-method-strip,.pay-record,.pay-empty,.pay-create-modal,.pay-result-action,.pay-pix) { background: var(--nexo-surface); border-color: var(--nexo-border); color: var(--nexo-text); }
 html[data-theme='dark'] :is(.pay-toolbar h2,.pay-list-head>div,.pay-record-main>b,.pay-record>strong,.pay-method-strip span) { color: var(--nexo-text); }
 html[data-theme='dark'] :is(.pay-toolbar p,.pay-list-head small,.pay-record-main small,.pay-hint,.pay-result-action p,.pay-pix span) { color: var(--nexo-muted); }
@@ -831,8 +831,8 @@ html[data-theme='light'] .quick-search-panel input { background: #fff; border-co
 html[data-theme='light'] .top-actions .icon-button:hover { background: var(--nexo-green-soft); color: var(--nexo-green); }
 html[data-theme='light'] .app-shell :is(.primary-button,.module-create-button,.com-primary,.admin-primary,.work-button-primary,.ns-primary,.settings-save-button) { background: var(--nexo-green); border-color: var(--nexo-green); color: #fff; }
 html[data-theme='light'] .app-shell :is(.primary-button,.module-create-button,.com-primary,.admin-primary,.work-button-primary,.ns-primary,.settings-save-button):hover { background: #116c45; border-color: #116c45; }
-html[data-theme='light'] .app-shell :is(.com-secondary,.work-button:not(.work-button-primary),.ns-secondary,.icon-button,.settings-sidebar nav button:not(.active)) { color: #303b33; }
-html[data-theme='light'] .app-shell :is(.com-secondary,.work-button:not(.work-button-primary),.ns-secondary):hover { border-color: #9bc9ad; color: #126b43; }
+html[data-theme='light'] .app-shell :is(.com-secondary,.work-button:not(.work-button-primary):not(.work-button-approve):not(.file-remove),.ns-secondary,.icon-button,.settings-sidebar nav button:not(.active)) { color: #303b33; }
+html[data-theme='light'] .app-shell :is(.com-secondary,.work-button:not(.work-button-primary):not(.work-button-approve):not(.file-remove),.ns-secondary):hover { border-color: #9bc9ad; color: #126b43; }
 html[data-theme='light'] .app-shell :is(input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']),textarea,select) { background-color: #fff; border-color: #d9e2da; color: #171d19; }
 html[data-theme='light'] .app-shell :is(input,textarea)::placeholder { color: #7b867e; opacity: 1; }
 html[data-theme='light'] .app-shell :is(input,textarea,select):focus-visible { outline: 2px solid #168454; outline-offset: 1px; }
@@ -947,8 +947,8 @@ html[data-theme='dark'] .app-shell :is(.quick-search-panel,.notification-panel) 
 html[data-theme='dark'] .app-shell .quick-search-panel :is(label,input,button) { color: #eef1ed; }
 html[data-theme='dark'] .app-shell .quick-search-panel input { background: #202421; border-color: #3a403b; }
 html[data-theme='dark'] .app-shell .quick-search-panel button:hover { background: #26351f; color: #c3f493; }
-html[data-theme='dark'] .app-shell :is(.com-secondary,.work-button:not(.work-button-primary),.ns-secondary) { background: #202421; border-color: #353b36; color: #e4e8e3; }
-html[data-theme='dark'] .app-shell :is(.com-secondary,.work-button:not(.work-button-primary),.ns-secondary):hover { border-color: #758b5e; color: #d1f6aa; }
+html[data-theme='dark'] .app-shell :is(.com-secondary,.work-button:not(.work-button-primary):not(.work-button-approve):not(.file-remove),.ns-secondary) { background: #202421; border-color: #353b36; color: #e4e8e3; }
+html[data-theme='dark'] .app-shell :is(.com-secondary,.work-button:not(.work-button-primary):not(.work-button-approve):not(.file-remove),.ns-secondary):hover { border-color: #758b5e; color: #d1f6aa; }
 html[data-theme='dark'] .app-shell :is(input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']),textarea,select) { background: #171a18; border-color: #3a403b; color: #f1f3f0; }
 html[data-theme='dark'] .app-shell :is(input,textarea)::placeholder { color: #959d96; }
 html[data-theme='dark'] .app-shell :is(input,textarea,select):focus-visible { outline: 2px solid #b8f27d; outline-offset: 1px; }
@@ -1130,7 +1130,7 @@ html[data-theme='light'] .app-shell :is(.com-secondary,.admin-secondary,.work-bu
   border-color: #e1e6df !important;
   color: #303830 !important;
 }
-html[data-theme='light'] .app-shell :is(.com-secondary,.admin-secondary,.work-button:not(.work-button-primary),.ns-secondary,.icon-button,.ns-icon-button,.com-icon-action):hover {
+html[data-theme='light'] .app-shell :is(.com-secondary,.admin-secondary,.work-button:not(.work-button-primary):not(.work-button-approve):not(.file-remove),.ns-secondary,.icon-button,.ns-icon-button,.com-icon-action):hover {
   background: #eef6e8 !important;
   border-color: #d8e8cd !important;
   color: #386d27 !important;
@@ -1255,10 +1255,10 @@ html[data-theme='dark'] .app-shell :is(.primary-button,.module-create-button,.co
 html[data-theme='dark'] .app-shell :is(.primary-button,.module-create-button,.com-primary,.admin-primary,.work-button-primary,.ns-primary,.settings-save-button):hover:not(:disabled) {
   background: #a5df54 !important; border-color: #a5df54 !important;
 }
-html[data-theme='dark'] .app-shell :is(.com-secondary,.admin-secondary,.work-button:not(.work-button-primary),.ns-secondary,.icon-button,.ns-icon-button,.com-icon-action) {
+html[data-theme='dark'] .app-shell :is(.com-secondary,.admin-secondary,.work-button:not(.work-button-primary):not(.work-button-approve):not(.file-remove),.ns-secondary,.icon-button,.ns-icon-button,.com-icon-action) {
   background: #191e19 !important; border-color: #303730 !important; color: #e3e8df !important;
 }
-html[data-theme='dark'] .app-shell :is(.com-secondary,.admin-secondary,.work-button:not(.work-button-primary),.ns-secondary,.icon-button,.ns-icon-button,.com-icon-action):hover {
+html[data-theme='dark'] .app-shell :is(.com-secondary,.admin-secondary,.work-button:not(.work-button-primary):not(.work-button-approve):not(.file-remove),.ns-secondary,.icon-button,.ns-icon-button,.com-icon-action):hover {
   background: #222a1f !important; border-color: #516445 !important; color: #d7f4a3 !important;
 }
 html[data-theme='dark'] .app-shell :is(
@@ -1266,6 +1266,10 @@ html[data-theme='dark'] .app-shell :is(
   .lead-filters button.active,.task-tabs button.active,.work-tabs button[aria-pressed='true'],
   .project-view-toggle button[aria-pressed='true'],.ns-filter-tabs button.selected
 ) { background: #27331e !important; border-color: #425432 !important; color: #d2f39f !important; }
+html[data-theme='dark'] .app-shell .work-button-approve { background: #233c2a !important; border-color: #416947 !important; color: #c4f493 !important; }
+html[data-theme='dark'] .app-shell .work-button-approve:hover:not(:disabled) { background: #2d4b32 !important; border-color: #5c8a5d !important; }
+html[data-theme='dark'] .app-shell .work-button.file-remove { background: #321f22 !important; border-color: #6a3d43 !important; color: #f0a0a5 !important; }
+html[data-theme='dark'] .app-shell .work-button.file-remove:hover:not(:disabled) { background: #42262a !important; border-color: #865059 !important; }
 html[data-theme='dark'] .app-shell :is(.stat-icon,.com-metric-icon,.ns-metric-icon,.work-metric-icon) { background: #252f1e !important; color: #b6ed66 !important; }
 html[data-theme='dark'] .app-shell :is(.status-em-andamento,.status-concluido,.status-concluida,.status-aprovado,.com-badge-green) { background: #26331f !important; color: #d0f29c !important; }
 html[data-theme='dark'] .app-shell :is(.status-aguardando,.status-aguardando-cliente) { background: #392f1d !important; color: #f3d18a !important; }
