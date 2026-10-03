@@ -42,6 +42,7 @@ import { isApprovalAwaitingDecision, isApprovalPending } from '../lib/approval-s
 import { canCreateWorkRecord, canSelectWorkspaceFileUpload, projectStatusFilters, shouldShowProjectKanbanEmpty } from '../lib/work-screen-actions.js';
 import { nextAgendaEventTime, upcomingAgendaEvents } from '../lib/agenda-upcoming.js';
 import { googleCalendarErrorAction } from '../lib/google-calendar-error.js';
+import { resolveGoogleCalendarSyncEvents } from '../lib/agenda-google-sync.js';
 import { matchesWorkSearch } from '../lib/work-search.js';
 import { recoverWorkspaceRecordsAfterFailure } from '../lib/workspace-mutation-recovery.js';
 import { recoverApprovalShareAfterSaveFailure } from '../lib/approval-save-recovery.js';
@@ -491,8 +492,8 @@ function WorkScreen({ page, navigationContext = null, onNavigationContextConsume
     const to = toLocalDateInput(end);
     setCalendarSyncBusy(true); setCalendarSyncError(''); setCalendarSyncErrorCode('');
     apiRequest(`/api/integrations/google/calendar/events?from=${from}&to=${to}&timeZone=${encodeURIComponent(preferences.timezone)}`)
-      .then((result) => { if (!active) return; setGoogleCalendarEvents(result.data || []); setCalendarSyncedAt(new Intl.DateTimeFormat('pt-BR', { timeZone: preferences.timezone, hour: '2-digit', minute: '2-digit' }).format(new Date())); setCalendarSyncError(result.truncated ? 'A agenda contem mais eventos do que esta consulta exibiu. Reduza o periodo para ver todos.' : ''); setCalendarSyncErrorCode(''); })
-      .catch((error) => { if (!active) return; setGoogleCalendarEvents([]); setCalendarSyncError(error.message || 'Nao foi possivel ler os eventos do Google Calendar.'); setCalendarSyncErrorCode(error.code || ''); })
+      .then((result) => { if (!active) return; setGoogleCalendarEvents((current) => resolveGoogleCalendarSyncEvents(current, result)); setCalendarSyncedAt(new Intl.DateTimeFormat('pt-BR', { timeZone: preferences.timezone, hour: '2-digit', minute: '2-digit' }).format(new Date())); setCalendarSyncError(result.truncated ? 'A agenda contem mais eventos do que esta consulta exibiu. Reduza o periodo para ver todos.' : ''); setCalendarSyncErrorCode(''); })
+      .catch((error) => { if (!active) return; setGoogleCalendarEvents((current) => resolveGoogleCalendarSyncEvents(current, null, error)); setCalendarSyncError(error.message || 'Nao foi possivel ler os eventos do Google Calendar.'); setCalendarSyncErrorCode(error.code || ''); })
       .finally(() => { if (active) setCalendarSyncBusy(false); });
     return () => { active = false; };
   }, [key, selectedDate, agendaView, calendarSyncRevision, localDemo, preferences.timezone, preferences.weekStart]);
