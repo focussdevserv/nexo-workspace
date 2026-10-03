@@ -544,3 +544,6 @@ html[data-theme='dark'] .work-screen .drive-browser > header code { color: #a9df
 .work-data-error{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 12px;padding:11px 13px;border:1px solid #f0d7d4;border-radius:10px;background:#fff7f6;color:#9b3b35;font-size:12px;line-height:1.5}.work-data-error button{flex:none;min-height:30px;padding:0 10px;border:1px solid #e8c6c2;border-radius:8px;background:#fff;color:#8b302b;font-size:12px;font-weight:600}.work-data-error button:hover{background:#fff0ee}.work-load-state{display:flex;align-items:center;justify-content:center;min-height:86px;margin-bottom:12px;border:1px solid var(--w-line);border-radius:12px;background:var(--w-white);color:var(--w-muted);font-size:12px}
 html[data-theme='dark'] .work-data-error{border-color:#613a3a;background:#2b1b1c;color:#ffc1ba}html[data-theme='dark'] .work-data-error button{border-color:#704141;background:#321f20;color:#ffd1cb}html[data-theme='dark'] .work-load-state{border-color:var(--nexo-border);background:var(--nexo-surface);color:var(--nexo-muted)}
 @media(max-width:850px){.project-toolbar>.work-tabs{overflow:visible;flex-wrap:wrap}}
+
+.hours-create-task{margin-top:10px;min-height:38px;align-self:flex-start}
+@media(max-width:640px){.hours-create-task{width:100%;justify-content:center}}

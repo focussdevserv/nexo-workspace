@@ -25,11 +25,13 @@ test('dashboard combines workspace and Google events without duplicating linked 
   assert.equal(workspace.length, 2);
 });
 
-test('dashboard merge tolerates malformed collections and keeps one copy of each external event', () => {
+test('dashboard merge tolerates malformed collections and keeps valid external events without provider IDs', () => {
   const events = mergeDashboardCalendarEvents([null, 'bad'], [
     { id: 'google-1', googleEventId: 'one' },
     { id: 'google-duplicate', googleEventId: 'one' },
-    { id: 'google-missing-id' },
+    { id: 'external-without-provider-id' },
+    { id: 'external-without-provider-id' },
+    { title: 'invalid: no stable ID' },
   ]);
-  assert.deepEqual(events.map((event) => event.id), ['google-1']);
+  assert.deepEqual(events.map((event) => event.id), ['google-1', 'external-without-provider-id']);
 });

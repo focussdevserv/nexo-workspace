@@ -1035,6 +1035,8 @@ function Integrations({ notify }) {
   const [integrationStatus, setIntegrationStatus] = useState({});
   const [statusLoading, setStatusLoading] = useState(true);
   const [statusFetchError, setStatusFetchError] = useState('');
+  const statusRequests = useRef(null);
+  if (!statusRequests.current) statusRequests.current = createLatestRequestGuard();
   const [filter, setFilter] = useState('Todas');
   const [configuring, setConfiguring] = useState(null);
   const [testing, setTesting] = useState(false);
@@ -1055,18 +1057,23 @@ function Integrations({ notify }) {
   const githubActivityRequests = useRef(null);
   if (!githubActivityRequests.current) githubActivityRequests.current = createLatestRequestGuard();
   const refreshStatus = async () => {
+    const request = statusRequests.current.begin();
     setStatusLoading(true);
     try {
       const { data } = await apiRequest('/api/integrations/status');
       if (!Array.isArray(data)) throw new Error('A resposta do servidor não trouxe a lista de integrações.');
-      setIntegrationStatus(Object.fromEntries(data.map((item) => [item.name, item])));
-      setStatusFetchError('');
+      if (statusRequests.current.isCurrent(request)) {
+        setIntegrationStatus(Object.fromEntries(data.map((item) => [item.name, item])));
+        setStatusFetchError('');
+      }
     } catch (error) {
       const message = error.message || 'Não foi possível consultar o status das integrações.';
-      setStatusFetchError(message);
-      notify(message);
+      if (statusRequests.current.isCurrent(request)) {
+        setStatusFetchError(message);
+        notify(message);
+      }
     }
-    finally { setStatusLoading(false); }
+    finally { if (statusRequests.current.isCurrent(request)) setStatusLoading(false); }
   };
   useEffect(() => { refreshStatus(); }, []);
   useEffect(() => {

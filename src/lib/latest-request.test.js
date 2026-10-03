@@ -38,6 +38,17 @@ test('latest request guard ignores an overlapping stale refresh', () => {
   assert.equal(guard.isCurrent(newerRequest), true);
 });
 
+test('latest status refresh owns success, error, and loading state after overlapping requests', () => {
+  const guard = createLatestRequestGuard();
+  const olderStatusRequest = guard.begin();
+  const newerStatusRequest = guard.begin();
+
+  // The newer response has settled; a late success or failure from the older
+  // request must not replace its status, error, or loading state.
+  assert.equal(guard.isCurrent(newerStatusRequest), true);
+  assert.equal(guard.isCurrent(olderStatusRequest), false);
+});
+
 test('latest request guard ignores inbox email results after leaving the email channel', () => {
   const guard = createLatestRequestGuard();
   const emailRequest = guard.begin();
