@@ -155,6 +155,10 @@
 }
 @media (max-width: 390px) {
   .ns-screen { padding-inline: 10px; }.ns-heading { gap: 6px; }.ns-heading h1 { font-size: 23px; }.ns-heading > .ns-primary { padding: 8px; }.ns-metric { padding: 9px; }.ns-metric strong { font-size: 17px; }.ns-metric-note { flex-wrap: wrap; }.ns-inbox-layout { grid-template-columns: minmax(112px, .68fr) minmax(0, 1.32fr); }.ns-chat-person b { font-size: 12px; }.ns-chat-person .ns-avatar { width: 29px; height: 29px; }.ns-chat-actions .ns-icon-button { width: 23px; }.ns-integration-grid { gap: 6px; }
+  .ns-chat-context { height: auto; min-height: 34px; flex-wrap: wrap; align-content: center; gap: 5px; padding: 7px 8px; }
+  .ns-chat-context > span:not(.ns-online-dot) { min-width: 0; max-width: calc(100% - 14px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ns-chat-context select { width: 100%; min-width: 0; max-width: 100%; }
+  .ns-chat-context button { flex: 0 0 100%; justify-content: flex-start; margin-left: 0; padding: 3px 0; }
 }
 @media (prefers-reduced-motion: reduce) {
   .ns-screen *, .ns-screen *::before, .ns-screen *::after, .ns-toast { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }

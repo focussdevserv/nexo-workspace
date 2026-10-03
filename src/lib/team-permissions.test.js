@@ -50,6 +50,7 @@ test('inherited controls display effective permissions for both workspace roles'
   assert.deepEqual(inheritedModulePermissions('member', 'delivery'), { read: true, write: true, delete: null });
   assert.deepEqual(inheritedModulePermissions('member', 'crm'), { read: null, write: false, delete: false });
   assert.deepEqual(inheritedModulePermissions('member', 'finance'), { read: false, write: false, delete: false });
+  assert.deepEqual(inheritedModulePermissions('member', 'settings'), { read: false, write: false, delete: false });
 
   const draft = permissionDraftForAccount({ role: 'member', permissions: null }, modules);
   assert.equal(draft.finance, null);

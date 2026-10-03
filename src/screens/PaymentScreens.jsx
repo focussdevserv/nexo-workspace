@@ -9,7 +9,7 @@ import { splitInstallmentAmounts } from '../lib/installment-plan.js';
 import { advanceServiceInstallment } from '../lib/service-installment.js';
 import { apiRequest } from '../lib/workspace-api.js';
 import { isLocalDemoActive } from '../lib/local-demo.js';
-import { dateAfterDays } from '../lib/payment-due-date.js';
+import { paymentDateAfterDays as dateAfterDays } from '../lib/payment-calendar.js';
 import { buildSubscriptionSchedule, minimumSubscriptionEndDate } from '../lib/subscription-schedule.js';
 import { canSimulateSubscriptionAuthorization } from '../lib/subscription-demo.js';
 import { formatPaymentDate } from '../lib/payment-date-display.js';

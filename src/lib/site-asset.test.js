@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildSiteAssetPayload, siteAssetUrlForEdit, siteMonitorIntervalForAsset, siteMonitorScheduleState, siteMonitorSchedulesForAsset } from './site-asset.js';
+import { buildSiteAssetPayload, siteAssetUrlForEdit, siteMonitorIntervalForAsset, siteMonitorScheduleControlsDisabled, siteMonitorScheduleState, siteMonitorSchedulesForAsset } from './site-asset.js';
 
 test('site asset payload keeps display name separate and normalizes a bare domain', () => {
   const client = { id: 'client-1', name: 'Cliente Exemplo' };
@@ -57,6 +57,13 @@ test('monitor interval defaults to an enabled schedule when stale or paused dupl
   assert.equal(siteMonitorIntervalForAsset('site-1', schedules), 30);
   assert.equal(siteMonitorIntervalForAsset('site-2', schedules), 5);
   assert.equal(siteMonitorIntervalForAsset('missing', schedules), 15);
+});
+
+test('all site schedule controls are disabled while any schedule mutation is in flight', () => {
+  assert.equal(siteMonitorScheduleControlsDisabled({ busyId: 'asset-1' }), true);
+  assert.equal(siteMonitorScheduleControlsDisabled({ loading: true }), true);
+  assert.equal(siteMonitorScheduleControlsDisabled({ hasError: true }), true);
+  assert.equal(siteMonitorScheduleControlsDisabled({}), false);
 });
 
 test('site asset URLs must match the public monitor supported HTTP rules', () => {

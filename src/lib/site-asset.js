@@ -54,3 +54,7 @@ export function siteMonitorScheduleState(assetId, schedules = [], selectedMinute
     intervalNeedsSave: enabledSchedules.some((schedule) => Number(schedule.intervalMinutes || 15) !== interval),
   };
 }
+
+export function siteMonitorScheduleControlsDisabled({ loading = false, hasError = false, busyId = '' } = {}) {
+  return Boolean(loading || hasError || busyId);
+}

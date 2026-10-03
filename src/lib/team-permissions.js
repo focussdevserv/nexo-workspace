@@ -28,7 +28,10 @@ const memberModuleDefaults = {
   sites: { read: false, write: false, delete: false },
   automations: { read: false, write: false, delete: false },
   integrations: { read: null, write: null, delete: false },
-  settings: { read: true, write: false, delete: false },
+  // Workspace settings are owner/admin-controlled by the API and navigation.
+  // Keep the inherited display in sync so the access editor doesn't show a
+  // read grant that the member cannot actually use.
+  settings: { read: false, write: false, delete: false },
   reports: { read: false, write: false, delete: false },
 };
 
