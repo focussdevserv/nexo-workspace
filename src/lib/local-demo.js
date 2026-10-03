@@ -2,6 +2,8 @@ import { findLeadDuplicateMatch } from './lead-identity.js';
 import { checkLocalDemoSite, getLocalDemoSiteHistory, removeLocalDemoSiteAsset } from './local-demo-monitoring.js';
 import { proposalAcceptanceState } from './proposal-acceptance-state.js';
 import { handleLocalDemoInboxRequest } from './local-demo-inbox.js';
+import { financeEntryAttemptFingerprint } from './finance-entry-attempt.js';
+import { buildLocalDemoFinanceDates } from './local-demo-finance.js';
 
 const STORAGE_KEY = 'focusshub.local-demo.v1';
 const ENABLED_KEY = 'focusshub.local-demo.enabled';
@@ -292,13 +294,73 @@ export function handleLocalDemoRequest(path, options = {}) {
   if (url.pathname === '/api/notifications/read') return { data: { readAt: new Date().toISOString() } };
   if (url.pathname === '/api/team/users' && method === 'GET') return { data: store.team || [] };
   if (url.pathname === '/api/workspace/assignees' && method === 'GET') return { data: store.team || [] };
+  const recurringFinance = url.pathname.match(/^\/api\/workspace\/(revenues|expenses)\/recurring$/);
+  if (recurringFinance && method === 'POST') {
+    const [, resource] = recurringFinance;
+    const { seriesId, frequency, count, data = {} } = body;
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(seriesId || ''))) throw new Error('Identificador de recorrência inválido.');
+    const dates = buildLocalDemoFinanceDates(data.date, data.dueDate, frequency, Number(count));
+    const fingerprint = financeEntryAttemptFingerprint(data, frequency, Number(count));
+    store.financeCreateAttempts ||= {};
+    const attemptKey = `series:${resource}:${seriesId}`;
+    const previous = store.financeCreateAttempts[attemptKey];
+    if (previous) {
+      if (previous.fingerprint !== fingerprint) throw new Error('Esta tentativa de recorrência já foi usada com outros dados. Confira os lançamentos antes de criar outra série.');
+      const existing = (store[resource] || []).filter((item) => previous.ids.includes(String(item.id)));
+      if (existing.length !== previous.ids.length) throw new Error('A série desta tentativa não está mais completa. Atualize os lançamentos antes de tentar novamente.');
+      return { data: { seriesId, records: existing, idempotent: true } };
+    }
+    const amount = Number(data.amount);
+    if (!String(data.description || '').trim() || !Number.isFinite(amount) || amount <= 0) throw new Error('Informe a descrição e um valor válido para os lançamentos.');
+    const records = dates.map((occurrence, index) => row(`${resource}-${crypto.randomUUID()}`, {
+      ...data,
+      code: `${resource === 'revenues' ? 'REC' : 'DES'}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`,
+      amount: Math.round(amount * 100) / 100,
+      date: occurrence.date,
+      dueDate: occurrence.dueDate,
+      status: 'Pendente',
+      recurrenceSeriesId: seriesId,
+      recurrenceFrequency: frequency,
+      recurrenceSequence: index + 1,
+      recurrenceCount: dates.length,
+      demoTag: 'DEMONSTRAÇÃO LOCAL · SEM AÇÃO EXTERNA',
+      createdAt: new Date().toISOString(),
+    }));
+    store[resource] = [...records, ...(store[resource] || [])];
+    store.financeCreateAttempts[attemptKey] = { fingerprint, ids: records.map((item) => String(item.id)) };
+    save();
+    return { data: { seriesId, records } };
+  }
   const resourceMatch = url.pathname.match(/^\/api\/workspace\/([a-z-]+)(?:\/([^/]+))?$/);
   if (resourceMatch) {
     const [, resource, id] = resourceMatch;
     const records = store[resource] || [];
     if (method === 'GET' && id) return { data: records.find((item) => item.id === id) || null };
     if (method === 'GET') { const offset = Number(url.searchParams.get('offset') || 0); const limit = Math.min(200, Number(url.searchParams.get('limit') || 200)); return { data: records.slice(offset, offset + limit), pagination: { limit, offset, total: records.length } }; }
-    if (method === 'POST') { const item = row(`${resource}-${crypto.randomUUID()}`, body.data || {}); store[resource] = [item, ...records]; save(); return { data: item }; }
+    if (method === 'POST') {
+      const data = body.data || {};
+      const rawKey = Object.entries(options.headers || {}).find(([key]) => key.toLowerCase() === 'idempotency-key')?.[1];
+      const financeCreate = ['revenues', 'expenses'].includes(resource) && rawKey;
+      if (financeCreate) {
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(rawKey))) throw new Error('Envie uma chave Idempotency-Key válida.');
+        const fingerprint = financeEntryAttemptFingerprint(data);
+        store.financeCreateAttempts ||= {};
+        const attemptKey = `entry:${resource}:${rawKey}`;
+        const previous = store.financeCreateAttempts[attemptKey];
+        if (previous) {
+          if (previous.fingerprint !== fingerprint) throw new Error('Esta tentativa de lançamento já foi usada com outros dados. Confira a lista antes de criar outro registro.');
+          const existing = records.find((item) => String(item.id) === String(previous.id));
+          if (!existing) throw new Error('Este lançamento desta tentativa já foi removido. Atualize a lista antes de criar outro.');
+          return { data: { ...existing, idempotent: true } };
+        }
+        const item = row(`${resource}-${crypto.randomUUID()}`, { ...data, demoTag: 'DEMONSTRAÇÃO LOCAL · SEM AÇÃO EXTERNA' });
+        store[resource] = [item, ...records];
+        store.financeCreateAttempts[attemptKey] = { fingerprint, id: String(item.id) };
+        save();
+        return { data: item };
+      }
+      const item = row(`${resource}-${crypto.randomUUID()}`, data); store[resource] = [item, ...records]; save(); return { data: item };
+    }
     if (method === 'PATCH') { const next = records.map((item) => item.id === id ? { ...item, ...(body.data || {}), updatedAt: new Date().toISOString() } : item); store[resource] = next; save(); return { data: next.find((item) => item.id === id) || null }; }
     if (method === 'DELETE') {
       if (resource === 'site-assets') removeLocalDemoSiteAsset(store, id);

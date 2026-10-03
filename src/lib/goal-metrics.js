@@ -1,5 +1,5 @@
 import { calendarDateKeyForValue, calendarDateKeyInTimeZone, calendarDateInTimeZone, normalizeWeekStart, startOfCalendarWeek } from './calendar-preferences.js';
-import { parseReportAmount } from './reports.js';
+import { isReportableWorkRecord, parseReportAmount } from './reports.js';
 
 const normalize = (value) => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
 const firstValue = (item, keys) => keys.map((key) => key.split('.').reduce((value, segment) => value?.[segment], item)).find((value) => value !== undefined && value !== null && value !== '');
@@ -50,7 +50,7 @@ export function calculateGoalMetric(metric, data = {}, states = {}, period = 'mo
     return { state: 'ready', value: completed.filter((item) => inPeriod(item, ['completedAt', 'completed_at', 'updatedAt', 'updated_at', 'createdAt', 'created_at'])).length };
   }
   if (metric === 'registered_hours') {
-    const hours = (data.hours || []).filter((item) => inPeriod(item, ['endedAt', 'ended_at', 'startedAt', 'started_at', 'date', 'createdAt', 'created_at']));
+    const hours = (data.hours || []).filter((item) => isReportableWorkRecord(item) && inPeriod(item, ['endedAt', 'ended_at', 'startedAt', 'started_at', 'date', 'createdAt', 'created_at']));
     const value = hours.reduce((sum, item) => {
       const explicitHours = item.hours === null || item.hours === undefined || item.hours === '' ? Number.NaN : Number(item.hours);
       if (Number.isFinite(explicitHours) && explicitHours >= 0) return sum + explicitHours;

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildChartBuckets, buildProjectReportRows, canExportReport, dateOf, formatReportHours, hasReportChartFailures, hasReportSourceFailures, inPeriod, paidReportPayments, paidReportRevenues, parseReportAmount, periodStart, reportDateLabel, reportHours, reportRevenueDate, reportSourceState, reportSourcesForTab, revenueRecordsForReport } from './reports.js';
+import { buildChartBuckets, buildProjectReportRows, canExportReport, dateOf, formatReportHours, hasReportChartFailures, hasReportSourceFailures, inPeriod, isReportableWorkRecord, paidReportPayments, paidReportRevenues, parseReportAmount, periodStart, reportDateLabel, reportHours, reportRevenueDate, reportSourceState, reportSourcesForTab, revenueRecordsForReport } from './reports.js';
 
 test('report amounts parse Brazilian and US mixed thousands and decimal separators', () => {
   assert.equal(parseReportAmount('R$ 1.234,56'), 1234.56);
@@ -198,6 +198,19 @@ test('project reports count legacy duration fields and retain fractional hours',
   assert.equal(formatReportHours(0), '0h');
   assert.equal(formatReportHours(0.75), '45min');
   assert.equal(formatReportHours(1.5), '1h 30min');
+});
+
+test('project report hours omit running timers while keeping completed and legacy records', () => {
+  const rows = buildProjectReportRows([], [], [
+    { id: 'active', status: 'running', title: 'Timer', startedAt: '2026-10-01T10:00:00Z', hours: 5 },
+    { id: 'completed', status: 'completed', title: 'Finished', endedAt: '2026-10-01T10:00:00Z', hours: 1.5 },
+    { id: 'legacy', title: 'Legacy', date: '2026-10-01', minutes: 30 },
+  ], 'month', new Date('2026-10-02T12:00:00Z'), { timezone: 'UTC' });
+
+  assert.deepEqual(rows.map((row) => row[0]), ['Finished', 'Legacy']);
+  assert.equal(isReportableWorkRecord({ status: 'running' }), false);
+  assert.equal(isReportableWorkRecord({ status: 'completed' }), true);
+  assert.equal(isReportableWorkRecord({}), true);
 });
 
 test('annual chart builds calendar-month buckets and sums only real matching records', () => {

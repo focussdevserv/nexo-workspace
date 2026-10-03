@@ -19,3 +19,9 @@ test('status updates for other CRM records do not include contract fields', () =
     status: 'Enviada', tone: 'amber',
   });
 });
+
+test('lead stage edits use the pipeline field and can trigger lead conversion', () => {
+  assert.deepEqual(commercialStatusPatch('leads', 'Fechado'), {
+    stage: 'Fechado', tone: 'green',
+  });
+});

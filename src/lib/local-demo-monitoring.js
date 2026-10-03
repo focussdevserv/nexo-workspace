@@ -44,5 +44,12 @@ export function removeLocalDemoSiteAsset(store, assetId) {
   store['site-assets'] = assets.filter((asset) => String(asset.id) !== id);
   const monitors = Array.isArray(store.monitors) ? store.monitors : [];
   store.monitors = monitors.filter((monitor) => String(monitor.siteAssetId ?? '') !== id);
+  // The demo store is persisted in browser storage. Remove the per-asset
+  // history too, so deleting an asset cannot leave inaccessible stale records.
+  if (store.siteMonitorHistory && typeof store.siteMonitorHistory === 'object') {
+    const history = { ...store.siteMonitorHistory };
+    delete history[id];
+    store.siteMonitorHistory = history;
+  }
   return true;
 }

@@ -68,6 +68,7 @@ import { billingProviderIdempotencyKey } from './billing/provider-idempotency.js
 import { billingRequestFingerprint, billingRequestIdempotencyKey, decideBillingIdempotencyReplay } from './billing/request-idempotency.js';
 import { canTransitionBillingSubscription, normalizeBillingSubscriptionStatus } from './billing/subscription-transitions.js';
 import { buildFinanceRecurrenceDates } from './integrations/finance-recurrence.js';
+import { financeEntryIdempotencyDecision, financeEntryRequestFingerprint } from './finance/entry-idempotency.js';
 import { buildWahaSendFilePayload, classifyWahaQrResponse, classifyWahaSessionReadiness } from './integrations/waha.js';
 import { claimWahaMessage, markWahaDeliveryUnknown, markWahaPreflightFailure } from './integrations/waha-send-claim.js';
 import { appendWahaIncomingMessage, applyWahaMessageAck } from './integrations/waha-webhook.js';
@@ -3802,13 +3803,19 @@ app.post('/api/workspace/:resource/recurring', { preHandler: app.authenticate },
   }
 
   const baseData = Object.fromEntries(Object.entries(data).filter(([key]) => !['id', 'createdAt', 'updatedAt', 'recurrenceSeriesId', 'recurrenceSequence', 'recurrenceCount'].includes(key)));
+  const requestHash = financeEntryRequestFingerprint({ data, frequency: body.frequency, count: body.count });
   const outcome = await db.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`${request.user.organizationId}:${body.seriesId}`}))`);
     const existing = await tx.select().from(workspaceRecords).where(and(
       eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, params.data.resource),
       isNull(workspaceRecords.archivedAt), sql`${workspaceRecords.data}->>'recurrenceSeriesId' = ${body.seriesId}`,
     )).orderBy(asc(workspaceRecords.createdAt));
-    if (existing.length) return existing;
+    if (existing.length) {
+      const first = existing[0]!;
+      const existingHash = financeEntryRequestFingerprint({ data: first.data, frequency: String(first.data.recurrenceFrequency || body.frequency), count: Number(first.data.recurrenceCount || existing.length) });
+      if (financeEntryIdempotencyDecision(existingHash, requestHash) === 'conflict') return { kind: 'conflict' as const };
+      return { kind: 'replayed' as const, rows: existing };
+    }
 
     const rows = await tx.insert(workspaceRecords).values(dates.map((occurrence, index) => ({
       organizationId: request.user.organizationId,
@@ -3834,11 +3841,13 @@ app.post('/api/workspace/:resource/recurring', { preHandler: app.authenticate },
       entityType: params.data.resource, entityId: rows[0]!.id, action: 'recurrence_created',
       payload: { seriesId: body.seriesId, frequency: body.frequency, count: rows.length },
     });
-    return rows;
+    return { kind: 'created' as const, rows };
   });
-  return reply.code(201).send({ data: {
+  if (outcome.kind === 'conflict') return reply.code(409).send({ error: 'finance_entry_idempotency_conflict', message: 'Esta tentativa de recorrência já foi usada com outros dados. Confira os lançamentos antes de criar uma nova série.' });
+  return reply.code(outcome.kind === 'replayed' ? 200 : 201).send({ data: {
     seriesId: body.seriesId,
-    records: outcome.map((row) => ({ ...row.data, id: row.id, createdAt: row.createdAt, updatedAt: row.updatedAt })),
+    records: outcome.rows.map((row) => ({ ...row.data, id: row.id, createdAt: row.createdAt, updatedAt: row.updatedAt })),
+    ...(outcome.kind === 'replayed' ? { idempotent: true } : {}),
   } });
 });
 
@@ -4030,6 +4039,11 @@ app.post('/api/workspace/:resource', { preHandler: app.authenticate }, async (re
   if (params.success && params.data.resource === 'monitors' && !monitorAssetId?.success) return reply.code(400).send({ error: 'monitor_site_asset_required', message: 'Vincule o agendamento a um ativo valido.' });
   const ticketClientId = params.data.resource === 'tickets' ? ticketClientIdFromDraft(body.data) : null;
   if (params.data.resource === 'tickets' && !ticketClientId) return reply.code(400).send({ error: 'ticket_client_required', message: 'Selecione um cliente cadastrado para este ticket.' });
+  const financeEntryCreate = ['revenues', 'expenses'].includes(params.data.resource);
+  const parsedFinanceEntryKey = financeEntryCreate ? billingRequestIdempotencyKey(request.headers['idempotency-key']) : { key: null, valid: true };
+  if (!parsedFinanceEntryKey.valid) return reply.code(400).send({ error: 'invalid_idempotency_key', message: 'Envie uma chave Idempotency-Key no formato UUID.' });
+  const financeEntryKey = parsedFinanceEntryKey.key;
+  const financeEntryRequestHash = financeEntryKey ? financeEntryRequestFingerprint({ data: body.data }) : null;
   const recordScope = request.user.permissions?.scope;
    if (params.data.resource === 'finance-accounts' && Object.hasOwn(body.data, 'balance') && !isCurrencyBalance(body.data.balance)) return reply.code(400).send({ error: 'finance_account_balance_invalid', message: 'O saldo deve ter no máximo duas casas decimais.' });
   if (['revenues', 'expenses'].includes(params.data.resource) && body.data.clientId != null && body.data.clientId !== '') {
@@ -4072,6 +4086,18 @@ app.post('/api/workspace/:resource', { preHandler: app.authenticate }, async (re
   if (params.data.resource === 'proposals' && proposalAcceptanceDisposition(body.data.status) === 'return_existing') return reply.code(409).send({ error: 'proposal_acceptance_required', message: 'Use a aprovacao para criar contrato, projeto e tarefas de forma atomica.' });
   if (params.data.resource === 'contracts' && requiresExternalSignature(body.data.status)) return reply.code(409).send({ error: 'contract_signature_required', message: 'Contrato so muda para Aguardando assinatura, Assinado ou Ativo apos confirmacao do provedor.' });
   const outcome = await db.transaction(async (tx) => {
+    if (financeEntryKey && financeEntryRequestHash) {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`${request.user.organizationId}:${params.data.resource}:finance-entry:${financeEntryKey}`}, 0))`);
+      const [existingEntry] = await tx.select().from(workspaceRecords).where(and(
+        eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, params.data.resource),
+        eq(workspaceRecords.createIdempotencyKey, financeEntryKey),
+      )).limit(1);
+      if (existingEntry) {
+        if (financeEntryIdempotencyDecision(existingEntry.createRequestHash || '', financeEntryRequestHash) === 'conflict') return { created: [], financeEntryIdempotencyConflict: true as const };
+        if (existingEntry.archivedAt) return { created: [], financeEntryAlreadyArchived: true as const };
+        return { created: [existingEntry], replayed: true as const };
+      }
+    }
     if (params.data.resource === 'hours' && body.data.status === 'running') {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${request.user.organizationId}), hashtext('hours-active-timer'))`);
       const activeTimers = await tx.select({ id: workspaceRecords.id, data: workspaceRecords.data }).from(workspaceRecords).where(and(
@@ -4111,7 +4137,7 @@ app.post('/api/workspace/:resource', { preHandler: app.authenticate }, async (re
     const recordData = params.data.resource === 'monitors' && monitorAsset
       ? { ...body.data, siteAssetId: monitorAsset.id, clientId: monitorAsset.data.clientId || null, name: monitorAsset.data.name || body.data.name }
       : params.data.resource === 'tickets' && ticketClient ? canonicalTicketClientData(body.data, ticketClient) : body.data;
-    const created = await tx.insert(workspaceRecords).values({ organizationId: request.user.organizationId, createdBy: request.user.sub, resource: params.data.resource, data: recordData }).returning();
+    const created = await tx.insert(workspaceRecords).values({ organizationId: request.user.organizationId, createdBy: request.user.sub, resource: params.data.resource, ...(financeEntryKey && financeEntryRequestHash ? { createIdempotencyKey: financeEntryKey, createRequestHash: financeEntryRequestHash } : {}), data: recordData }).returning();
     await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: params.data.resource, entityId: created[0]!.id, action: 'created', payload: { label: body.data.name ?? body.data.title ?? body.data.clientName ?? '' } });
     if (params.data.resource === 'leads') {
       const [linkedN8nAutomation] = await tx.select({ id: workspaceRecords.id }).from(workspaceRecords).where(and(
@@ -4128,7 +4154,7 @@ app.post('/api/workspace/:resource', { preHandler: app.authenticate }, async (re
         await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'tasks', entityId: task!.id, action: 'created', payload: { automation: 'lead-first-contact', leadId: created[0]!.id } });
       }
     }
-    return { created };
+    return { created, replayed: false as const };
   });
   if ('activeTimerConflict' in outcome && outcome.activeTimerConflict) return reply.code(409).send({ error: 'hours_timer_already_running', message: 'Já existe um cronômetro em andamento neste workspace. Pare-o antes de iniciar outro.' });
   if ('duplicateId' in outcome) return reply.code(409).send({ error: 'duplicate_lead', message: 'Ja existe uma oportunidade com este e-mail ou telefone.', duplicateId: outcome.duplicateId });
@@ -4136,10 +4162,12 @@ app.post('/api/workspace/:resource', { preHandler: app.authenticate }, async (re
   if ('monitorAssetScopeDenied' in outcome && outcome.monitorAssetScopeDenied) return reply.code(403).send({ error: 'record_scope_denied', message: 'O ativo vinculado esta fora do seu escopo.' });
   if ('ticketClientMissing' in outcome && outcome.ticketClientMissing) return reply.code(400).send({ error: 'ticket_client_invalid', message: 'O cliente selecionado nao existe neste workspace.' });
   if ('ticketClientScopeDenied' in outcome && outcome.ticketClientScopeDenied) return reply.code(403).send({ error: 'record_scope_denied', message: 'O cliente selecionado esta fora do seu escopo.' });
+  if ('financeEntryIdempotencyConflict' in outcome && outcome.financeEntryIdempotencyConflict) return reply.code(409).send({ error: 'finance_entry_idempotency_conflict', message: 'Esta tentativa de lançamento já foi usada com outros dados. Confira a lista antes de criar outro registro.' });
+  if ('financeEntryAlreadyArchived' in outcome && outcome.financeEntryAlreadyArchived) return reply.code(409).send({ error: 'finance_entry_idempotency_archived', message: 'Este lançamento já foi removido. Atualize a lista antes de criar outro.' });
   const saved = outcome.created[0]!;
   if (params.data.resource === 'leads') await enqueueN8nEvent(request.user.organizationId, 'lead.created', { ...saved!.data, id: saved!.id });
   if (params.data.resource === 'tickets') await enqueueN8nEvent(request.user.organizationId, 'ticket.created', { ...saved!.data, id: saved!.id });
-  return reply.code(201).send({ data: { ...saved!.data, id: saved!.id, createdAt: saved!.createdAt, updatedAt: saved!.updatedAt } });
+  return reply.code(outcome.replayed ? 200 : 201).send({ data: { ...saved!.data, id: saved!.id, createdAt: saved!.createdAt, updatedAt: saved!.updatedAt, ...(outcome.replayed ? { idempotent: true } : {}) } });
 });
 
 app.patch('/api/workspace/:resource/:id', { preHandler: app.authenticate }, async (request, reply) => {

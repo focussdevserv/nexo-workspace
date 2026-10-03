@@ -20,6 +20,7 @@ import { financeEntryActionForStatus } from '../lib/finance-entry-action.js';
 import { filterFinanceAccountTransactions, financeAccountTransactionSignedAmount } from '../lib/finance-account-transactions.js';
 import { canDeleteFinanceAccountTransaction } from '../lib/finance-transaction-actions.js';
 import { resolveFinanceClientLink } from '../lib/finance-client-link.js';
+import { financeEntryAttemptFingerprint, getFinanceEntryAttempt } from '../lib/finance-entry-attempt.js';
 import { parseDisplayAmount } from '../lib/client-billing-summary.js';
 import { filterInboxConversations } from '../lib/inbox-filter.js';
 import { normalizeInboxChannel, resolveInboxConversationNavigation } from '../lib/inbox-navigation.js';
@@ -382,6 +383,8 @@ function FinanceList({ page, notify, navigationContext = null, onNavigationConte
   const [periodFilter, setPeriodFilter] = useState('Todos');
   const [clientFilter, setClientFilter] = useState('Todos');
   const [saveError, setSaveError] = useState('');
+  const financeEntryAttemptRef = useRef(null);
+  const financeSubmitLockRef = useRef(false);
   useEffect(() => {
     if (!navigationContext?.intentId || !['create', 'list'].includes(navigationContext.action)) return;
     setClientId(String(navigationContext.clientId || ''));
@@ -411,12 +414,17 @@ function FinanceList({ page, notify, navigationContext = null, onNavigationConte
 
   const submit = async (event) => {
     event.preventDefault();
-    if (saving || actionId) return;
+    if (saving || actionId || financeSubmitLockRef.current) return;
     const value = Number(amount.replace(',', '.'));
     if (!name.trim() || !Number.isFinite(value) || value <= 0) { notify('Preencha a descrição e um valor válido.'); return; }
     const clientLink = resolveFinanceClientLink(clientId, clientsStore.records, clientsStore.loading, counterparty);
     if (clientLink.error) { setSaveError(clientLink.error); return; }
     const record = { ...(editingRecord || {}), code: editingRecord?.code || `${page.slice(0, 3).toUpperCase()}-${String(Date.now()).slice(-5)}`, description: name.trim(), counterparty: clientLink.counterparty || selectedClient?.name || '', clientId: clientLink.clientId, category: category.trim() || 'Manual', date: entryDate, dueDate: dueDate || null, amount: value, status: editingRecord?.status || 'Pendente' };
+    const createAttempt = editingRecord ? null : (financeEntryAttemptRef.current = getFinanceEntryAttempt(
+      financeEntryAttemptRef.current,
+      financeEntryAttemptFingerprint(record, recurrenceFrequency, recurrenceFrequency === 'none' ? 1 : Number(recurrenceCount)),
+    ));
+    financeSubmitLockRef.current = true;
     setSaving(true); setSaveError('');
     try {
       if (editingRecord) {
@@ -424,15 +432,16 @@ function FinanceList({ page, notify, navigationContext = null, onNavigationConte
         await apiRequest(`/api/workspace/${resource}/${editingRecord.id}`, { method: 'PATCH', body: JSON.stringify({ data: cleanRecord }) });
       }
       else if (recurrenceFrequency !== 'none') {
-        await apiRequest(`/api/workspace/${resource}/recurring`, { method: 'POST', body: JSON.stringify({ seriesId: crypto.randomUUID(), frequency: recurrenceFrequency, count: Number(recurrenceCount), data: record }) });
+        await apiRequest(`/api/workspace/${resource}/recurring`, { method: 'POST', body: JSON.stringify({ seriesId: createAttempt.key, frequency: recurrenceFrequency, count: Number(recurrenceCount), data: record }) });
       }
-      else await apiRequest(`/api/workspace/${resource}`, { method: 'POST', body: JSON.stringify({ data: record }) });
+      else await apiRequest(`/api/workspace/${resource}`, { method: 'POST', headers: { 'Idempotency-Key': createAttempt.key }, body: JSON.stringify({ data: record }) });
+      if (createAttempt) financeEntryAttemptRef.current = null;
       setEditingRecord(null); setName(''); setAmount(''); setCounterparty(''); setClientId(''); setCategory(''); setEntryDate(localDateInput()); setDueDate(''); setRecurrenceFrequency('none'); setRecurrenceCount(12); setFormOpen(false);
       try { await refreshRecords(); notify(editingRecord ? 'Lan\u00e7amento atualizado no workspace.' : recurrenceFrequency !== 'none' ? `Série criada com ${recurrenceCount} lançamentos no workspace.` : `${verb} gravada no workspace.`); }
       catch (error) { setSaveError(`${editingRecord ? 'O lan\u00e7amento foi atualizado' : `${verb} foi gravada`}, mas a lista n\u00e3o atualizou. Recarregue os registros. ${error.message || ''}`); }
     } catch (error) {
       setSaveError(error.message || `Não foi possível gravar ${verb.toLocaleLowerCase('pt-BR')}.`);
-    } finally { setSaving(false); }
+    } finally { financeSubmitLockRef.current = false; setSaving(false); }
   };
 
   const doAction = async (key) => {

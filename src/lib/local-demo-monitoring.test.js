@@ -37,10 +37,12 @@ test('local demo site removal also clears all linked schedules and preserves unr
   const store = {
     'site-assets': [{ id: 'site-1' }, { id: 'site-2' }],
     monitors: [{ id: 'monitor-1', siteAssetId: 'site-1' }, { id: 'monitor-2', siteAssetId: 'site-1' }, { id: 'monitor-3', siteAssetId: 'site-2' }, { id: 'monitor-orphan' }],
+    siteMonitorHistory: { 'site-1': [{ id: 'history-1' }], 'site-2': [{ id: 'history-2' }] },
   };
 
   assert.equal(removeLocalDemoSiteAsset(store, 'site-1'), true);
   assert.deepEqual(store['site-assets'].map(({ id }) => id), ['site-2']);
   assert.deepEqual(store.monitors.map(({ id }) => id), ['monitor-3', 'monitor-orphan']);
+  assert.deepEqual(store.siteMonitorHistory, { 'site-2': [{ id: 'history-2' }] });
   assert.equal(removeLocalDemoSiteAsset(store, 'missing'), false);
 });

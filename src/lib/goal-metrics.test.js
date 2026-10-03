@@ -123,3 +123,15 @@ test('hours goals fall back from null hours and minutes to stored timer seconds'
 
   assert.equal(result.value, 0.75);
 });
+
+test('registered-hours goals exclude live timers but retain completed and legacy records', () => {
+  const result = calculateGoalMetric('registered_hours', {
+    hours: [
+      { status: 'running', startedAt: '2026-10-01T10:00:00-03:00', seconds: 3600 },
+      { status: 'completed', endedAt: '2026-10-01T11:00:00-03:00', minutes: 90 },
+      { endedAt: '2026-10-01T12:00:00-03:00', minutes: 30 },
+    ],
+  }, { hours: 'ready' }, 'month', now, prefs);
+
+  assert.equal(result.value, 2);
+});

@@ -152,6 +152,11 @@ export function reportHours(item = {}) {
   return 0;
 }
 
+// Running timers are still changing, so only completed or legacy entries belong in reports.
+export function isReportableWorkRecord(item = {}) {
+  return String(item.status || '').trim().toLowerCase() !== 'running';
+}
+
 export function formatReportHours(value) {
   const totalMinutes = Math.max(0, Math.round((Number(value) || 0) * 60));
   if (!totalMinutes) return '0h';
@@ -184,7 +189,7 @@ export function buildProjectReportRows(projects = [], tasks = [], hours = [], pe
       item.status || item.state || 'Em andamento', reportDateLabel(item.due || item.dueAt || item.due_at || item.createdAt || item.created_at, preferences),
       dateOf(item, 'task').getTime(),
     ]),
-    ...hours.filter((item) => inPeriod(item, periodId, now, 'work', preferences)).map((item) => [
+    ...hours.filter((item) => isReportableWorkRecord(item) && inPeriod(item, periodId, now, 'work', preferences)).map((item) => [
       item.title || item.project || 'Registro de horas', `Horas · ${item.project || item.client || 'Projeto não informado'}`,
       `${reportHours(item)}h · ${item.status || 'Registradas'}`, reportDateLabel(item.date || item.startedAt || item.started_at || item.createdAt || item.created_at, preferences),
       dateOf(item, 'work').getTime(),

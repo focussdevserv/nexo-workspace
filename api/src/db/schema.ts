@@ -160,6 +160,8 @@ export const workspaceRecords = pgTable('workspace_records', {
   id: uuid('id').defaultRandom().primaryKey(),
   organizationId: uuid('organization_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
   resource: text('resource').notNull(),
+  createIdempotencyKey: text('create_idempotency_key'),
+  createRequestHash: text('create_request_hash'),
   data: jsonb('data').$type<Record<string, unknown>>().default({}).notNull(),
   createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
@@ -170,6 +172,8 @@ export const workspaceRecords = pgTable('workspace_records', {
   index('workspace_records_org_resource_created_idx').on(table.organizationId, table.resource, table.createdAt),
   uniqueIndex('workspace_task_n8n_event_unique').on(table.organizationId, sql`(${table.data}->>'n8nEventId')`)
     .where(sql`${table.resource} = 'tasks' AND ${table.archivedAt} IS NULL AND ${table.data} ? 'n8nEventId'`),
+  uniqueIndex('workspace_records_org_resource_create_key_unique').on(table.organizationId, table.resource, table.createIdempotencyKey)
+    .where(sql`${table.createIdempotencyKey} IS NOT NULL`),
 ]);
 
 export const organizationsRelations = relations(organizations, ({ many }) => ({ users: many(users), clients: many(clients) }));
