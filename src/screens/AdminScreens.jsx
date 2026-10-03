@@ -16,6 +16,7 @@ import { repositoryRegistrationIssue } from '../lib/repository-registration.js';
 import { normalizeRepositoryActivity } from '../lib/repository-activity.js';
 import { repositoryConnectionState } from '../lib/repository-connection.js';
 import { updateKeyedBusyState } from '../lib/keyed-busy-state.js';
+import { canStartRepositoryOperation } from '../lib/repository-operation.js';
 import { confirmWorkspaceDelete, useWorkspacePreferences } from '../lib/workspace-preferences.js';
 
 const team = [];
@@ -38,6 +39,7 @@ export default function AdminScreen({ page, navigationContext = null, onNavigati
   const [repoActivity, setRepoActivity] = useState({});
   const [repoSyncError, setRepoSyncError] = useState({});
   const [syncingRepos, setSyncingRepos] = useState(() => new Set());
+  const [removingRepos, setRemovingRepos] = useState(() => new Set());
   const githubConnection = repositoryConnectionState({ loading: githubLoading, error: githubError, status: githubStatus });
   const loadGithubStatus = async () => {
     setGithubLoading(true);
@@ -74,6 +76,7 @@ export default function AdminScreen({ page, navigationContext = null, onNavigati
     } finally { setRepoSaving(false); }
   };
   const syncRepository = async (repo) => {
+    if (!canStartRepositoryOperation({ syncingRepos, removingRepos }, repo.id, 'sync')) return;
     setSyncingRepos((current) => updateKeyedBusyState(current, repo.id, true));
     setRepoSyncError((current) => ({ ...current, [repo.id]: '' }));
     try {
@@ -84,12 +87,28 @@ export default function AdminScreen({ page, navigationContext = null, onNavigati
     } catch (error) { setRepoSyncError((current) => ({ ...current, [repo.id]: error.message || 'Falha ao consultar o GitHub.' })); }
     finally { setSyncingRepos((current) => updateKeyedBusyState(current, repo.id, false)); }
   };
+  const removeRepository = async (repo) => {
+    const key = String(repo.id);
+    if (!canStartRepositoryOperation({ syncingRepos, removingRepos }, key, 'remove')) return;
+    if (!confirmWorkspaceDelete(`Remover ${repo.name} do cadastro?`, preferences)) return;
+    setRemovingRepos((current) => updateKeyedBusyState(current, repo.id, true));
+    try {
+      await deleteRepo(repo.id);
+      setRepoActivity((current) => { const next = { ...current }; delete next[repo.id]; return next; });
+      setRepoSyncError((current) => { const next = { ...current }; delete next[repo.id]; return next; });
+      notify('Repositório removido.');
+    } catch (error) {
+      notify(error.message || 'Não foi possível remover o repositório.');
+    } finally {
+      setRemovingRepos((current) => updateKeyedBusyState(current, repo.id, false));
+    }
+  };
   const notify = (text) => { setNotice(text); window.clearTimeout(notify.timer); notify.timer = window.setTimeout(() => setNotice(''), 2600); };
 
   return <main className="admin-screen">
     <header className="admin-heading">
       <div><div className="admin-breadcrumb">FOCUSSHUB <ChevronRight size={13} /> GESTÃO</div><span className="admin-eyebrow">ESPAÇO DE GESTÃO</span><h1>{page}</h1><p>{descriptionFor(page)}</p></div>
-      {page === 'Repositórios' && <button className="admin-primary" disabled={reposLoading || Boolean(reposError)} onClick={() => { setRepoError(''); setRepoModal(true); }}><Plus size={16} />{reposLoading ? 'Carregando repositórios...' : 'Conectar repositório'}</button>}
+      {page === 'Repositórios' && <button className="admin-primary" disabled={reposLoading || Boolean(reposError)} onClick={() => { setRepoError(''); setRepoModal(true); }}><Plus size={16} />{reposLoading ? 'Carregando repositórios...' : 'Adicionar repositório'}</button>}
     </header>
 
     {page === 'Equipe' && <TeamScreen notify={notify} />}
@@ -97,7 +116,7 @@ export default function AdminScreen({ page, navigationContext = null, onNavigati
     {page === 'Repositórios' && <>
       <section className="admin-stats"><AdminStat icon={FileText} label="Repositórios cadastrados" value={reposLoading ? '…' : reposError ? 'Indisponível' : String(repos.length)} hint={reposError ? 'falha ao carregar a lista' : 'registros salvos no workspace'} tone="blue" /><AdminStat icon={Zap} label="GitHub" value={githubConnection.label} hint={githubConnection.hint} tone="green" /><AdminStat icon={CheckCircle2} label="Repositórios pendentes" value={reposLoading ? '…' : reposError ? 'Indisponível' : githubConnection.available ? String(repos.filter((repo) => !repoActivity[repo.id]).length) : String(repos.length)} hint="sem consulta nesta sessão" tone="violet" /></section>
       {(reposError || githubError) && <div className="repo-load-error" role="alert">{reposError && <span>Falha ao carregar repositórios: {reposError}</span>}{githubError && <span>Falha ao consultar GitHub: {githubError}</span>}{reposError && <button type="button" className="admin-secondary" onClick={refreshRepos} disabled={reposLoading}>Tentar lista novamente</button>}{githubError && <button type="button" className="admin-secondary" onClick={loadGithubStatus} disabled={githubLoading}>Tentar GitHub novamente</button>}</div>}
-      <section className="admin-panel"><div className="admin-panel-head"><div><h2>Repositórios GitHub</h2><p>Consulte commits recentes, pull requests abertas e o último deploy dos repositórios cadastrados.</p></div><button type="button" className="admin-secondary" onClick={() => { refreshRepos(); loadGithubStatus(); }} disabled={reposLoading || githubLoading}><RefreshCw size={14} /> Atualizar</button></div><div className="repo-grid">{repos.map((repo) => <RepositoryCard key={repo.id} repo={repo} activity={repoActivity[repo.id]} error={repoSyncError[repo.id]} syncing={syncingRepos.has(String(repo.id))} githubAvailable={githubConnection.available} onSync={syncRepository} onConfigure={() => window.dispatchEvent(new CustomEvent('nexo:navigate',{detail:'Integrações'}))} onRemove={async (item) => { if (!confirmWorkspaceDelete(`Remover ${item.name} do cadastro?`, preferences)) return; try { await deleteRepo(item.id); notify('Repositório removido.'); } catch (error) { notify(error.message || 'Não foi possível remover o repositório.'); } }} />)}{reposLoading && <div className="reports-no-data" role="status">Carregando repositórios…</div>}{reposError && <div className="reports-no-data" role="alert">A lista não está disponível. Use “Tentar lista novamente” acima.</div>}{!reposLoading && !reposError && repos.length===0&&<div className="reports-no-data">Nenhum repositório cadastrado.</div>}</div></section>
+      <section className="admin-panel"><div className="admin-panel-head"><div><h2>Repositórios GitHub</h2><p>Consulte commits recentes, pull requests abertas e o último deploy dos repositórios cadastrados.</p></div><button type="button" className="admin-secondary" onClick={() => { refreshRepos(); loadGithubStatus(); }} disabled={reposLoading || githubLoading}><RefreshCw size={14} /> Atualizar</button></div><div className="repo-grid">{repos.map((repo) => <RepositoryCard key={repo.id} repo={repo} activity={repoActivity[repo.id]} error={repoSyncError[repo.id]} syncing={syncingRepos.has(String(repo.id))} removing={removingRepos.has(String(repo.id))} githubAvailable={githubConnection.available} onSync={syncRepository} onConfigure={() => window.dispatchEvent(new CustomEvent('nexo:navigate',{detail:'Integrações'}))} onRemove={removeRepository} />)}{reposLoading && <div className="reports-no-data" role="status">Carregando repositórios…</div>}{reposError && <div className="reports-no-data" role="alert">A lista não está disponível. Use “Tentar lista novamente” acima.</div>}{!reposLoading && !reposError && repos.length===0&&<div className="reports-no-data">Nenhum repositório cadastrado.</div>}</div></section>
       {repoModal && <div className="repo-modal-backdrop" onMouseDown={(event) => { if (!repoSaving && event.target === event.currentTarget) setRepoModal(false); }}>
         <form className="repo-modal" role="dialog" aria-modal="true" aria-labelledby="repo-dialog-title" aria-busy={repoSaving} onKeyDown={(event) => { if (event.key === 'Escape') { event.preventDefault(); if (!repoSaving) setRepoModal(false); } }} onSubmit={addRepo}>
           <header><div><small>OPERACOES - GITHUB</small><h2 id="repo-dialog-title">Adicionar repositorio</h2></div><button type="button" disabled={repoSaving} onClick={() => setRepoModal(false)} aria-label="Fechar">X</button></header>
@@ -124,18 +143,18 @@ export default function AdminScreen({ page, navigationContext = null, onNavigati
   </main>;
 }
 
-function RepositoryCard({ repo, activity, error, syncing, githubAvailable, onSync, onConfigure, onRemove }) {
+function RepositoryCard({ repo, activity, error, syncing, removing, githubAvailable, onSync, onConfigure, onRemove }) {
   const latestCommit = activity?.latestCommit;
   const deployment = activity?.deployment;
   const deploymentTone = deployment?.state === 'success' ? '' : 'amber';
   return <article className="repo-card">
-    <div className="repo-card-head"><span className="repo-mark">GH</span><button className="admin-icon-button" type="button" aria-label={`Remover ${repo.name}`} title={`Remover ${repo.name}`} onClick={() => onRemove(repo)}><Trash2 size={16}/></button></div>
+    <div className="repo-card-head"><span className="repo-mark">GH</span><button className="admin-icon-button" type="button" aria-label={removing ? `Removendo ${repo.name}` : `Remover ${repo.name}`} title={removing ? 'Removendo repositório...' : `Remover ${repo.name}`} disabled={syncing || removing} onClick={() => onRemove(repo)}><Trash2 size={16}/></button></div>
     <h3>{activity?.repository?.url ? <a href={activity.repository.url} target="_blank" rel="noreferrer">{activity.repository.fullName || repo.name}<ExternalLink size={12}/></a> : repo.name}</h3>
     <small>{repo.owner}{repo.project ? ` / ${repo.project}` : ''}</small>
     <div className="repo-branch"><span>⑂ {activity?.repository?.defaultBranch || repo.branch || 'main'}</span><span>{activity ? `${activity.pullRequests.length} PRs abertas` : 'Ainda não sincronizado'}</span></div>
     {error ? <p className="repo-sync-error" role="alert">{error}</p> : latestCommit ? <div className="repo-activity-detail"><b>Último commit · {latestCommit.sha || 'SHA não informado'}</b><small>{latestCommit.message || 'Commit sem descrição'}{latestCommit.author ? ` · ${latestCommit.author}` : ''}</small>{activity.pullRequests.length > 0 && <small>Pull requests abertas: {activity.pullRequests.map((pull) => `#${pull.number} ${pull.title}`).join(' · ')}</small>}{deployment ? <small className={deploymentTone}>Deploy {deployment.environment || ''}: {deployment.state}{deployment.url ? <> · <a href={deployment.url} target="_blank" rel="noreferrer">abrir</a></> : ''}</small> : <small>Sem deploy registrado no GitHub.</small>}<small>Sincronizado {activity.syncedAt ? new Date(activity.syncedAt).toLocaleString('pt-BR') : 'horário não informado'}</small></div> : activity ? <div className="repo-activity-detail"><small>Atividade consultada, mas nenhum commit recente foi retornado.</small><small>{activity.pullRequests.length} PRs abertas{deployment ? ` · Deploy ${deployment.state}` : ''}</small><small>Sincronizado {activity.syncedAt ? new Date(activity.syncedAt).toLocaleString('pt-BR') : 'horário não informado'}</small></div> : <p>Consulte o último commit, pull requests abertas e o deploy mais recente.</p>}
     {!activity && !error && <span className="repo-status amber"><i/>Aguardando sincronização</span>}
-    <div className="repo-card-actions">{githubAvailable ? <button className="repo-open" type="button" disabled={syncing} onClick={() => onSync(repo)}>{syncing ? <RefreshCw className="repo-spin" size={13}/> : <RefreshCw size={13}/>} {syncing ? 'Sincronizando...' : 'Sincronizar GitHub'}</button> : <button className="repo-open" type="button" onClick={onConfigure}>Configurar GitHub <ArrowRight size={14}/></button>}{activity?.repository?.url && <a className="repo-open" href={activity.repository.url} target="_blank" rel="noreferrer">Abrir repositório <ExternalLink size={13}/></a>}</div>
+    <div className="repo-card-actions">{githubAvailable ? <button className="repo-open" type="button" disabled={syncing || removing} onClick={() => onSync(repo)}>{syncing ? <RefreshCw className="repo-spin" size={13}/> : <RefreshCw size={13}/>} {syncing ? 'Sincronizando...' : removing ? 'Removendo...' : 'Sincronizar GitHub'}</button> : <button className="repo-open" type="button" disabled={removing} onClick={onConfigure}>Configurar GitHub <ArrowRight size={14}/></button>}{activity?.repository?.url && <a className="repo-open" href={activity.repository.url} target="_blank" rel="noreferrer">Abrir repositório <ExternalLink size={13}/></a>}</div>
   </article>;
 }
 function descriptionFor(page) {

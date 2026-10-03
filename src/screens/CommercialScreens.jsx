@@ -17,6 +17,7 @@ import { proposalDeletionBlockReason } from "../lib/proposal-deletion.js";
 import { activeContractMonthlyRevenue } from "../lib/commercial-contract-revenue.js";
 import { commercialStatusPatch } from "../lib/commercial-status-patch.js";
 import { commercialServicePayload } from "../lib/commercial-service-payload.js";
+import { commercialServicePricingInput, validateCommercialServicePricing } from "../lib/commercial-service-pricing.js";
 import { parseCatalogPrice } from "../lib/catalog-price.js";
 import { filterLeadsByPeriod } from "../lib/lead-period-filter.js";
 import { summarizeClientServices } from "../lib/client-service-summary.js";
@@ -721,11 +722,18 @@ export default function CommercialScreen({
       phone: draft.phone,
       status: "Contato",
       last: "Sem contato registrado"
-    };else if (key === "servicos") entry = commercialServicePayload({
-      common,
-      draft,
-      tone
-    });else if (key === "propostas") {
+    };else if (key === "servicos") {
+      const pricing = validateCommercialServicePricing(draft.value, "");
+      if (pricing.error) {
+        notify(pricing.error);
+        return;
+      }
+      entry = commercialServicePayload({
+        common,
+        draft: { ...draft, value: pricing.price },
+        tone
+      });
+    }else if (key === "propostas") {
       const linkedClient = (records.clients || []).find(client => String(client.id) === String(draft.clientId)) || (records.clients || []).find(client => client.name?.trim().toLocaleLowerCase("pt-BR") === draft.client.trim().toLocaleLowerCase("pt-BR"));
       if (!linkedClient) {
         notify("Vincule a proposta a um cliente cadastrado antes de salvar.");
@@ -2963,14 +2971,19 @@ function ServicesView({
   const save = async event => {
     event?.preventDefault?.();
     if (saving) return;
+    const pricing = validateCommercialServicePricing(draft.price, draft.cost);
+    if (pricing.error) {
+      onAction(pricing.error);
+      return;
+    }
     const next = {
       ...selected,
       ...draft,
       name: draft.name.trim(),
-      price: draft.price ? `A partir de R$ ${draft.price}` : "A combinar",
+      price: pricing.price ? `A partir de R$ ${pricing.price}` : "A combinar",
       cadence: draft.cadence || "Projeto fechado",
       duration: draft.duration || "A definir",
-      cost: draft.cost || "A definir",
+      cost: pricing.cost || "A definir",
       responsible: draft.responsible || "Equipe",
       templateTasks: draft.checklist.split("\n").map(line => line.trim()).filter(Boolean),
       proposalTemplate: draft.proposalTemplate,
@@ -3023,10 +3036,10 @@ function ServicesView({
       name: item.name || "",
       category: item.category || "Geral",
       description: item.description || "",
-      price: String(item.price || "").replace(/^A partir de R\$\s*/, ""),
+      price: commercialServicePricingInput(item.price),
       cadence: item.cadence || "Projeto fechado",
       duration: item.duration || "",
-      cost: item.cost || "",
+      cost: commercialServicePricingInput(item.cost),
       responsible: item.responsible || "",
       checklist: (item.templateTasks || []).join("\n"),
       proposalTemplate: item.proposalTemplate || "",

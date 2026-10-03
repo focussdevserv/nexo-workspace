@@ -6,6 +6,7 @@ import { copyTextToClipboard } from '../lib/copy-to-clipboard.js';
 import { isLocalDemoActive } from '../lib/local-demo.js';
 import { createLatestRequestGuard } from '../lib/latest-request.js';
 import { averageActiveTeamLoad } from '../lib/team-capacity.js';
+import { confirmWorkspaceDelete, useWorkspacePreferences } from '../lib/workspace-preferences.js';
 import { effectiveModulePermissionDraft, permissionDraftForAccount, permissionsPayload, setModulePermissionMode, setModulePermissionValue, validatePermissionDraft } from '../lib/team-permissions.js';
 import './team.css';
 
@@ -15,6 +16,7 @@ const accessModules = [
   ['settings', 'Configuracoes'], ['reports', 'Relatorios'],
 ];
 export default function TeamScreen({ notify }) {
+  const preferences = useWorkspacePreferences();
   const { records: people, loading: peopleLoading, error: peopleError, refresh: refreshPeople, create, update, remove: deleteRecord } = useWorkspaceRecords('team');
   const [accountCount, setAccountCount] = useState(null);
   const [filter, setFilter] = useState('Todos');
@@ -72,7 +74,7 @@ export default function TeamScreen({ notify }) {
   };
   const remove = async (person) => {
     if (directoryBusy || peopleLoading || peopleError) return;
-    if (!window.confirm(`Remover ${person.name} da equipe?`)) return;
+    if (!confirmWorkspaceDelete(`Remover ${person.name} da equipe?`, preferences)) return;
     setDirectoryBusy(true);
     try { await deleteRecord(person.id); notify(`${person.name} foi removido da equipe.`); }
     catch (error) { notify(error.message || 'Não foi possível remover o cadastro.'); }

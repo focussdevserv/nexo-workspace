@@ -538,3 +538,12 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - **GitHub por projeto:** reutilizei a chave já existente `nexo-workspace deploy key`, que autenticou como `focussdevserv/nexo-workspace` e está autorizada para escrita. Configurei `core.sshCommand` apenas em `.git/config` deste checkout. `git ls-remote origin HEAD` passou; nenhuma conta global foi trocada.
 - **Publicação anterior:** commit `7e5681ce32f183cddf69305e05a455a858438953` foi publicado; workflow `37096657169` passou e confirmou produção na mesma revisão, `/api/health` com banco conectado, HTML e bundle HTTP 200 e `/api/auth/me` sem sessão HTTP 401.
 - Esta onda 6 ainda está local até o próximo push e deploy confirmados.
+
+## Onda 7 - validação completa de correções de módulos — 03/10/2026
+
+- **Gestão / Repositórios:** sincronização e remoção do mesmo cadastro não podem competir; controles refletem remoção em andamento e a confirmação respeita a preferência do workspace. O botão de cadastro agora diz “Adicionar repositório”.
+- **CRM / Serviços:** valores exibidos no catálogo voltam ao formulário em formato editável; preço e custo aceitam valores brasileiros válidos, zero e campos em branco, e bloqueiam texto ou valores malformados.
+- **Sites e domínios:** indicador dedicado conta renovações vencidas; cálculo de prazo usa datas civis e valida datas inválidas, incluindo datas legadas brasileiras.
+- **Validação automatizada:** 555 testes do frontend e 221 testes da API passaram; `npm run lint`, `npm run build`, `npm run api:build` e `git diff --check` passaram.
+- **Navegador em demonstração local:** navegação pelos 29 destinos do menu preservou os títulos de página e não mostrou overflow horizontal ou tela de erro. A tela de Sites carregou os quatro indicadores e sete registros fictícios. A tela de CRM foi conferida após aguardar sua montagem; nenhum registro real ou serviço externo foi alterado.
+- **Publicação:** esta onda ainda precisa de push e confirmação do deploy em produção.
