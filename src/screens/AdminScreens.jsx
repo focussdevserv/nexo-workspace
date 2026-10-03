@@ -13,6 +13,7 @@ import ReportsScreen from './ReportsScreen.jsx';
 import TeamScreen from './TeamScreen.jsx';
 import { ClientPortalAdmin } from './ClientPortalScreens.jsx';
 import { repositoryRegistrationIssue } from '../lib/repository-registration.js';
+import { normalizeRepositoryActivity } from '../lib/repository-activity.js';
 import { repositoryConnectionState } from '../lib/repository-connection.js';
 import { updateKeyedBusyState } from '../lib/keyed-busy-state.js';
 import { confirmWorkspaceDelete, useWorkspacePreferences } from '../lib/workspace-preferences.js';
@@ -79,7 +80,7 @@ export default function AdminScreen({ page, navigationContext = null, onNavigati
       const owner = encodeURIComponent(String(repo.owner || '').trim());
       const name = encodeURIComponent(String(repo.name || '').trim());
       const result = await apiRequest(`/api/integrations/github/repos/${owner}/${name}/activity`);
-      setRepoActivity((current) => ({ ...current, [repo.id]: result.data }));
+      setRepoActivity((current) => ({ ...current, [repo.id]: normalizeRepositoryActivity(result?.data) }));
     } catch (error) { setRepoSyncError((current) => ({ ...current, [repo.id]: error.message || 'Falha ao consultar o GitHub.' })); }
     finally { setSyncingRepos((current) => updateKeyedBusyState(current, repo.id, false)); }
   };
@@ -132,7 +133,7 @@ function RepositoryCard({ repo, activity, error, syncing, githubAvailable, onSyn
     <h3>{activity?.repository?.url ? <a href={activity.repository.url} target="_blank" rel="noreferrer">{activity.repository.fullName || repo.name}<ExternalLink size={12}/></a> : repo.name}</h3>
     <small>{repo.owner}{repo.project ? ` / ${repo.project}` : ''}</small>
     <div className="repo-branch"><span>⑂ {activity?.repository?.defaultBranch || repo.branch || 'main'}</span><span>{activity ? `${activity.pullRequests.length} PRs abertas` : 'Ainda não sincronizado'}</span></div>
-    {error ? <p className="repo-sync-error" role="alert">{error}</p> : latestCommit ? <div className="repo-activity-detail"><b>Último commit · {latestCommit.sha}</b><small>{latestCommit.message || 'Commit sem descrição'}{latestCommit.author ? ` · ${latestCommit.author}` : ''}</small>{activity.pullRequests.length > 0 && <small>Pull requests abertas: {activity.pullRequests.map((pull) => `#${pull.number} ${pull.title}`).join(' · ')}</small>}{deployment ? <small className={deploymentTone}>Deploy {deployment.environment || ''}: {deployment.state}{deployment.url ? <> · <a href={deployment.url} target="_blank" rel="noreferrer">abrir</a></> : ''}</small> : <small>Sem deploy registrado no GitHub.</small>}<small>Sincronizado {new Date(activity.syncedAt).toLocaleString('pt-BR')}</small></div> : <p>Consulte o último commit, pull requests abertas e o deploy mais recente.</p>}
+    {error ? <p className="repo-sync-error" role="alert">{error}</p> : latestCommit ? <div className="repo-activity-detail"><b>Último commit · {latestCommit.sha || 'SHA não informado'}</b><small>{latestCommit.message || 'Commit sem descrição'}{latestCommit.author ? ` · ${latestCommit.author}` : ''}</small>{activity.pullRequests.length > 0 && <small>Pull requests abertas: {activity.pullRequests.map((pull) => `#${pull.number} ${pull.title}`).join(' · ')}</small>}{deployment ? <small className={deploymentTone}>Deploy {deployment.environment || ''}: {deployment.state}{deployment.url ? <> · <a href={deployment.url} target="_blank" rel="noreferrer">abrir</a></> : ''}</small> : <small>Sem deploy registrado no GitHub.</small>}<small>Sincronizado {activity.syncedAt ? new Date(activity.syncedAt).toLocaleString('pt-BR') : 'horário não informado'}</small></div> : activity ? <div className="repo-activity-detail"><small>Atividade consultada, mas nenhum commit recente foi retornado.</small><small>{activity.pullRequests.length} PRs abertas{deployment ? ` · Deploy ${deployment.state}` : ''}</small><small>Sincronizado {activity.syncedAt ? new Date(activity.syncedAt).toLocaleString('pt-BR') : 'horário não informado'}</small></div> : <p>Consulte o último commit, pull requests abertas e o deploy mais recente.</p>}
     {!activity && !error && <span className="repo-status amber"><i/>Aguardando sincronização</span>}
     <div className="repo-card-actions">{githubAvailable ? <button className="repo-open" type="button" disabled={syncing} onClick={() => onSync(repo)}>{syncing ? <RefreshCw className="repo-spin" size={13}/> : <RefreshCw size={13}/>} {syncing ? 'Sincronizando...' : 'Sincronizar GitHub'}</button> : <button className="repo-open" type="button" onClick={onConfigure}>Configurar GitHub <ArrowRight size={14}/></button>}{activity?.repository?.url && <a className="repo-open" href={activity.repository.url} target="_blank" rel="noreferrer">Abrir repositório <ExternalLink size={13}/></a>}</div>
   </article>;
