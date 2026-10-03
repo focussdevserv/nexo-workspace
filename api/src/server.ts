@@ -89,7 +89,7 @@ import { isValidCalendarTimeZone, localDateTimeToIso, nextCalendarDate, normaliz
 import { buildGoogleAuthorizationUrl, googleOAuthStateRecordIsActive } from './integrations/google-oauth.js';
 import { buildOAuthResultRedirectUrl } from './integrations/oauth-result-redirect.js';
 import { buildMercadoPagoAuthorizationUrl, createPkcePair, mercadoPagoOAuthStateIsActive, parseMercadoPagoTokenSet, type MercadoPagoTokenSet } from './integrations/mercadopago-oauth.js';
-import { integrationControlAllowsUse } from './integrations/integration-control.js';
+import { integrationControlAllowsUse, oauthProviderHasSavedAccount } from './integrations/integration-control.js';
 import { canApplyClicksignWebhookStatus, clicksignContractStatus, clicksignWebhookEnvelopeStatus, clicksignWebhookIsReady, parseClicksignWebhookEvent, verifyClicksignWebhook } from './integrations/clicksign-webhook.js';
 
 const env = z.object({
@@ -574,9 +574,12 @@ app.post('/api/integrations/waha/sessions', { preHandler: app.authenticate, conf
   try {
     await wahaRequest('/api/sessions', { method: 'POST', body: JSON.stringify({ name: sessionName, start: false }) });
     await wahaRequest(`/api/sessions/${encodeURIComponent(sessionName)}/start`, { method: 'POST', body: '{}' });
-    const [row] = await db.insert(workspaceRecords).values({ organizationId: request.user.organizationId, resource: 'whatsapp-sessions', data: { name: sessionName, label: body.label.trim() }, createdBy: request.user.sub }).returning();
-    if (!row) throw new Error('waha_session_record_not_created');
-    await db.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'whatsapp-session', entityId: row.id, action: 'created', payload: { label: body.label.trim() } });
+    const row = await db.transaction(async (tx) => {
+      const [created] = await tx.insert(workspaceRecords).values({ organizationId: request.user.organizationId, resource: 'whatsapp-sessions', data: { name: sessionName, label: body.label.trim() }, createdBy: request.user.sub }).returning();
+      if (!created) throw new Error('waha_session_record_not_created');
+      await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'whatsapp-session', entityId: created.id, action: 'created', payload: { label: body.label.trim() } });
+      return created;
+    });
     return reply.code(201).send({ data: { id: row.id, label: body.label.trim(), status: 'SCAN_QR_CODE' } });
   } catch (error) {
     try { await wahaRequest(`/api/sessions/${encodeURIComponent(sessionName)}`, { method: 'DELETE' }); } catch { /* preserve the original failure */ }
@@ -1316,9 +1319,12 @@ app.get('/api/integrations/status', { preHandler: app.authenticate }, async (req
   const names: Record<IntegrationProvider, string> = { mercadopago: 'Mercado Pago', evolution: 'Evolution API', waha: 'WAHA', resend: 'Resend', hostinger: 'Hostinger E-mail', google: 'Google Workspace', clicksign: 'Clicksign', github: 'GitHub', n8n: 'n8n', sentry: 'Sentry' };
   return { data: integrationProviders.map((provider) => {
     const control = controlByProvider.get(provider);
-    const configured = provider === 'hostinger' ? Boolean(hostingerEmail) : provider === 'mercadopago' ? Boolean(mercadoPagoTokens || mercadoPagoLegacySafe) : integrationConfigured(provider);
+    const configured = provider === 'hostinger' ? Boolean(hostingerEmail)
+      : provider === 'mercadopago' ? oauthProviderHasSavedAccount('mercadopago', mercadoPagoTokens ? { accountId: mercadoPagoTokens.accountId } : { legacyAccount: mercadoPagoLegacySafe })
+        : provider === 'google' ? oauthProviderHasSavedAccount('google', { email: googleEmail })
+          : integrationConfigured(provider);
     const accountEmail = provider === 'google' ? googleEmail : provider === 'hostinger' ? hostingerEmail : '';
-    return { name: names[provider], provider, configured, enabled: configured && control?.enabled !== false, ...(provider === 'mercadopago' ? { oauthAvailable: Boolean(env.MERCADOPAGO_CLIENT_ID && env.MERCADOPAGO_CLIENT_SECRET), oauthRedirectUri: mercadoPagoRedirectUri, ...(mercadoPagoTokens?.accountId ? { accountId: mercadoPagoTokens.accountId } : {}), ...(mercadoPagoLegacySafe && !mercadoPagoTokens ? { legacyAccount: true } : {}) } : {}), ...(provider === 'google' ? { oauthRedirectUri: googleRedirectUri } : {}), ...(accountEmail ? { accountEmail } : {}), lastTestStatus: control?.lastTestStatus || null, lastTestMessage: control?.lastTestMessage || null, testedAt: control?.testedAt || null };
+    return { name: names[provider], provider, configured, enabled: configured && control?.enabled !== false, ...(provider === 'mercadopago' ? { oauthAvailable: Boolean(env.MERCADOPAGO_CLIENT_ID && env.MERCADOPAGO_CLIENT_SECRET), oauthRedirectUri: mercadoPagoRedirectUri, ...(mercadoPagoTokens?.accountId ? { accountId: mercadoPagoTokens.accountId } : {}), ...(mercadoPagoLegacySafe && !mercadoPagoTokens ? { legacyAccount: true } : {}) } : {}), ...(provider === 'google' ? { oauthAvailable: Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET), oauthRedirectUri: googleRedirectUri } : {}), ...(accountEmail ? { accountEmail } : {}), lastTestStatus: control?.lastTestStatus || null, lastTestMessage: control?.lastTestMessage || null, testedAt: control?.testedAt || null };
   }) };
 });
 
@@ -1361,7 +1367,7 @@ app.post('/api/integrations/:provider/connection', { preHandler: app.authenticat
   if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Integração inválida.' });
   const body = parseBody(z.object({ enabled: z.boolean() }), request.body, reply); if (!body) return;
   const provider = params.data.provider;
-  if (body.enabled && !(provider === 'hostinger' ? Boolean(await getHostingerCredentials(request.user.organizationId)) : provider === 'mercadopago' ? Boolean(await getMercadoPagoTokens(request.user.organizationId) || await legacyMercadoPagoTokenIsSafeFor(request.user.organizationId) || (env.MERCADOPAGO_CLIENT_ID && env.MERCADOPAGO_CLIENT_SECRET)) : integrationConfigured(provider))) return reply.code(409).send({ error: 'integration_not_configured', message: 'Configure as credenciais no Coolify ou autorize a conta antes de reativar esta integração.' });
+  if (body.enabled && !(provider === 'hostinger' ? Boolean(await getHostingerCredentials(request.user.organizationId)) : provider === 'mercadopago' ? oauthProviderHasSavedAccount('mercadopago', await getMercadoPagoTokens(request.user.organizationId) || (await legacyMercadoPagoTokenIsSafeFor(request.user.organizationId) ? { legacyAccount: true } : null)) : provider === 'google' ? oauthProviderHasSavedAccount('google', await getGoogleTokens(request.user.organizationId).catch(() => null)) : integrationConfigured(provider))) return reply.code(409).send({ error: 'integration_not_configured', message: 'Configure as credenciais no Coolify ou autorize a conta antes de reativar esta integração.' });
   if (!body.enabled && provider === 'waha' && await isIntegrationEnabled(request.user.organizationId, 'waha')) {
     const sessions = await db.select().from(workspaceRecords).where(and(eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'whatsapp-sessions'), isNull(workspaceRecords.archivedAt)));
     const remote = await wahaRequest<Array<Record<string, any>>>('/api/sessions');

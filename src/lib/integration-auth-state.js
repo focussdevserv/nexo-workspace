@@ -23,6 +23,9 @@ export function mercadoPagoAuthorizationButtonState(state, loading = false, stat
 /** Keep an authorized Google account recoverable after expired or revoked consent. */
 export function googleReauthorizationButtonState(state, loading = false, statusError = false) {
   if (!state?.accountEmail) return { visible: false, disabled: true, label: 'Autorizar conta Google' };
+  if (loading) return { visible: true, disabled: true, label: 'Consultando status…' };
+  if (statusError) return { visible: true, disabled: true, label: 'Status indisponível' };
+  if (state.oauthAvailable === false) return { visible: true, disabled: true, label: 'OAuth do Google não configurado' };
   if (state.enabled === false) return { visible: true, disabled: true, label: 'Reative para reautorizar' };
   return {
     visible: true,
@@ -59,6 +62,22 @@ export function integrationOAuthRedirectUri(state, origin, provider) {
 /** OAuth consent routes are restricted by the API to the workspace owner. */
 export function canAuthorizeOAuthIntegrations(role) {
   return role === 'owner';
+}
+
+/** Distinguish server OAuth setup from an account consent that has been saved. */
+export function googleAuthorizationButtonState(state, loading = false, statusError = false) {
+  if (loading) return { action: null, disabled: true, label: 'Consultando status…' };
+  if (statusError || !state) return { action: null, disabled: true, label: 'Status indisponível' };
+  if (!state.oauthAvailable) return { action: 'configure', disabled: false, label: 'Configurar OAuth' };
+  if (state.accountEmail && state.enabled === false) return { action: null, disabled: true, label: 'Reative para autorizar' };
+  return { action: 'authorize', disabled: false, label: state.accountEmail ? 'Reautorizar Google' : 'Autorizar Google' };
+}
+
+/** Only saved provider account tokens count as a configured OAuth connection. */
+export function oauthAccountIsConfigured(provider, { accountEmail, accountId, legacyAccount } = {}) {
+  if (provider === 'google') return Boolean(accountEmail);
+  if (provider === 'mercadopago') return Boolean(accountId || legacyAccount);
+  return false;
 }
 
 /** Provider credentials, connection state and health tests are workspace-owner controls. */

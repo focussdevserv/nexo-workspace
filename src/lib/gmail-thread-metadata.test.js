@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { gmailThreadMetadataRecord, hostingerThreadMetadataRecord, mergeGmailThreadMetadata, mergeHostingerThreadMetadata } from './gmail-thread-metadata.js';
+import { gmailThreadMetadataRecord, hostingerThreadMetadataRecord, inboxEmailMetadataWrite, mergeGmailThreadMetadata, mergeHostingerThreadMetadata } from './gmail-thread-metadata.js';
 
 test('merges owner and status by Gmail thread ID without replacing provider messages', () => {
   const threads = [{ id: 't1', threadId: 't1', text: 'Latest mail', unread: 1 }];
@@ -40,4 +40,12 @@ test('reopens a resolved Hostinger thread when a later message arrives', () => {
   const thread = { id: 'hostinger:12', threadId: 'hostinger:12', time: '2026-09-02T12:00:00.000Z' };
   const row = { id: 'r1', channel: 'E-mail', hostingerMetadata: true, threadId: 'hostinger:12', status: 'closed', resolvedAt: '2026-09-01T12:00:00.000Z' };
   assert.equal(mergeHostingerThreadMetadata([thread], [row])[0].status, 'open');
+});
+
+test('updates existing email metadata partially so unrelated concurrent fields are preserved', () => {
+  const current = gmailThreadMetadataRecord({ id: 't1' }, { status: 'closed' }, { owner: 'Ana', assigneeId: 'u1' });
+  assert.deepEqual(inboxEmailMetadataWrite(current, { status: 'closed' }, 'row-1'), { status: 'closed', resolvedAt: current.resolvedAt });
+  const assigned = gmailThreadMetadataRecord({ id: 't1' }, { owner: 'Bia', assigneeId: 'u2' }, { status: 'closed', resolvedAt: 'yesterday' });
+  assert.deepEqual(inboxEmailMetadataWrite(assigned, { owner: 'Bia', assigneeId: 'u2' }, 'row-1'), { owner: 'Bia', assigneeId: 'u2' });
+  assert.equal(inboxEmailMetadataWrite(current, { status: 'closed' }, ''), current);
 });

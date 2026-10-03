@@ -22,3 +22,8 @@ export function buildInboxFollowUpTask(conversation, { client = null, assignee =
     sourceChannel: String(conversation?.channel || ''),
   };
 }
+
+export function createInboxFollowUpOnce(lock, create) {
+  if (!lock?.run || typeof create !== 'function') return Promise.resolve({ ok: false, skipped: true });
+  return lock.run(create);
+}

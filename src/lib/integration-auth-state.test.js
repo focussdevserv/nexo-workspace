@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { canAuthorizeOAuthIntegrations, canManageIntegrationSettings, googleReauthorizationButtonState, integrationCredentialFlow, integrationOAuthRedirectUri, integrationStatusLabel, integrationStatusTone, mercadoPagoAuthorizationButtonState, navigateToOAuthConsent } from './integration-auth-state.js';
+import { canAuthorizeOAuthIntegrations, canManageIntegrationSettings, googleAuthorizationButtonState, googleReauthorizationButtonState, integrationCredentialFlow, integrationOAuthRedirectUri, integrationStatusLabel, integrationStatusTone, mercadoPagoAuthorizationButtonState, navigateToOAuthConsent, oauthAccountIsConfigured } from './integration-auth-state.js';
 
 test('only the workspace owner can start provider OAuth consent', () => {
   assert.equal(canAuthorizeOAuthIntegrations('owner'), true);
@@ -121,7 +121,7 @@ test('shows provider authentication and setup failures with an actionable non-su
 
 test('keeps Google reauthorization available after a failed or incomplete test', () => {
   for (const lastTestStatus of ['connected', 'setup_required', 'error']) {
-    assert.deepEqual(googleReauthorizationButtonState({ accountEmail: 'user@example.com', enabled: true, lastTestStatus }), {
+    assert.deepEqual(googleReauthorizationButtonState({ accountEmail: 'user@example.com', enabled: true, oauthAvailable: true, lastTestStatus }), {
       visible: true, disabled: false, label: 'Reautorizar Google',
     });
   }
@@ -129,8 +129,35 @@ test('keeps Google reauthorization available after a failed or incomplete test',
 
 test('does not offer reauthorization without an account and respects paused or unavailable state', () => {
   assert.equal(googleReauthorizationButtonState({ configured: true }).visible, false);
-  assert.deepEqual(googleReauthorizationButtonState({ accountEmail: 'user@example.com', enabled: false }), {
+  assert.deepEqual(googleReauthorizationButtonState({ accountEmail: 'user@example.com', enabled: false, oauthAvailable: true }), {
     visible: true, disabled: true, label: 'Reative para reautorizar',
   });
   assert.equal(googleReauthorizationButtonState({ accountEmail: 'user@example.com', enabled: true }, false, true).disabled, true);
+});
+
+test('Google authorization distinguishes OAuth server setup from linked account consent', () => {
+  assert.deepEqual(googleAuthorizationButtonState({ configured: false, enabled: false, oauthAvailable: true }), {
+    action: 'authorize', disabled: false, label: 'Autorizar Google',
+  });
+  assert.deepEqual(googleAuthorizationButtonState({ configured: true, enabled: true, oauthAvailable: true, accountEmail: 'owner@example.com' }), {
+    action: 'authorize', disabled: false, label: 'Reautorizar Google',
+  });
+  assert.deepEqual(googleAuthorizationButtonState({ configured: false, oauthAvailable: false }), {
+    action: 'configure', disabled: false, label: 'Configurar OAuth',
+  });
+  assert.deepEqual(googleAuthorizationButtonState(undefined, false, true), {
+    action: null, disabled: true, label: 'Status indisponível',
+  });
+  assert.deepEqual(googleAuthorizationButtonState({ oauthAvailable: true }, true), {
+    action: null, disabled: true, label: 'Consultando status…',
+  });
+  assert.equal(googleAuthorizationButtonState({ oauthAvailable: true, accountEmail: 'owner@example.com', enabled: false }).disabled, true);
+});
+
+test('OAuth client credentials are not mistaken for a saved workspace account', () => {
+  assert.equal(oauthAccountIsConfigured('google', { oauthAvailable: true }), false);
+  assert.equal(oauthAccountIsConfigured('google', { accountEmail: 'owner@example.com' }), true);
+  assert.equal(oauthAccountIsConfigured('mercadopago', { oauthAvailable: true }), false);
+  assert.equal(oauthAccountIsConfigured('mercadopago', { accountId: 'seller-42' }), true);
+  assert.equal(oauthAccountIsConfigured('mercadopago', { legacyAccount: true }), true);
 });

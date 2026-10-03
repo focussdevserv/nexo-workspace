@@ -25,6 +25,20 @@ export function gmailThreadMetadataRecord(thread, patch = {}, existing = {}) {
   };
 }
 
+/** Existing metadata rows need partial writes so concurrent assignment and status
+ * updates merge at the API instead of overwriting each other with stale snapshots. */
+export function inboxEmailMetadataWrite(row, patch, existingId) {
+  if (!existingId) return row;
+  const data = {};
+  if (Object.hasOwn(patch || {}, 'owner')) data.owner = row.owner;
+  if (Object.hasOwn(patch || {}, 'assigneeId')) data.assigneeId = row.assigneeId;
+  if (Object.hasOwn(patch || {}, 'status')) {
+    data.status = row.status;
+    data.resolvedAt = row.resolvedAt;
+  }
+  return data;
+}
+
 export function mergeHostingerThreadMetadata(threads, records) {
   const byThreadId = new Map((Array.isArray(records) ? records : [])
     .filter((record) => record?.hostingerMetadata === true && record.channel === 'E-mail' && record.threadId)
