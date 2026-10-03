@@ -28,7 +28,7 @@ export const dateOf = (item, field = 'default') => {
 
 const reportDateKey = (value, timeZone) => calendarDateKeyForValue(value, timeZone);
 const dateKeyFromCalendarDate = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-const reportTimeZone = (preferences = {}) => normalizeCalendarTimeZone(preferences.timeZone || preferences.timezone);
+const reportTimeZone = (preferences = {}) => normalizeCalendarTimeZone(preferences.timeZone || preferences.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone);
 
 export const periodStart = (periodId, now = new Date(), preferences = {}) => {
   const today = calendarDateInTimeZone(now, reportTimeZone(preferences));
