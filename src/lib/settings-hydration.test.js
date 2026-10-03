@@ -41,10 +41,10 @@ test('successful settings fetch hydrates saved values that the app consumes', ()
   assert.equal(appPreferences.weekStart, 'monday');
 });
 
-test('does not hydrate over a dirty local draft', () => {
+test('does not hydrate saved settings over a dirty local draft', () => {
   assert.equal(resolveSettingsHydration({
     defaults,
-    savedRecord: { settings: { preferences: { compact: false } } },
+    savedRecord: { settings: { workspace: { agency: 'Focusshub' }, preferences: { compact: true, darkMode: true } } },
     loading: false,
     error: null,
     dirty: true,

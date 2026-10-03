@@ -55,3 +55,11 @@ test('reopens a legacy task when either state field says it was completed', () =
   assert.equal(result.tasks[0].state, 'A fazer');
   assert.equal(result.tasks[0].status, 'A fazer');
 });
+
+test('reopening a completed legacy task with padded status does not create another occurrence', () => {
+  const task = { id: 'padded-done', state: ' A fazer ', status: ' Concluída ', recurrence: 'Diaria' };
+  const result = completeTaskOccurrence([task], task.id, new Date(2026, 9, 1));
+  assert.equal(result.occurrence, null);
+  assert.equal(result.tasks[0].state, 'A fazer');
+  assert.equal(result.tasks[0].status, 'A fazer');
+});

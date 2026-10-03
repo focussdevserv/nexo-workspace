@@ -20,6 +20,7 @@ import { paymentCancellationError } from '../lib/payment-cancellation.js';
 import { paymentFrequencyLabel } from '../lib/payment-frequency.js';
 import { recurringBillingEnabled } from '../lib/billing-preferences.js';
 import { matchesPaymentSearch } from '../lib/payment-search.js';
+import { subscriptionStatusUrl } from '../lib/subscription-status-url.js';
 
 const money = (value) => Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const labels = { pending: 'Aguardando pagamento', creating: 'Criando', processing: 'Em processamento', paid: 'Paga', authorized: 'Autorizada', paused: 'Pausada', canceled: 'Cancelada', cancelled: 'Cancelada', overdue: 'Vencida', failed: 'Falhou', refunded: 'Estornada', rejected: 'Recusada', expired: 'Expirada' };
@@ -218,14 +219,14 @@ export function PaymentConsole({ kind = 'orders', notify = () => {}, navigationC
   const cancelSubscription = async (item) => {
     if (!window.confirm(`Cancelar as cobranças futuras de ${item.clientName}?`)) return;
     setSubscriptionBusyId(item.id);
-    try { await request(`/api/billing/subscriptions/${item.id}/status`, { method: 'PATCH', body: JSON.stringify({ status: 'canceled' }) }); await refresh(); notify('Assinatura cancelada no Mercado Pago.'); }
+    try { await request(subscriptionStatusUrl(item.id), { method: 'PATCH', body: JSON.stringify({ status: 'canceled' }) }); await refresh(); notify('Assinatura cancelada no Mercado Pago.'); }
     catch (err) { setError(err.message); }
     finally { setSubscriptionBusyId(''); }
   };
   const toggleSubscription = async (item) => {
     const status = normalizePaymentStatus(item.status) === 'paused' ? 'authorized' : 'paused';
     setSubscriptionBusyId(item.id);
-    try { await request(`/api/billing/subscriptions/${item.id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }); await refresh(); notify(status === 'paused' ? 'Assinatura pausada.' : 'Assinatura retomada.'); }
+    try { await request(subscriptionStatusUrl(item.id), { method: 'PATCH', body: JSON.stringify({ status }) }); await refresh(); notify(status === 'paused' ? 'Assinatura pausada.' : 'Assinatura retomada.'); }
     catch (err) { setError(err.message); }
     finally { setSubscriptionBusyId(''); }
   };
@@ -233,7 +234,7 @@ export function PaymentConsole({ kind = 'orders', notify = () => {}, navigationC
     if (!canSimulateSubscriptionAuthorization(item, demoMode)) return;
     setSubscriptionBusyId(item.id);
     try {
-      await request(`/api/billing/subscriptions/${encodeURIComponent(item.id)}/status`, { method: 'PATCH', body: JSON.stringify({ status: 'authorized' }) });
+      await request(subscriptionStatusUrl(item.id), { method: 'PATCH', body: JSON.stringify({ status: 'authorized' }) });
       await refresh();
       notify('Autorização simulada apenas neste navegador. Nenhum pagamento real foi iniciado.');
     } catch (err) { setError(err.message); }

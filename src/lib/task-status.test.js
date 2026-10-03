@@ -8,6 +8,11 @@ test('task completion recognizes either legacy status field when the values disa
   assert.equal(taskIsCompleted({ state: 'Pendente', status: 'A fazer' }), false);
 });
 
+test('task completion ignores surrounding whitespace in legacy status fields', () => {
+  assert.equal(taskIsCompleted({ state: ' A fazer ', status: ' Concluída ' }), true);
+  assert.equal(taskMatchesStatus({ status: ' Concluída ' }, 'Concluída'), true);
+});
+
 test('completed task filter includes completed legacy records regardless of which field was updated', () => {
   assert.equal(taskMatchesStatus({ state: 'Pendente', status: 'Concluída' }, 'Concluída'), true);
   assert.equal(taskMatchesStatus({ state: 'Concluída', status: 'A fazer' }, 'Concluída'), true);

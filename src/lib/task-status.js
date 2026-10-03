@@ -1,7 +1,7 @@
 const completedStatuses = new Set(['concluida', 'concluido', 'completed', 'done']);
 
 function normalizeTaskStatus(value) {
-  return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('pt-BR');
+  return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLocaleLowerCase('pt-BR');
 }
 
 export function taskIsCompleted(task) {

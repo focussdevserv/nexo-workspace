@@ -1,7 +1,7 @@
 const completedStatuses = new Set(['concluida', 'concluido', 'completed', 'done']);
 
 function normalized(value) {
-  return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('pt-BR');
+  return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLocaleLowerCase('pt-BR');
 }
 
 function nextDate(date, recurrence, anchorDay) {
