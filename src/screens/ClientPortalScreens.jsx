@@ -3,7 +3,7 @@ import { ArrowRight, Check, CheckCircle2, CircleDollarSign, Copy, ExternalLink, 
 import './client-portal.css';
 import { apiRequest, useWorkspaceRecords } from '../lib/workspace-api.js';
 import { isLocalDemoActive } from '../lib/local-demo.js';
-import { appendSentPortalMessage, canSendPortalMessage, canSubmitPortalApprovalDecision, portalLinkActionLabel, shouldConfirmPortalLinkRotation, splitClientPortalApprovals } from '../lib/client-portal-actions.js';
+import { appendSentPortalMessage, canSendPortalMessage, canSubmitPortalApprovalDecision, copyPortalLink, portalLinkActionLabel, shouldConfirmPortalLinkRotation, splitClientPortalApprovals } from '../lib/client-portal-actions.js';
 import { recordBelongsToPortalClient } from '../lib/client-portal-scope.js';
 
 const money = (value) => Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -64,7 +64,7 @@ export function ClientPortalAdmin({ notify = () => {}, navigationContext = null,
     catch (error) { notify(error.message || 'Nao foi possivel salvar as configuracoes.'); }
     finally { setSavingVisibility(false); }
   };
-  const copyLink = async () => { try { await navigator.clipboard.writeText(portalUrl); notify('Link copiado.'); } catch { notify('Não foi possível copiar o link neste navegador.'); } };
+  const copyLink = async () => { try { await copyPortalLink(portalUrl); notify('Link copiado.'); } catch (error) { notify(error.message || 'Não foi possível copiar o link neste navegador.'); } };
 
   if (clients.loading && !clients.records.length) return <section className="cp-empty-state" role="status"><h2>Carregando clientes...</h2><p>Buscando clientes disponiveis neste workspace.</p></section>;
   if (clients.error && !clients.records.length) return <section className="cp-empty-state" role="alert"><h2>Nao foi possivel carregar os clientes</h2><p>{clients.error}</p><button className="admin-secondary" onClick={clients.refresh}>Tentar novamente</button></section>;

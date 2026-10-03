@@ -27,6 +27,43 @@ export function canSendPortalMessage(message, busy = false) {
   return !busy && String(message || '').trim().length > 0;
 }
 
+export async function copyPortalLink(text, { clipboard = globalThis.navigator?.clipboard, documentRef = globalThis.document } = {}) {
+  const value = String(text || '');
+  if (!value.trim()) throw new Error('O link do portal está vazio.');
+
+  if (clipboard?.writeText) {
+    try {
+      await clipboard.writeText(value);
+      return 'clipboard';
+    } catch {
+      // Clipboard permissions are often unavailable in HTTP pages and embedded browsers.
+    }
+  }
+
+  if (!documentRef?.body || !documentRef.createElement || !documentRef.execCommand) {
+    throw new Error('Este navegador não permite copiar o link.');
+  }
+
+  const field = documentRef.createElement('textarea');
+  const previousFocus = documentRef.activeElement;
+  field.value = value;
+  field.setAttribute('readonly', '');
+  field.setAttribute('aria-hidden', 'true');
+  field.style.position = 'fixed';
+  field.style.opacity = '0';
+  field.style.pointerEvents = 'none';
+  documentRef.body.appendChild(field);
+  try {
+    field.focus();
+    field.select();
+    if (!documentRef.execCommand('copy')) throw new Error('A cópia foi recusada pelo navegador.');
+    return 'legacy';
+  } finally {
+    field.remove();
+    previousFocus?.focus?.();
+  }
+}
+
 export function appendSentPortalMessage(messages = [], message, responseId = '') {
   const text = String(message || '').trim();
   if (!text) return Array.isArray(messages) ? messages : [];

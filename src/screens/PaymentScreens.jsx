@@ -13,6 +13,7 @@ import { dateAfterDays } from '../lib/payment-due-date.js';
 import { buildSubscriptionSchedule, minimumSubscriptionEndDate } from '../lib/subscription-schedule.js';
 import { formatPaymentDate } from '../lib/payment-date-display.js';
 import { canCancelPaymentOrder, canCancelSubscription, normalizePaymentStatus } from '../lib/payment-status.js';
+import { copyPaymentText } from '../lib/copy-payment-text.js';
 
 const money = (value) => Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const labels = { pending: 'Aguardando pagamento', creating: 'Criando', processing: 'Em processamento', paid: 'Paga', authorized: 'Autorizada', paused: 'Pausada', canceled: 'Cancelada', cancelled: 'Cancelada', overdue: 'Vencida', failed: 'Falhou', refunded: 'Estornada', rejected: 'Recusada', expired: 'Expirada' };
@@ -228,7 +229,7 @@ export function PaymentConsole({ kind = 'orders', notify = () => {}, navigationC
     } catch (err) { setError(err.message || 'Não foi possível consultar o status.'); }
     finally { setRefreshingId(''); }
   };
-  const copy = async (value) => { try { await navigator.clipboard.writeText(value); notify('Copiado para a área de transferência.'); } catch { notify('Não foi possível acessar a área de transferência.'); } };
+  const copy = async (value) => { if (await copyPaymentText(value)) notify('Copiado para a área de transferência.'); else notify('Não foi possível acessar a área de transferência.'); };
   const scopedItems = clientScope ? filterRecordsForClient(items, clientScope) : items;
   const filtered = filterPayments(scopedItems, { status: statusFilter, due: dueFilter }).filter((item) => `${item.clientName} ${item.description} ${item.status}`.toLocaleLowerCase('pt-BR').includes(search.toLocaleLowerCase('pt-BR')));
   const resetForm = () => { setInstallmentContext(null); setForm({ clientId: '', clientName: '', payerEmail: '', description: '', amount: '', method: methodChoices[0]?.value || 'pix', billingType: 'single', dueDate: dateAfterDays(defaultDueDays), startDate: dateAfterDays(1), endDate: '', identificationType: 'CPF', identificationNumber: '', frequency: 'months', frequencyInterval: 1, address: { zipCode: '', streetName: '', streetNumber: '', neighborhood: '', city: '', state: '' } }); };

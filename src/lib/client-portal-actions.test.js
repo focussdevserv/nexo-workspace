@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { appendSentPortalMessage, canSendPortalMessage, canSubmitPortalApprovalDecision, portalLinkActionLabel, shouldConfirmPortalLinkRotation, splitClientPortalApprovals } from './client-portal-actions.js';
+import { appendSentPortalMessage, canSendPortalMessage, canSubmitPortalApprovalDecision, copyPortalLink, portalLinkActionLabel, shouldConfirmPortalLinkRotation, splitClientPortalApprovals } from './client-portal-actions.js';
 
 test('an active portal link is clearly labeled as a replacement and requires confirmation', () => {
   assert.equal(portalLinkActionLabel(true), 'Substituir link atual');
@@ -47,4 +47,52 @@ test('a successfully saved portal message is visible in the current session with
   assert.ok(Number.isFinite(Date.parse(sent[0].sentAt)));
   assert.equal(appendSentPortalMessage(sent, 'Olá, preciso de ajuda.', 'inbox-record-1'), sent);
   assert.deepEqual(appendSentPortalMessage(sent, '  '), sent);
+});
+
+test('portal link copy prefers the secure clipboard API', async () => {
+  let copied = '';
+  const mode = await copyPortalLink('https://example.test/portal/token', {
+    clipboard: { writeText: async (value) => { copied = value; } },
+    documentRef: null,
+  });
+  assert.equal(mode, 'clipboard');
+  assert.equal(copied, 'https://example.test/portal/token');
+});
+
+test('portal link copy falls back to a temporary selected field when clipboard access is blocked', async () => {
+  const appended = [];
+  const removed = [];
+  let copied = '';
+  let restoredFocus = false;
+  const field = {
+    value: '', style: {},
+    setAttribute() {}, focus() {}, select() {},
+    remove() { removed.push(this); },
+  };
+  const documentRef = {
+    body: { appendChild: (element) => appended.push(element) },
+    activeElement: { focus: () => { restoredFocus = true; } },
+    createElement: () => field,
+    execCommand(command) { copied = command === 'copy' ? field.value : ''; return command === 'copy'; },
+  };
+  const mode = await copyPortalLink('https://example.test/portal/token', {
+    clipboard: { writeText: async () => { throw new Error('permission denied'); } },
+    documentRef,
+  });
+  assert.equal(mode, 'legacy');
+  assert.equal(copied, 'https://example.test/portal/token');
+  assert.equal(appended.length, 1);
+  assert.deepEqual(removed, [field]);
+  assert.equal(restoredFocus, true);
+});
+
+test('portal link copy reports unsupported and rejected fallback cases', async () => {
+  await assert.rejects(copyPortalLink('   ', { clipboard: null, documentRef: null }), /vazio/);
+  await assert.rejects(copyPortalLink('https://example.test/link', { clipboard: null, documentRef: null }), /não permite copiar/);
+  const documentRef = {
+    body: { appendChild() {} }, activeElement: null,
+    createElement: () => ({ style: {}, setAttribute() {}, focus() {}, select() {}, remove() {} }),
+    execCommand: () => false,
+  };
+  await assert.rejects(copyPortalLink('https://example.test/link', { clipboard: null, documentRef }), /recusada/);
 });

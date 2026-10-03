@@ -37,6 +37,7 @@ import { buildLeadFollowUpTaskData, findOpenLeadFollowUpTask, isTerminalLeadStag
 import { isCommercialDateWithinNextDays } from "../lib/commercial-date.js";
 import { confirmWorkspaceDelete, useWorkspacePreferences } from "../lib/workspace-preferences.js";
 import { normalizeCommercialScreenRows } from "../lib/commercial-screen-data.js";
+import { createCommercialSubmissionLock } from "../lib/commercial-submission-lock.js";
 const datasets = {
   leads: [],
   clients: [],
@@ -356,6 +357,9 @@ export default function CommercialScreen({
   const [catalogSeedState, setCatalogSeedState] = useState("idle");
   const catalogSeedStarted = useRef(false);
   const [composer, setComposer] = useState(false);
+  const [composerSaving, setComposerSaving] = useState(false);
+  const composerSubmitLock = useRef(null);
+  if (!composerSubmitLock.current) composerSubmitLock.current = createCommercialSubmissionLock();
   const [proposalServiceSearch, setProposalServiceSearch] = useState("");
   const [showAllProposalServices, setShowAllProposalServices] = useState(false);
   const emptyDraft = {
@@ -789,6 +793,8 @@ export default function CommercialScreen({
       entry.documentText = contractText(entry);
     }
     const recordKey = ["crm", "pipeline"].includes(key) ? "leads" : recordType;
+    if (!composerSubmitLock.current.acquire()) return;
+    setComposerSaving(true);
     try {
       await persistRecords({
         ...records,
@@ -811,6 +817,9 @@ export default function CommercialScreen({
         return;
       }
       notify(error.message || "Não foi possível salvar o registro.");
+    } finally {
+      composerSubmitLock.current.release();
+      setComposerSaving(false);
     }
   };
   const sendProposal = async (proposal, to, idempotencyKey, provider = "resend") => {
@@ -1127,7 +1136,7 @@ export default function CommercialScreen({
           }}><option value="">Selecione um serviço</option>{(records.services || []).map(item => <option value={item.id}>{item.catalogGroup ? `${item.catalogGroup} · ` : ""}{item.name}{item.price ? ` · ${item.price}` : " · preço a definir"}</option>)}</select></label> : <label>{key === "servicos" ? "Categoria" : key === "empresas" ? "Segmento" : key === "contatos" ? "Cargo" : "Serviço / observações"}<input value={draft.detail} onChange={e => setDraft({
             ...draft,
             detail: e.target.value
-          })} /></label>}{key === "empresas" && <Fragment><label>Cidade<input value={draft.city || ""} onChange={e => setDraft({ ...draft, city: e.target.value })} /></label><label>Porte<select value={draft.size || ""} onChange={e => setDraft({ ...draft, size: e.target.value })}><option value="">Selecione o porte</option><option>1 pessoa</option><option>2 a 10 pessoas</option><option>11 a 50 pessoas</option><option>51 a 200 pessoas</option><option>Mais de 200 pessoas</option></select></label><label>E-mail<input type="email" value={draft.email} onChange={e => setDraft({ ...draft, email: e.target.value })} /></label><label>Telefone<input type="tel" value={draft.phone} onChange={e => setDraft({ ...draft, phone: e.target.value })} /></label><label>Site<input type="url" value={draft.website} onChange={e => setDraft({ ...draft, website: e.target.value })} placeholder="https://" /></label><label>Endereco<input value={draft.address} onChange={e => setDraft({ ...draft, address: e.target.value })} /></label><label className="wide">Observacoes<textarea rows={3} value={draft.notes} onChange={e => setDraft({ ...draft, notes: e.target.value })} /></label></Fragment>}<footer><button type="button" className="com-secondary" onClick={() => setComposer(false)}>Cancelar</button><button type="submit" className="com-primary"><Check size={15} />Salvar</button></footer></form></div>}<Feedback message={toast} onClose={() => setToast("")} /></main>;
+          })} /></label>}{key === "empresas" && <Fragment><label>Cidade<input value={draft.city || ""} onChange={e => setDraft({ ...draft, city: e.target.value })} /></label><label>Porte<select value={draft.size || ""} onChange={e => setDraft({ ...draft, size: e.target.value })}><option value="">Selecione o porte</option><option>1 pessoa</option><option>2 a 10 pessoas</option><option>11 a 50 pessoas</option><option>51 a 200 pessoas</option><option>Mais de 200 pessoas</option></select></label><label>E-mail<input type="email" value={draft.email} onChange={e => setDraft({ ...draft, email: e.target.value })} /></label><label>Telefone<input type="tel" value={draft.phone} onChange={e => setDraft({ ...draft, phone: e.target.value })} /></label><label>Site<input type="url" value={draft.website} onChange={e => setDraft({ ...draft, website: e.target.value })} placeholder="https://" /></label><label>Endereco<input value={draft.address} onChange={e => setDraft({ ...draft, address: e.target.value })} /></label><label className="wide">Observacoes<textarea rows={3} value={draft.notes} onChange={e => setDraft({ ...draft, notes: e.target.value })} /></label></Fragment>}<footer><button type="button" className="com-secondary" disabled={composerSaving} onClick={() => setComposer(false)}>Cancelar</button><button type="submit" className="com-primary" disabled={composerSaving}><Check size={15} />{composerSaving ? "Salvando…" : "Salvar"}</button></footer></form></div>}<Feedback message={toast} onClose={() => setToast("")} /></main>;
 }
 function Metric({
   label,
