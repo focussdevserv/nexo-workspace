@@ -518,3 +518,12 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - **Rotas e responsividade:** 37 rotas do menu abriram sem tela de erro ou overflow horizontal em 1440×900 escuro e 390×844 escuro; em 375×844 claro também não houve erro ou overflow. O menu permaneceu visível no teste forçado do limite de erro.
 - **Validação automatizada:** 533 testes frontend e 221 API passaram. npm run lint, npm run build, npm run api:build e git diff --check passaram.
 - **Integridade:** as interações financeiras usaram somente a demonstração local; nenhum OAuth, cliente, assinatura real, pagamento ou serviço externo foi acionado. **Publicação confirmada:** revisão 0fceabba75277d96cdc3a2bb36a7bb3ff85cb516 em https://focussdev.space; HTML e assets JS/CSS HTTP 200, health HTTP 200 com banco conectado, manifesto na mesma revisão e rotas privadas sem sessão HTTP 401.
+## Validação integrada da onda Meu Dia/CRM/Atendimento - 03/10/2026
+
+- Agenda: abrir um compromisso vindo do Meu Dia agora seleciona a data correspondente na Agenda.
+- CRM: dados legados/incompletos de contatos são normalizados para apresentação sem substituir os registros originais usados nas ações.
+- Caixa de entrada: falha ao atualizar a conversa depois do envio é informada como falha de atualização, sem tratar a mensagem entregue como não enviada nem incentivar duplicidade.
+- Navegação: itens laterais agora são links reais com destino e mantêm a navegação SPA em clique comum; modificadores do navegador permanecem disponíveis.
+- Validação automatizada: 540 testes frontend e 221 testes API passaram; lint, build frontend, build TypeScript da API e `git diff --check` passaram.
+- Navegador local: 29 destinos do menu abriram sem tela de erro; 14 combinações de Meu Dia, Agenda, CRM, Tickets, Arquivos, WhatsApp e Configurações foram avaliadas em claro/escuro e 1440/390 px, sem overflow horizontal ou tela de erro. Console: zero erros e zero avisos.
+- Nenhum provedor externo ou dado real foi alterado durante a validação. Esta onda ainda não está publicada: o acesso SSH ao GitHub retornou `Permission denied (publickey)`.

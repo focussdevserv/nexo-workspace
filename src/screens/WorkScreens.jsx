@@ -17,7 +17,7 @@ import { taskDependencyBlocker, taskDependencyBlockMessage, tasksDependingOn } f
 import { parseAgendaAttendees, validateAgendaAttendees, validateAgendaEvent } from '../lib/agenda-event-validation.js';
 import { agendaEventDurationMinutes, agendaEventEndDate } from '../lib/agenda-event-interval.js';
 import { isAgendaAllDayEvent } from '../lib/agenda-event-presentation.js';
-import { resolveAgendaNavigationEvent } from '../lib/agenda-navigation.js';
+import { agendaNavigationEventDate, resolveAgendaNavigationEvent } from '../lib/agenda-navigation.js';
 import { findProjectClient } from '../lib/project-client-link.js';
 import { findProjectForTask, taskBelongsToProject } from '../lib/project-task-link.js';
 import { sortFilesByName, sortFilesByRecent } from '../lib/file-sort.js';
@@ -370,7 +370,11 @@ function WorkScreen({ page, navigationContext = null, onNavigationContextConsume
       googleEvents: googleCalendarEvents,
       googleEventsLoaded: Boolean(calendarSyncedAt || calendarSyncError),
     });
-    if (resolution.event) setSelectedEvent(resolution.event);
+    if (resolution.event) {
+      const date = agendaNavigationEventDate(resolution.event);
+      if (date) setSelectedDate(new Date(Number(date.slice(0, 4)), Number(date.slice(5, 7)) - 1, Number(date.slice(8, 10))));
+      setSelectedEvent(resolution.event);
+    }
     onNavigationContextConsumed();
   }, [key, navigationContext?.eventId, navigationContext?.googleEventId, events, eventsLoaded, googleCalendarEvents, calendarSyncBusy, calendarSyncedAt, calendarSyncError, onNavigationContextConsumed]);
   useEffect(() => {

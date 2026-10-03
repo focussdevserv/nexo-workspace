@@ -37,6 +37,7 @@ import { calendarDateInTimeZone, calendarDateKeyForValue, calendarDateKeyInTimeZ
 import { isWithinWorkspaceQuietHours, shouldSendActivityBrowserAlert, taskReminderCandidates } from './lib/browser-alerts.js';
 import { dispatchBeforeWorkspaceNavigation, workspaceRouteDestination } from './lib/navigation-guards.js';
 import { logoutWorkspace } from './lib/workspace-session.js';
+import { shouldInterceptWorkspaceLink } from './lib/workspace-navigation-link.js';
 import './screens/forms-polish.css';
 import './screens/buttons-polish.css';
 import './screens/onboarding.css';
@@ -702,16 +703,16 @@ function WorkspaceShell() {
     <div className={"app-shell " + (preferences.compact ? 'is-compact' : '')}>
       <a className="skip-link" href="#main-content">Pular para o conteúdo principal</a>
       <aside id="workspace-mobile-navigation" className={`side-nav ${mobileMenuOpen ? 'mobile-open' : ''}`} aria-label="Navegação principal">
-        <button className="side-brand" aria-label="Focusshub início" onClick={() => navigateToPage('Meu Dia')}>
+        <a className="side-brand" aria-label="Focusshub início" href="/app/meu-dia" onClick={(event) => { if (!shouldInterceptWorkspaceLink(event)) return; event.preventDefault(); navigateToPage('Meu Dia'); }}>
           <span className="brand-glyph"><i /><b /><em /></span><strong>Focusshub</strong>
-        </button>
+        </a>
         {mobileMenuOpen && <button className="side-nav-close" type="button" aria-label="Fechar menu" onClick={() => setMobileMenuOpen(false)}><X size={18} /></button>}
         <nav className="side-nav-scroll">
           {visibleNavGroups.map((group) => <div className="nav-group" key={group.label}>
             <span className="nav-group-title">{group.label}</span>
-            {group.items.map(({ label, icon: Icon }) => { const selected = label === 'CRM' ? commercialPages.has(activeNav) : activeNav === label; return <button key={label} className={`side-nav-link ${selected ? 'active' : ''}`} onClick={() => navigateToPage(label)} aria-current={selected ? 'page' : undefined} aria-label={label} title={label}>
+            {group.items.map(({ label, icon: Icon }) => { const selected = label === 'CRM' ? commercialPages.has(activeNav) : activeNav === label; return <a key={label} href={`/app/${workspacePageSlug(label)}`} className={`side-nav-link ${selected ? 'active' : ''}`} onClick={(event) => { if (!shouldInterceptWorkspaceLink(event)) return; event.preventDefault(); navigateToPage(label); }} aria-current={selected ? 'page' : undefined} aria-label={label} title={label}>
               <Icon size={16} strokeWidth={1.8} /><span>{label}</span>
-            </button>; })}
+            </a>; })}
           </div>)}
         </nav>
         {!localDemo && <button className="side-nav-link" type="button" onClick={() => { activateLocalDemo(); window.location.reload(); }} aria-label="Explorar Focusshub com dados fictícios" title="Demonstração local"><Sparkles size={16} strokeWidth={1.8} /><span>Explorar demonstração</span></button>}

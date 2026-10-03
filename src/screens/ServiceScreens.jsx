@@ -26,6 +26,7 @@ import { preferredInboxSessionId } from '../lib/inbox-session.js';
 import { gmailThreadMetadataRecord, hostingerThreadMetadataRecord, mergeGmailThreadMetadata, mergeHostingerThreadMetadata } from '../lib/gmail-thread-metadata.js';
 import { matchConversationClient } from '../lib/conversation-client-match.js';
 import { canReplyToInboxConversation, isResolvedInboxConversation, nextInboxConversationStatus } from '../lib/inbox-reply.js';
+import { sendInboxMessage } from '../lib/inbox-send.js';
 import { buildInboxFollowUpTask, nextInboxFollowUpDate } from '../lib/inbox-follow-up.js';
 import { normalizeWhatsAppChatId } from '../lib/whatsapp-phone.js';
 import { canManageWahaSessions, canOfferWahaConnectAction, canShowWahaQr, wahaQrSessionMessage } from '../lib/waha-session-access.js';
@@ -646,9 +647,14 @@ function Inbox({ notify, forceWhatsapp = false, navigationContext = null, onNavi
         const attachments = attachment ? [{ filename: attachment.name, mimeType: attachment.type || 'application/octet-stream', contentBase64: await encodeAttachmentFile(attachment) }] : [];
         const provider = current.provider === 'hostinger' || emailProvider === 'hostinger' ? 'hostinger' : 'google';
         const payload = { to: recipient, subject: /^re:/i.test(current.subject || '') ? current.subject : `Re: ${current.subject || '(sem assunto)'}`, text, inReplyTo: last?.messageId, references: last?.references, attachments };
-        if (provider === 'hostinger') await apiRequest('/api/integrations/hostinger/send', { method: 'POST', body: JSON.stringify(payload) });
-        else await apiRequest(`/api/integrations/google/gmail/${encodeURIComponent(current.threadId || current.id)}/reply`, { method: 'POST', body: JSON.stringify(payload) });
-        setDraft(''); setAttachment(null); await loadGmail(); notify(`Resposta enviada por ${provider === 'hostinger' ? 'Hostinger' : 'Gmail'}.`);
+        const result = await sendInboxMessage({
+          deliver: () => provider === 'hostinger'
+            ? apiRequest('/api/integrations/hostinger/send', { method: 'POST', body: JSON.stringify(payload) })
+            : apiRequest(`/api/integrations/google/gmail/${encodeURIComponent(current.threadId || current.id)}/reply`, { method: 'POST', body: JSON.stringify(payload) }),
+          onSent: () => { setDraft(''); setAttachment(null); },
+          refresh: loadGmail,
+        });
+        notify(result.refreshed ? `Resposta enviada por ${provider === 'hostinger' ? 'Hostinger' : 'Gmail'}.` : `Resposta enviada por ${provider === 'hostinger' ? 'Hostinger' : 'Gmail'}, mas a caixa não atualizou. Atualize para conferir.`);
       } catch (error) { notify(error.message || 'Não foi possível responder o e-mail.'); }
       finally { setSending(false); }
       return;
@@ -659,10 +665,12 @@ function Inbox({ notify, forceWhatsapp = false, navigationContext = null, onNavi
     setSending(true);
     try {
       const file = attachment ? { attachment: { filename: attachment.name, mimeType: attachment.type || 'application/octet-stream', contentBase64: await encodeAttachmentFile(attachment) } } : {};
-      await apiRequest('/api/integrations/waha/send', { method: 'POST', body: JSON.stringify({ sessionId, conversationId: current.id, clientMessageId: globalThis.crypto.randomUUID(), chatId, text, ...file }) });
-      setDraft(''); setAttachment(null);
-      await refreshMessages();
-      notify(attachment ? 'Arquivo enviado pelo WhatsApp.' : 'Mensagem enviada pelo WhatsApp.');
+      const result = await sendInboxMessage({
+        deliver: () => apiRequest('/api/integrations/waha/send', { method: 'POST', body: JSON.stringify({ sessionId, conversationId: current.id, clientMessageId: globalThis.crypto.randomUUID(), chatId, text, ...file }) }),
+        onSent: () => { setDraft(''); setAttachment(null); },
+        refresh: refreshMessages,
+      });
+      notify(result.refreshed ? (attachment ? 'Arquivo enviado pelo WhatsApp.' : 'Mensagem enviada pelo WhatsApp.') : 'Mensagem enviada pelo WhatsApp, mas a conversa não atualizou. Atualize para conferir.');
     } catch (error) { notify(error.message || 'Não foi possível enviar a mensagem pelo WhatsApp.'); }
     finally { setSending(false); }
   };

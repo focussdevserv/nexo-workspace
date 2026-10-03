@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveAgendaNavigationEvent } from './agenda-navigation.js';
+import { agendaNavigationEventDate, resolveAgendaNavigationEvent } from './agenda-navigation.js';
 
 test('waits for agenda records before resolving an event navigation context', () => {
   assert.deepEqual(resolveAgendaNavigationEvent([], 'event-1', false), { event: null, consume: false });
@@ -24,4 +24,10 @@ test('resolves a Google-only event by its provider ID and prefers a linked works
   const linked = { id: 'workspace-1', googleEventId: 'g-1' };
   assert.deepEqual(resolveAgendaNavigationEvent([], '', true, { googleEventId: 'g-1', googleEvents: [google], googleEventsLoaded: true }), { event: google, consume: true });
   assert.deepEqual(resolveAgendaNavigationEvent([linked], '', true, { googleEventId: 'g-1', googleEvents: [google], googleEventsLoaded: true }), { event: linked, consume: true });
+});
+
+test('navigation to an event selects its calendar date and ignores invalid dates', () => {
+  assert.equal(agendaNavigationEventDate({ date: '2026-10-03' }), '2026-10-03');
+  assert.equal(agendaNavigationEventDate({ date: '2026-02-30' }), null);
+  assert.equal(agendaNavigationEventDate({}), null);
 });
