@@ -32,6 +32,7 @@ import { dashboardMetricPresentation } from './lib/dashboard-metric-presentation
 import { selectDashboardHighlightedEvent } from './lib/dashboard-highlighted-event.js';
 import { dashboardInboxConversations } from './lib/dashboard-inbox.js';
 import { dashboardCalendarDayQuery, mergeDashboardCalendarEvents } from './lib/dashboard-calendar-events.js';
+import { dashboardCalendarError } from './lib/dashboard-calendar-error.js';
 import { dashboardLayoutStorageKey, defaultDashboardLayout, readDashboardLayout, writeDashboardLayout } from './lib/dashboard-layout-preferences.js';
 import { calendarDateInTimeZone, calendarDateKeyForValue, calendarDateKeyInTimeZone, calendarTimeInTimeZone } from './lib/calendar-preferences.js';
 import { isWithinWorkspaceQuietHours, shouldSendActivityBrowserAlert, taskReminderCandidates } from './lib/browser-alerts.js';
@@ -293,6 +294,7 @@ function WorkspaceShell() {
   const [tasks, setTasks] = useState([]);
   const [dashboardRecords, setDashboardRecords] = useState({ leads: [], projects: [], events: [], proposals: [], bills: [], inbox: [] });
   const [dashboardGoogleCalendarEvents, setDashboardGoogleCalendarEvents] = useState([]);
+  const [dashboardCalendarFailure, setDashboardCalendarFailure] = useState(null);
   const [dashboardCalendarRevision, setDashboardCalendarRevision] = useState(0);
   const dashboardCalendarRequestId = useRef(0);
   const [dashboardRestrictedSources, setDashboardRestrictedSources] = useState([]);
@@ -395,15 +397,17 @@ function WorkspaceShell() {
     let active = true;
     if (activeNav !== 'Meu Dia' || localDemo) {
       setDashboardGoogleCalendarEvents([]);
+      setDashboardCalendarFailure(null);
       return () => { active = false; };
     }
     if (!dashboardCalendarRevision) return () => { active = false; };
     const query = dashboardCalendarDayQuery(new Date(), preferences.timezone);
+    setDashboardCalendarFailure(null);
     apiRequest(`/api/integrations/google/calendar/events?${query.toString()}`)
       .then((result) => { if (active && requestId === dashboardCalendarRequestId.current) setDashboardGoogleCalendarEvents(Array.isArray(result.data) ? result.data : []); })
-      .catch(() => { if (active && requestId === dashboardCalendarRequestId.current) setDashboardGoogleCalendarEvents([]); });
+      .catch((error) => { if (active && requestId === dashboardCalendarRequestId.current) { setDashboardGoogleCalendarEvents([]); setDashboardCalendarFailure(dashboardCalendarError(error, currentUser?.role === 'owner')); } });
     return () => { active = false; };
-  }, [activeNav, localDemo, preferences.timezone, dashboardCalendarRevision]);
+  }, [activeNav, localDemo, preferences.timezone, dashboardCalendarRevision, currentUser?.role]);
 
   useEffect(() => {
     setDashboardLayout(readDashboardLayoutSafely(dashboardLayoutKey));
@@ -790,6 +794,7 @@ function WorkspaceShell() {
               <div><h2 id="dashboard-agenda-title">Agenda de hoje</h2><span className="count-pill">{dashboardLoading ? 'Carregando…' : `${todayEvents.length} ${todayEvents.length === 1 ? 'compromisso' : 'compromissos'}`}</span></div>
               <button type="button" onClick={() => navigateToPage('Agenda')}>Abrir agenda <ArrowRight size={15} /></button>
             </div>
+            {dashboardCalendarFailure && <div className="dashboard-calendar-error" role="status"><div><b>{dashboardCalendarFailure.title}</b><span>{dashboardCalendarFailure.detail}</span></div>{dashboardCalendarFailure.action && <button type="button" onClick={() => dashboardCalendarFailure.action === 'authorize' ? window.location.assign('/api/integrations/google/authorize') : dashboardCalendarFailure.action === 'retry' ? refreshDashboard() : navigateToPage('Integrações')}>{dashboardCalendarFailure.actionLabel}</button>}</div>}
             {dashboardRestricted('events') ? <p className="dashboard-agenda-empty">Seu perfil não tem acesso à Agenda.</p> : dashboardLoading ? <p className="dashboard-agenda-empty" aria-live="polite">Carregando compromissos…</p> : dashboardFailedSources.includes('events') ? <div className="dashboard-agenda-error" role="alert">Não foi possível carregar os compromissos. <button type="button" onClick={refreshDashboard} disabled={dashboardLoading}>Tentar novamente</button></div> : todayEvents.length ? <ol className="dashboard-agenda-list">{todayEvents.slice(0, 5).map((event, index) => {
               const context = dashboardEventNavigationContext(event);
               const startTime = event.allDay === true ? 'Dia inteiro' : eventStartTime(event) || 'Horário não definido';

@@ -2,6 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { proposalDeletionBlockReason } from './proposal-deletion.js';
 
+test('blocks removal of accepted proposals persisted with English statuses', () => {
+  for (const status of ['accepted', 'APPROVED']) {
+    assert.ok(proposalDeletionBlockReason({ id: 'p-legacy', status }));
+  }
+});
+
 test('blocks removal of an approved proposal to preserve its conversion history', () => {
   assert.match(proposalDeletionBlockReason({ id: 'p1', status: 'Aprovada' }), /preservar o histórico/);
 });

@@ -6,7 +6,7 @@ const normalizeStatus = (status) => String(status ?? '')
 
 export function proposalAcceptanceState(status) {
   const normalized = normalizeStatus(status);
-  if (normalized === 'aprovada' || normalized === 'accepted') return 'accepted';
+  if (normalized === 'aprovada' || normalized === 'approved' || normalized === 'accepted') return 'accepted';
   if (normalized === 'recusada' || normalized === 'expirada' || normalized === 'rejected' || normalized === 'expired') return 'closed';
   return 'pending';
 }

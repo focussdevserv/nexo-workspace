@@ -1,5 +1,5 @@
 import { findLeadDuplicateMatch } from './lead-identity.js';
-import { checkLocalDemoSite, getLocalDemoSiteHistory } from './local-demo-monitoring.js';
+import { checkLocalDemoSite, getLocalDemoSiteHistory, removeLocalDemoSiteAsset } from './local-demo-monitoring.js';
 import { proposalAcceptanceState } from './proposal-acceptance-state.js';
 import { handleLocalDemoInboxRequest } from './local-demo-inbox.js';
 
@@ -268,7 +268,11 @@ export function handleLocalDemoRequest(path, options = {}) {
     if (method === 'GET') { const offset = Number(url.searchParams.get('offset') || 0); const limit = Math.min(200, Number(url.searchParams.get('limit') || 200)); return { data: records.slice(offset, offset + limit), pagination: { limit, offset, total: records.length } }; }
     if (method === 'POST') { const item = row(`${resource}-${crypto.randomUUID()}`, body.data || {}); store[resource] = [item, ...records]; save(); return { data: item }; }
     if (method === 'PATCH') { const next = records.map((item) => item.id === id ? { ...item, ...(body.data || {}), updatedAt: new Date().toISOString() } : item); store[resource] = next; save(); return { data: next.find((item) => item.id === id) || null }; }
-    if (method === 'DELETE') { store[resource] = records.filter((item) => item.id !== id); save(); return { data: null }; }
+    if (method === 'DELETE') {
+      if (resource === 'site-assets') removeLocalDemoSiteAsset(store, id);
+      else store[resource] = records.filter((item) => item.id !== id);
+      save(); return { data: null };
+    }
   }
   const billingResource = url.pathname === '/api/billing/orders' ? 'billing-orders' : url.pathname === '/api/billing/subscriptions' ? 'billing-subscriptions' : null;
   if (billingResource) {

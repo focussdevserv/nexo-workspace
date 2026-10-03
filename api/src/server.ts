@@ -38,9 +38,11 @@ import { isClientPortalSectionVisible } from './security/client-portal-visibilit
 import { approvalFileMatchesClientScope } from './security/approval-file-scope.js';
 import { hashPortalLoginCode, maskPortalEmail, portalIdentifierMatches, portalLoginCodeMatches } from './integrations/client-portal-auth.js';
 import { safeClientPortalBranding } from './integrations/client-portal-branding.js';
+import { applyClientPortalCachePolicy } from './security/client-portal-cache.js';
 import { normalizeHostingerCredentials, verifyHostingerMailbox, type HostingerCredentials } from './integrations/hostinger-mail.js';
 import { buildOverduePaymentEvent, overduePaymentRetryDelayMs } from './integrations/overdue-payment.js';
 import { proposalAcceptanceDisposition } from './integrations/proposal-acceptance.js';
+import { proposalDeletionBlockReason } from './crm/proposal-deletion.js';
 import { resendOperationalReadiness } from './integrations/resend-readiness.js';
 import { passwordResetDeliveryReadiness } from './auth/password-reset-readiness.js';
 import { shouldRenewPersistentWorkspaceSession, workspaceSessionCookieOptions, workspaceSessionPolicy, workspaceSessionVersionIsCurrent } from './auth/session-policy.js';
@@ -51,6 +53,7 @@ import { sameMercadoPagoPaymentSnapshot } from './integrations/mercadopago.js';
 import { matchesMercadoPagoExternalReference, mercadoPagoAccountMatchesRecord, mercadoPagoWebhookResource } from './integrations/mercadopago-webhook.js';
 import { calculateFinanceTransferBalances } from './integrations/finance-transfers.js';
 import { financeAccountMovementReplayMatches } from './integrations/finance-account-idempotency.js';
+import { linkedFinanceTransferIds } from './integrations/finance-account-deletion.js';
 import { financeTransferReplayMatches } from './integrations/finance-transfer-idempotency.js';
 import { calculateAccountMovementBalance, canUpdateFinanceAccountBalance, isCurrencyAmount, isCurrencyBalance, reverseAccountMovementBalance } from './integrations/account-ledger.js';
 import { paymentDueDateAtEndOfDay, paymentDueDateDuration } from './billing/due-date.js';
@@ -70,6 +73,8 @@ import { N8N_DELIVERY_MAX_ATTEMPTS, n8nCallbackRejectionReason, n8nDeliveryCanRe
 import { isUnverifiedContractTransition, requiresExternalSignature } from './contracts/status.js';
 import { checkPublicSite } from './monitoring/site-check.js';
 import { siteCheckFailureData } from './monitoring/site-check-failure.js';
+import { siteCheckResultData, siteCheckResultMatchesAsset, siteCheckTargetFor } from './monitoring/site-check-result.js';
+import { siteAssetScheduleIds } from './monitoring/site-asset-removal.js';
 import { scrubSentryEvent } from './integrations/sentry-scrub.js';
 import { normalizeBrowserNotificationPreferences, notificationAccessPath, resolveActivityNotificationTitle } from './notifications.js';
 import { googleCalendarAttendeesPayload, mapGoogleCalendarEvents } from './integrations/google-calendar.js';
@@ -121,6 +126,11 @@ app.addHook('onRequest', async (request, reply) => {
   if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method) || request.url.startsWith('/api/integrations/mercadopago/webhook') || request.url === '/api/integrations/waha/webhook' || request.url === '/api/integrations/n8n/actions' || request.url === '/api/integrations/clicksign/webhook') return;
   const origin = request.headers.origin;
   if (!origin || !allowedOrigins.includes(origin)) return reply.code(403).send({ error: 'origin_forbidden', message: 'Origem da solicitacao nao autorizada.' });
+});
+
+app.addHook('onSend', async (request, reply, payload) => {
+  if (request.url.startsWith('/api/public/client-portal/')) applyClientPortalCachePolicy(reply);
+  return payload;
 });
 
 app.decorate('authenticate', async (request: FastifyRequest, reply: FastifyReply) => {
@@ -1542,25 +1552,45 @@ async function processScheduledSiteChecks() {
       let safeReason = 'check_failed';
       if (asset) {
         const target = String(asset.data.url ?? asset.data.domain ?? asset.data.name ?? '').trim();
-        try {
-          const result = await checkPublicSite(target);
-          status = result.status;
-          httpStatus = result.httpStatus;
-          latencyMs = result.latencyMs;
-          checkedAt = result.checkedAt;
-          safeReason = '';
-          await db.update(workspaceRecords).set({
-            data: { ...asset.data, url: result.url, health: result.status, status: result.status, httpStatus: result.httpStatus, latencyMs: result.latencyMs, sslExpiresAt: result.sslExpiresAt, checkedAt: result.checkedAt },
-            updatedAt: new Date(),
-          }).where(and(eq(workspaceRecords.id, asset.id), eq(workspaceRecords.organizationId, monitor.organizationId), isNull(workspaceRecords.archivedAt)));
-        } catch (error) {
+        const checkedTarget = siteCheckTargetFor(asset.data);
+        let result;
+        try { result = await checkPublicSite(target); }
+        catch (error) {
           const code = error instanceof Error ? error.message : '';
           const reason = code === 'host_not_public' ? 'host_not_public' : code === 'invalid_url' ? 'invalid_url' : 'check_failed';
-          safeReason = reason;
-          await db.update(workspaceRecords).set({
-            data: siteCheckFailureData(asset.data, checkedAt, reason),
-            updatedAt: new Date(),
-          }).where(and(eq(workspaceRecords.id, asset.id), eq(workspaceRecords.organizationId, monitor.organizationId), isNull(workspaceRecords.archivedAt)));
+          const persisted = await db.transaction(async (tx) => {
+            const [currentAsset] = await tx.select().from(workspaceRecords).where(and(
+              eq(workspaceRecords.id, asset.id), eq(workspaceRecords.organizationId, monitor.organizationId),
+              eq(workspaceRecords.resource, 'site-assets'), isNull(workspaceRecords.archivedAt),
+            )).for('update').limit(1);
+            if (!currentAsset || siteCheckTargetFor(currentAsset.data) !== checkedTarget) return false;
+            const [updated] = await tx.update(workspaceRecords).set({
+              data: siteCheckFailureData(currentAsset.data, checkedAt, reason), updatedAt: new Date(),
+            }).where(and(eq(workspaceRecords.id, currentAsset.id), eq(workspaceRecords.organizationId, monitor.organizationId), isNull(workspaceRecords.archivedAt))).returning({ id: workspaceRecords.id });
+            return Boolean(updated);
+          });
+          if (persisted) safeReason = reason;
+          else safeReason = 'target_changed';
+        }
+        if (result) {
+          const persisted = await db.transaction(async (tx) => {
+            const [currentAsset] = await tx.select().from(workspaceRecords).where(and(
+              eq(workspaceRecords.id, asset.id), eq(workspaceRecords.organizationId, monitor.organizationId),
+              eq(workspaceRecords.resource, 'site-assets'), isNull(workspaceRecords.archivedAt),
+            )).for('update').limit(1);
+            if (!currentAsset || siteCheckTargetFor(currentAsset.data) !== checkedTarget || !siteCheckResultMatchesAsset(currentAsset.data, result)) return false;
+            const [updated] = await tx.update(workspaceRecords).set({
+              data: siteCheckResultData(currentAsset.data, result), updatedAt: new Date(),
+            }).where(and(eq(workspaceRecords.id, currentAsset.id), eq(workspaceRecords.organizationId, monitor.organizationId), isNull(workspaceRecords.archivedAt))).returning({ id: workspaceRecords.id });
+            return Boolean(updated);
+          });
+          if (persisted) {
+            status = result.status;
+            httpStatus = result.httpStatus;
+            latencyMs = result.latencyMs;
+            checkedAt = result.checkedAt;
+            safeReason = '';
+          } else safeReason = 'target_changed';
         }
       } else safeReason = 'asset_missing';
       const [currentMonitor] = await db.select().from(workspaceRecords).where(and(
@@ -3183,6 +3213,7 @@ app.post('/api/monitoring/site-assets/:id/check', { preHandler: app.authenticate
   if (!asset) return reply.code(404).send({ error: 'not_found', message: 'Ativo não encontrado.' });
   if (!recordMatchesWorkspaceScope('site-assets', asset.id, asset.data, request.user.permissions?.scope)) return reply.code(403).send({ error: 'record_scope_denied', message: 'Este ativo não pertence ao seu escopo.' });
   const target = String(asset.data.url ?? asset.data.domain ?? asset.data.name ?? '').trim();
+  const checkedTarget = siteCheckTargetFor(asset.data);
   let result;
   try { result = await checkPublicSite(target); }
   catch (error) {
@@ -3191,17 +3222,23 @@ app.post('/api/monitoring/site-assets/:id/check', { preHandler: app.authenticate
     if (code === 'invalid_url') return reply.code(400).send({ error: 'invalid_url', message: 'Informe um domínio ou URL HTTP/HTTPS válido.' });
     return reply.code(422).send({ error: 'site_check_failed', message: 'Não foi possível consultar o domínio. Confira o endereço e tente novamente.' });
   }
-  const health = result.status;
-  const [saved] = await db.transaction(async (tx) => {
+  const saved = await db.transaction(async (tx) => {
+    const [current] = await tx.select().from(workspaceRecords).where(and(
+      eq(workspaceRecords.id, asset.id), eq(workspaceRecords.organizationId, request.user.organizationId),
+      eq(workspaceRecords.resource, 'site-assets'), isNull(workspaceRecords.archivedAt),
+    )).for('update').limit(1);
+    if (!current || !recordMatchesWorkspaceScope('site-assets', current.id, current.data, request.user.permissions?.scope)) return { row: undefined, changed: false };
+    if (!siteCheckResultMatchesAsset(current.data, result) || siteCheckTargetFor(current.data) !== checkedTarget) return { row: undefined, changed: true };
     const [updated] = await tx.update(workspaceRecords).set({
-      data: { ...asset.data, url: result.url, health, status: health, httpStatus: result.httpStatus, latencyMs: result.latencyMs, sslExpiresAt: result.sslExpiresAt, checkedAt: result.checkedAt },
-      updatedAt: new Date(),
-    }).where(and(eq(workspaceRecords.id, asset.id), eq(workspaceRecords.organizationId, request.user.organizationId), isNull(workspaceRecords.archivedAt))).returning();
+      data: siteCheckResultData(current.data, result), updatedAt: new Date(),
+    }).where(and(eq(workspaceRecords.id, current.id), eq(workspaceRecords.organizationId, request.user.organizationId), isNull(workspaceRecords.archivedAt))).returning();
+    if (!updated) return { row: undefined, changed: false };
     await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'site-assets', entityId: asset.id, action: 'checked', payload: { status: result.status, httpStatus: result.httpStatus, latencyMs: result.latencyMs, checkedAt: result.checkedAt } });
-    return [updated];
+    return { row: updated, changed: false };
   });
-  if (!saved) return reply.code(404).send({ error: 'not_found', message: 'Ativo não encontrado.' });
-  return { data: { ...saved.data, id: saved.id, createdAt: saved.createdAt, updatedAt: saved.updatedAt } };
+  if (saved.changed) return reply.code(409).send({ error: 'site_asset_changed', message: 'O endereco deste ativo mudou durante a verificacao. Atualize a tela e verifique novamente.' });
+  if (!saved.row) return reply.code(404).send({ error: 'not_found', message: 'Ativo nao encontrado ou fora do seu escopo.' });
+  return { data: { ...saved.row.data, id: saved.row.id, createdAt: saved.row.createdAt, updatedAt: saved.row.updatedAt } };
 });
 
 app.post('/api/integrations/clicksign/webhook', { config: { rawBody: true, rateLimit: { max: 300, timeWindow: '1 minute' } } }, async (request, reply) => {
@@ -3609,6 +3646,10 @@ app.post('/api/workspace/:resource', { preHandler: app.authenticate }, async (re
   const body = parseBody(z.object({ data: workspaceDataSchema }), request.body, reply);
   if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Recurso inválido.' });
   if (!body) return;
+  const monitorAssetId = params.success && params.data.resource === 'monitors'
+    ? z.string().uuid().safeParse(body.data.siteAssetId)
+    : null;
+  if (params.success && params.data.resource === 'monitors' && !monitorAssetId?.success) return reply.code(400).send({ error: 'monitor_site_asset_required', message: 'Vincule o agendamento a um ativo valido.' });
   const recordScope = request.user.permissions?.scope;
    if (params.data.resource === 'finance-accounts' && Object.hasOwn(body.data, 'balance') && !isCurrencyBalance(body.data.balance)) return reply.code(400).send({ error: 'finance_account_balance_invalid', message: 'O saldo deve ter no máximo duas casas decimais.' });
   if (recordScope?.mode === 'selected' && (params.data.resource === 'clients' || (clientLinkedWorkspaceResources.includes(params.data.resource as typeof clientLinkedWorkspaceResources[number]) && !recordMatchesWorkspaceScope(params.data.resource, '', body.data, recordScope)))) return reply.code(403).send({ error: 'record_scope_denied', message: 'Este registro nao pertence ao escopo atribuido.' });
@@ -3636,6 +3677,16 @@ app.post('/api/workspace/:resource', { preHandler: app.authenticate }, async (re
   if (params.data.resource === 'proposals' && proposalAcceptanceDisposition(body.data.status) === 'return_existing') return reply.code(409).send({ error: 'proposal_acceptance_required', message: 'Use a aprovacao para criar contrato, projeto e tarefas de forma atomica.' });
   if (params.data.resource === 'contracts' && requiresExternalSignature(body.data.status)) return reply.code(409).send({ error: 'contract_signature_required', message: 'Contrato so muda para Aguardando assinatura, Assinado ou Ativo apos confirmacao do provedor.' });
   const outcome = await db.transaction(async (tx) => {
+    let monitorAsset: { id: string; data: Record<string, unknown> } | undefined;
+    if (params.data.resource === 'monitors' && monitorAssetId?.success) {
+      const [linkedAsset] = await tx.select({ id: workspaceRecords.id, data: workspaceRecords.data }).from(workspaceRecords).where(and(
+        eq(workspaceRecords.id, monitorAssetId.data), eq(workspaceRecords.organizationId, request.user.organizationId),
+        eq(workspaceRecords.resource, 'site-assets'), isNull(workspaceRecords.archivedAt),
+      )).for('update').limit(1);
+      if (!linkedAsset) return { created: [], monitorAssetMissing: true as const };
+      if (!recordMatchesWorkspaceScope('site-assets', linkedAsset.id, linkedAsset.data, recordScope)) return { created: [], monitorAssetScopeDenied: true as const };
+      monitorAsset = linkedAsset;
+    }
     if (params.data.resource === 'leads') {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${request.user.organizationId}))`);
       const existingLeads = await tx.select({ id: workspaceRecords.id, data: workspaceRecords.data }).from(workspaceRecords).where(and(
@@ -3644,7 +3695,8 @@ app.post('/api/workspace/:resource', { preHandler: app.authenticate }, async (re
       const duplicate = findDuplicateLead(existingLeads.map((lead) => ({ ...lead.data, id: lead.id })), body.data);
       if (duplicate) return { created: [], duplicateId: duplicate.id };
     }
-    const created = await tx.insert(workspaceRecords).values({ organizationId: request.user.organizationId, createdBy: request.user.sub, resource: params.data.resource, data: body.data }).returning();
+    const recordData = params.data.resource === 'monitors' && monitorAsset ? { ...body.data, siteAssetId: monitorAsset.id, clientId: monitorAsset.data.clientId || null, name: monitorAsset.data.name || body.data.name } : body.data;
+    const created = await tx.insert(workspaceRecords).values({ organizationId: request.user.organizationId, createdBy: request.user.sub, resource: params.data.resource, data: recordData }).returning();
     await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: params.data.resource, entityId: created[0]!.id, action: 'created', payload: { label: body.data.name ?? body.data.title ?? body.data.clientName ?? '' } });
     if (params.data.resource === 'leads') {
       const [linkedN8nAutomation] = await tx.select({ id: workspaceRecords.id }).from(workspaceRecords).where(and(
@@ -3664,6 +3716,8 @@ app.post('/api/workspace/:resource', { preHandler: app.authenticate }, async (re
     return { created };
   });
   if ('duplicateId' in outcome) return reply.code(409).send({ error: 'duplicate_lead', message: 'Ja existe uma oportunidade com este e-mail ou telefone.', duplicateId: outcome.duplicateId });
+  if ('monitorAssetMissing' in outcome && outcome.monitorAssetMissing) return reply.code(409).send({ error: 'monitor_site_asset_missing', message: 'O ativo foi removido ou nao esta mais disponivel.' });
+  if ('monitorAssetScopeDenied' in outcome && outcome.monitorAssetScopeDenied) return reply.code(403).send({ error: 'record_scope_denied', message: 'O ativo vinculado esta fora do seu escopo.' });
   const saved = outcome.created[0]!;
   if (params.data.resource === 'leads') await enqueueN8nEvent(request.user.organizationId, 'lead.created', { ...saved!.data, id: saved!.id });
   if (params.data.resource === 'tickets') await enqueueN8nEvent(request.user.organizationId, 'ticket.created', { ...saved!.data, id: saved!.id });
@@ -3768,12 +3822,23 @@ app.patch('/api/workspace/:resource/:id', { preHandler: app.authenticate }, asyn
 app.delete('/api/workspace/finance-accounts/:id', { preHandler: app.authenticate }, async (request, reply) => {
   const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
   if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Invalid finance account id.' });
-  const archived = await db.transaction(async (tx) => {
-    const [account] = await tx.update(workspaceRecords).set({ archivedAt: new Date(), updatedAt: new Date() }).where(and(
+  const outcome = await db.transaction(async (tx) => {
+    const accountFilter = and(
       eq(workspaceRecords.id, params.data.id), eq(workspaceRecords.organizationId, request.user.organizationId),
       eq(workspaceRecords.resource, 'finance-accounts'), isNull(workspaceRecords.archivedAt),
-    )).returning({ id: workspaceRecords.id });
-    if (!account) return undefined;
+    );
+    const [currentAccount] = await tx.select({ id: workspaceRecords.id }).from(workspaceRecords).where(accountFilter).for('update').limit(1);
+    if (!currentAccount) return { kind: 'missing' as const };
+    const linkedRows = await tx.select({ data: workspaceRecords.data }).from(workspaceRecords).where(and(
+      eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'finance-transactions'),
+      isNull(workspaceRecords.archivedAt),
+      or(sql`${workspaceRecords.data}->>'accountId' = ${params.data.id}`, sql`${workspaceRecords.data}->>'relatedAccountId' = ${params.data.id}`),
+    ));
+    const transferIds = linkedFinanceTransferIds(linkedRows);
+    if (transferIds.length) return { kind: 'transfers' as const, count: transferIds.length };
+    const archivedAt = new Date();
+    const [account] = await tx.update(workspaceRecords).set({ archivedAt, updatedAt: archivedAt }).where(accountFilter).returning({ id: workspaceRecords.id });
+    if (!account) return { kind: 'missing' as const };
     const transactions = await tx.update(workspaceRecords).set({ archivedAt: new Date(), updatedAt: new Date() }).where(and(
       eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'finance-transactions'),
       isNull(workspaceRecords.archivedAt), or(sql`${workspaceRecords.data}->>'accountId' = ${params.data.id}`, sql`${workspaceRecords.data}->>'relatedAccountId' = ${params.data.id}`),
@@ -3782,15 +3847,50 @@ app.delete('/api/workspace/finance-accounts/:id', { preHandler: app.authenticate
       { organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'finance-accounts', entityId: account.id, action: 'archived', payload: { archivedTransactions: transactions.length } },
       ...transactions.map((transaction) => ({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'finance-transactions', entityId: transaction.id, action: 'archived', payload: { accountId: account.id } })),
     ]);
-    return account;
+    return { kind: 'archived' as const };
   });
-  if (!archived) return reply.code(404).send({ error: 'not_found', message: 'Finance account not found.' });
+  if (outcome.kind === 'missing') return reply.code(404).send({ error: 'not_found', message: 'Finance account not found.' });
+  if (outcome.kind === 'transfers') return reply.code(409).send({ error: 'finance_account_has_transfers', message: `Esta conta participa de ${outcome.count} transferencia(s). Registre transferencias de reversao entre as contas antes de remover a conta para preservar os saldos e o historico.` });
   return reply.code(204).send();
 });
 
 app.delete('/api/workspace/:resource/:id', { preHandler: app.authenticate }, async (request, reply) => {
   const params = z.object({ resource: workspaceResource, id: z.string().uuid() }).safeParse(request.params);
   if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Recurso ou identificador inválidos.' });
+  if (params.data.resource === 'site-assets') {
+    const archived = await db.transaction(async (tx) => {
+      const [asset] = await tx.select().from(workspaceRecords).where(and(
+        eq(workspaceRecords.id, params.data.id), eq(workspaceRecords.organizationId, request.user.organizationId),
+        eq(workspaceRecords.resource, 'site-assets'), isNull(workspaceRecords.archivedAt),
+      )).for('update').limit(1);
+      if (!asset || !recordMatchesWorkspaceScope('site-assets', asset.id, asset.data, request.user.permissions?.scope)) return false;
+      const schedules = await tx.select({ id: workspaceRecords.id, data: workspaceRecords.data }).from(workspaceRecords).where(and(
+        eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'monitors'),
+        isNull(workspaceRecords.archivedAt), sql`${workspaceRecords.data}->>'siteAssetId' = ${asset.id}`,
+      )).for('update');
+      const scheduleIds = siteAssetScheduleIds(asset.id, schedules);
+      const archivedAt = new Date();
+      const [removedAsset] = await tx.update(workspaceRecords).set({ archivedAt, updatedAt: archivedAt }).where(and(
+        eq(workspaceRecords.id, asset.id), eq(workspaceRecords.organizationId, request.user.organizationId),
+        eq(workspaceRecords.resource, 'site-assets'), isNull(workspaceRecords.archivedAt),
+      )).returning({ id: workspaceRecords.id });
+      if (!removedAsset) return false;
+      if (scheduleIds.length) {
+        await tx.update(workspaceRecords).set({ archivedAt, updatedAt: archivedAt }).where(and(
+          inArray(workspaceRecords.id, scheduleIds),
+          eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'monitors'),
+          isNull(workspaceRecords.archivedAt),
+        ));
+      }
+      await tx.insert(activityEvents).values([
+        { organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'site-assets', entityId: removedAsset.id, action: 'archived', payload: { archivedSchedules: scheduleIds.length } },
+        ...scheduleIds.map((scheduleId) => ({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'monitors', entityId: scheduleId, action: 'archived', payload: { siteAssetId: removedAsset.id, reason: 'site_asset_removed' } })),
+      ]);
+      return true;
+    });
+    if (!archived) return reply.code(404).send({ error: 'not_found', message: 'Ativo nao encontrado ou fora do seu escopo.' });
+    return reply.code(204).send();
+  }
   if (params.data.resource === 'finance-transactions') {
     const outcome = await db.transaction(async (tx) => {
       const transactionFilter = and(
@@ -3860,6 +3960,35 @@ app.delete('/api/workspace/:resource/:id', { preHandler: app.authenticate }, asy
         if (verified.active === true) return reply.code(502).send({ error: 'n8n_unpublish_not_confirmed', message: 'O n8n não confirmou a despublicação; a automação foi mantida.' });
       } catch { return reply.code(502).send({ error: 'n8n_unpublish_failed', message: 'Não foi possível despublicar no n8n; a automação foi mantida.' }); }
     }
+  }
+  if (params.data.resource === 'proposals') {
+    const outcome = await db.transaction(async (tx) => {
+      const [proposal] = await tx.select().from(workspaceRecords).where(and(
+        eq(workspaceRecords.id, params.data.id), eq(workspaceRecords.organizationId, request.user.organizationId),
+        eq(workspaceRecords.resource, 'proposals'), isNull(workspaceRecords.archivedAt),
+        workspaceRecordScopeWhere('proposals', request.user.permissions?.scope),
+      )).for('update').limit(1);
+      if (!proposal) return { kind: 'missing' as const };
+      const [linkedContract] = await tx.select({ id: workspaceRecords.id }).from(workspaceRecords).where(and(
+        eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'contracts'),
+        isNull(workspaceRecords.archivedAt), sql`${workspaceRecords.data}->>'sourceProposalId' = ${proposal.id}`,
+      )).limit(1);
+      const [linkedProject] = await tx.select({ id: workspaceRecords.id }).from(workspaceRecords).where(and(
+        eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'projects'),
+        isNull(workspaceRecords.archivedAt), sql`${workspaceRecords.data}->>'sourceProposalId' = ${proposal.id}`,
+      )).limit(1);
+      if (proposalDeletionBlockReason(proposal.data.status, Boolean(linkedContract || linkedProject))) return { kind: 'protected' as const };
+      const [archivedProposal] = await tx.update(workspaceRecords).set({ archivedAt: new Date(), updatedAt: new Date() }).where(and(
+        eq(workspaceRecords.id, proposal.id), eq(workspaceRecords.organizationId, request.user.organizationId),
+        eq(workspaceRecords.resource, 'proposals'), isNull(workspaceRecords.archivedAt),
+      )).returning({ id: workspaceRecords.id });
+      if (!archivedProposal) return { kind: 'missing' as const };
+      await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'proposals', entityId: archivedProposal.id, action: 'archived', payload: {} });
+      return { kind: 'deleted' as const };
+    });
+    if (outcome.kind === 'protected') return reply.code(409).send({ error: 'proposal_delete_protected', message: 'Esta proposta já foi aprovada ou originou registros de entrega. Mantenha-a para preservar o histórico do contrato, projeto e tarefas.' });
+    if (outcome.kind === 'missing') return reply.code(404).send({ error: 'not_found', message: 'Registro não encontrado.' });
+    return reply.code(204).send();
   }
   const [archived] = await db.transaction(async (tx) => {
     const rows = await tx.update(workspaceRecords).set({ archivedAt: new Date(), updatedAt: new Date() }).where(and(eq(workspaceRecords.id, params.data.id), eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, params.data.resource), isNull(workspaceRecords.archivedAt), workspaceRecordScopeWhere(params.data.resource, request.user.permissions?.scope))).returning({ id: workspaceRecords.id });

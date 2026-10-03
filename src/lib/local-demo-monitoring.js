@@ -35,3 +35,14 @@ export function getLocalDemoSiteHistory(store, assetId) {
   const history = store.siteMonitorHistory?.[assetId];
   return Array.isArray(history) ? history.slice(0, 50) : [];
 }
+
+export function removeLocalDemoSiteAsset(store, assetId) {
+  const id = String(assetId ?? '');
+  if (!id) return false;
+  const assets = Array.isArray(store['site-assets']) ? store['site-assets'] : [];
+  if (!assets.some((asset) => String(asset.id) === id)) return false;
+  store['site-assets'] = assets.filter((asset) => String(asset.id) !== id);
+  const monitors = Array.isArray(store.monitors) ? store.monitors : [];
+  store.monitors = monitors.filter((monitor) => String(monitor.siteAssetId ?? '') !== id);
+  return true;
+}

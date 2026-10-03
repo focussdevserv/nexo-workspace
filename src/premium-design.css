@@ -1480,6 +1480,19 @@ html[data-theme] #root .app-shell .dashboard-agenda-empty {
 }
 html[data-theme] #root .app-shell .dashboard-agenda-empty > svg { color: var(--nexo-action); }
 html[data-theme] #root .app-shell .dashboard-agenda-error { color: #b52d2d; font-size: 13px; }
+html[data-theme] #root .app-shell .dashboard-calendar-error {
+  display:flex; align-items:center; justify-content:space-between; gap:14px; margin:0 0 12px; padding:12px 14px;
+  border:1px solid color-mix(in srgb, #b7791f 30%, var(--nexo-border)); border-radius:12px;
+  background:color-mix(in srgb, #f6c453 8%, var(--nexo-surface)); color:var(--nexo-text);
+}
+html[data-theme] #root .app-shell .dashboard-calendar-error > div { display:grid; min-width:0; gap:3px; }
+html[data-theme] #root .app-shell .dashboard-calendar-error b { color:var(--nexo-text); font-size:13px; }
+html[data-theme] #root .app-shell .dashboard-calendar-error span { color:var(--nexo-muted); font-size:12px; line-height:1.45; }
+html[data-theme] #root .app-shell .dashboard-calendar-error button {
+  min-height:36px; flex:none; padding:0 12px; border:1px solid var(--nexo-border); border-radius:10px;
+  background:var(--nexo-surface); color:var(--nexo-text); font:700 12px Urbanist, 'DM Sans', sans-serif;
+}
+html[data-theme] #root .app-shell .dashboard-calendar-error button:hover { border-color:var(--nexo-action); background:var(--nexo-lime-soft); }
 html[data-theme] #root .app-shell .dashboard-agenda-error button,
 html[data-theme] #root .app-shell .dashboard-agenda-more button { border: 0; background: transparent; color: var(--nexo-text); font: 700 13px Urbanist, 'DM Sans', sans-serif; text-decoration: underline; text-underline-offset: 2px; }
 html[data-theme] #root .app-shell .dashboard-agenda-more { margin: 10px 2px 0; color: var(--nexo-muted); font-size: 12px; }
@@ -1490,6 +1503,7 @@ html[data-theme] #root .app-shell .dashboard-agenda-more { margin: 10px 2px 0; c
   html[data-theme] #root .app-shell .dashboard-agenda-event { grid-template-columns: 54px minmax(0,1fr) 18px; gap: 8px; min-height: 58px; padding: 8px; }
   html[data-theme] #root .app-shell .dashboard-agenda-phase { display: none; }
   html[data-theme] #root .app-shell .dashboard-agenda-empty { flex-wrap: wrap; text-align: center; }
+  html[data-theme] #root .app-shell .dashboard-calendar-error { align-items:stretch; flex-direction:column; }
 }
 @media (max-width: 1080px) {
   html[data-theme] #root .app-shell .dashboard-view .attention-reopen { grid-column: 1; }

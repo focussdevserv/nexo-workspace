@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { checkLocalDemoSite, getLocalDemoSiteHistory } from './local-demo-monitoring.js';
+import { checkLocalDemoSite, getLocalDemoSiteHistory, removeLocalDemoSiteAsset } from './local-demo-monitoring.js';
 
 test('local demo site checks update the asset and persist a clearly simulated history entry', () => {
   const store = { 'site-assets': [{ id: 'demo-site-assets-1', name: 'Site Aurora', health: 'Não verificado' }] };
@@ -31,4 +31,16 @@ test('local demo monitoring history stays capped at fifty entries', () => {
   const history = getLocalDemoSiteHistory(store, 'demo-site-assets-1');
   assert.equal(history.length, 50);
   assert.equal(history[0].id, 'demo-check-demo-site-assets-1-1790942400000');
+});
+
+test('local demo site removal also clears all linked schedules and preserves unrelated records', () => {
+  const store = {
+    'site-assets': [{ id: 'site-1' }, { id: 'site-2' }],
+    monitors: [{ id: 'monitor-1', siteAssetId: 'site-1' }, { id: 'monitor-2', siteAssetId: 'site-1' }, { id: 'monitor-3', siteAssetId: 'site-2' }, { id: 'monitor-orphan' }],
+  };
+
+  assert.equal(removeLocalDemoSiteAsset(store, 'site-1'), true);
+  assert.deepEqual(store['site-assets'].map(({ id }) => id), ['site-2']);
+  assert.deepEqual(store.monitors.map(({ id }) => id), ['monitor-3', 'monitor-orphan']);
+  assert.equal(removeLocalDemoSiteAsset(store, 'missing'), false);
 });

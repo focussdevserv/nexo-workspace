@@ -10,7 +10,7 @@ function findRule(selector, mediaQuery = '') {
   let found = null;
   root.walkRules(selector, (rule) => {
     if (!mediaQuery) found ||= rule;
-    else if (rule.parent.type === 'atrule' && rule.parent.params.replace(/[()]/g, '') === mediaQuery) found ||= rule;
+    else if (rule.parent.type === 'atrule' && rule.parent.params.replace(/[()\s]/g, '') === mediaQuery.replace(/[()\s]/g, '')) found ||= rule;
   });
   return found;
 }
@@ -27,4 +27,14 @@ test('Meu Dia keeps its title on one line and lets the title copy flex beside fi
   assert.equal(title.nodes.find((node) => node.prop === 'white-space')?.value, 'nowrap');
   assert.equal(copy.nodes.find((node) => node.prop === 'min-width')?.value, '0');
   assert.equal(copy.nodes.find((node) => node.prop === 'flex')?.value, '1 1 auto');
+});
+
+test('Google Calendar failure notices remain readable, actionable and stack on narrow screens', () => {
+  const notice = findRule('html[data-theme] #root .app-shell .dashboard-calendar-error');
+  const action = findRule('html[data-theme] #root .app-shell .dashboard-calendar-error button');
+  const mobile = findRule('html[data-theme] #root .app-shell .dashboard-calendar-error', 'max-width:600px');
+  assert.ok(notice);
+  assert.equal(notice.nodes.find((node) => node.prop === 'display')?.value, 'flex');
+  assert.ok(action.nodes.find((node) => node.prop === 'min-height')?.value === '36px');
+  assert.equal(mobile.nodes.find((node) => node.prop === 'flex-direction')?.value, 'column');
 });

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { proposalAcceptanceState } from './proposal-acceptance-state.js';
 
 test('normalizes approved proposal states before local acceptance retries', () => {
-  for (const status of ['Aprovada', ' aprovada ', 'APROVADA', 'accepted']) {
+  for (const status of ['Aprovada', ' aprovada ', 'APROVADA', 'accepted', 'APPROVED']) {
     assert.equal(proposalAcceptanceState(status), 'accepted');
   }
 });

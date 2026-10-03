@@ -962,11 +962,11 @@ function Sites({ page, notify }) {
     if (!confirmWorkspaceDelete(`Remover ${asset.name} do cadastro?`, preferences)) return;
     setRemovingAssetId(String(asset.id));
     try {
-      const linkedSchedules = siteMonitorSchedulesForAsset(asset.id, monitorsState);
-      for (const schedule of linkedSchedules) await monitorsStore.remove(schedule.id);
+      const linkedScheduleIds = new Set(siteMonitorSchedulesForAsset(asset.id, monitorsState).map((schedule) => String(schedule.id)));
       await assetsStore.remove(asset.id);
+      monitorsStore.setRecords((current) => current.filter((schedule) => !linkedScheduleIds.has(String(schedule.id))));
       setExpanded((current) => current === String(asset.id) ? '' : current);
-      notify('Ativo e agenda de monitoramento removidos do workspace.');
+      notify('Ativo e agendas de monitoramento removidos do workspace.');
     } catch (error) { notify(error.message || 'Não foi possível remover o ativo e sua agenda.'); }
     finally { setRemovingAssetId(''); }
   };
