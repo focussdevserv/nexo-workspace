@@ -57,6 +57,7 @@ import { paymentDueDateAtEndOfDay, paymentDueDateDuration } from './billing/due-
 import { withStableBillingPaidAt } from './billing/paid-at.js';
 import { subscriptionDateTimeSchema, validateSubscriptionDates } from './billing/subscription-dates.js';
 import { billingMethodPreferenceAllows } from './billing/method-preferences.js';
+import { billingSubscriptionPreferenceAllows } from './billing/subscription-preferences.js';
 import { isBillingOrderCancelable } from './billing/order-cancellation.js';
 import { billingProviderIdempotencyKey } from './billing/provider-idempotency.js';
 import { billingRequestFingerprint, billingRequestIdempotencyKey, decideBillingIdempotencyReplay } from './billing/request-idempotency.js';
@@ -2723,6 +2724,15 @@ app.post('/api/billing/subscriptions', { preHandler: app.authenticate, config: {
   if (!parsedIdempotencyKey.valid) return reply.code(400).send({ error: 'invalid_idempotency_key', message: 'Envie uma chave Idempotency-Key no formato UUID.' });
   const scopedClientIds = await billingClientIdsForScope(request.user.organizationId, request.user.permissions?.scope);
   if (scopedClientIds && (!body.workspaceClientId || !scopedClientIds.includes(body.workspaceClientId))) return reply.code(403).send({ error: 'record_scope_denied', message: 'Selecione um cliente atribuido ao seu escopo antes de criar a assinatura.' });
+  const [preferenceRecord] = await db.select({ data: workspaceRecords.data }).from(workspaceRecords).where(and(
+    eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'settings'),
+    sql`${workspaceRecords.data} ->> 'key' = 'workspace-preferences'`,
+  )).limit(1);
+  const settingsRecord = preferenceRecord?.data && typeof preferenceRecord.data === 'object' ? preferenceRecord.data as Record<string, unknown> : null;
+  const billingSettings = settingsRecord?.settings && typeof settingsRecord.settings === 'object'
+    ? (settingsRecord.settings as Record<string, unknown>).billing
+    : undefined;
+  if (!billingSubscriptionPreferenceAllows(billingSettings)) return reply.code(409).send({ error: 'subscriptions_disabled', message: 'Novas assinaturas recorrentes estão desativadas nas Configurações financeiras.' });
   if (!await isIntegrationEnabled(request.user.organizationId, 'mercadopago')) return reply.code(409).send({ error: 'integration_disconnected', message: 'Mercado Pago está desconectado no Focusshub. Reative em Integrações para usar assinaturas.' });
   if (!await getMercadoPagoTokens(request.user.organizationId) && !await legacyMercadoPagoTokenIsSafeFor(request.user.organizationId)) return reply.code(503).send({ error: 'payment_provider_unavailable', message: 'Autorize a conta Mercado Pago deste workspace em Integrações antes de criar assinaturas.' });
   const sellerTokens = await getMercadoPagoTokens(request.user.organizationId);

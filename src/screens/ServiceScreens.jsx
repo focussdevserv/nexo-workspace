@@ -29,6 +29,7 @@ import { canReplyToInboxConversation, isResolvedInboxConversation, nextInboxConv
 import { buildInboxFollowUpTask, nextInboxFollowUpDate } from '../lib/inbox-follow-up.js';
 import { normalizeWhatsAppChatId } from '../lib/whatsapp-phone.js';
 import { canManageWahaSessions, canOfferWahaConnectAction, canShowWahaQr, wahaQrSessionMessage } from '../lib/waha-session-access.js';
+import { createAsyncActionLock } from '../lib/async-action-lock.js';
 import { beginSiteCheck, finishSiteCheck } from '../lib/site-check-state.js';
 import { filterTableRows, tableStatusOptions } from '../lib/table-status-filter.js';
 import { countOverdueTickets, ticketSlaDeadline, ticketSlaLabel } from '../lib/ticket-sla.js';
@@ -42,7 +43,7 @@ import { downloadCsvFile, rowsToCsv } from '../lib/csv.js';
 import { canAuthorizeOAuthIntegrations, googleReauthorizationButtonState, integrationStatusLabel, integrationStatusTone, mercadoPagoAuthorizationButtonState } from '../lib/integration-auth-state.js';
 import { googleEmailErrorAction } from '../lib/google-email-error.js';
 import { appendUniqueN8nWorkflows } from '../lib/n8n-workflows.js';
-import { automationActionOptions, defaultAutomationAction } from '../lib/automation-options.js';
+import { automationActionOptions, automationDraftForEdit, defaultAutomationAction } from '../lib/automation-options.js';
 import { isLocalDemoActive } from '../lib/local-demo.js';
 import { createLatestRequestGuard } from '../lib/latest-request.js';
 import { startGithubActivityRequest } from '../lib/github-activity-request.js';
@@ -1214,12 +1215,16 @@ function WahaSessions({ notify }) {
   const [busy, setBusy] = useState(false);
   const [manualRefreshing, setManualRefreshing] = useState(false);
   const [error, setError] = useState('');
+  const sessionRefreshLock = useRef(null);
+  const sessionRefreshMounted = useRef(false);
+  if (!sessionRefreshLock.current) sessionRefreshLock.current = createAsyncActionLock();
   const qrRequests = useRef(null);
   if (!qrRequests.current) qrRequests.current = createLatestRequestGuard();
   const selectedSession = sessions.find((item) => item.id === selected);
-  const refresh = async ({ clearError = false } = {}) => {
+  const refresh = async ({ clearError = false } = {}) => sessionRefreshLock.current.run(async () => {
     try {
       const result = await apiRequest('/api/integrations/waha/sessions');
+      if (!sessionRefreshMounted.current) return;
       const nextSessions = Array.isArray(result.data) ? result.data : [];
       setSessions(nextSessions);
       setSelected((current) => {
@@ -1230,15 +1235,20 @@ function WahaSessions({ notify }) {
       });
       if (clearError) setError('');
     }
-    catch (err) { setError(err.message || 'Não foi possível carregar as sessões WAHA.'); }
-    finally { setLoading(false); }
-  };
+    catch (err) { if (sessionRefreshMounted.current) setError(err.message || 'Falha ao carregar as sessões WAHA.'); }
+    finally { if (sessionRefreshMounted.current) setLoading(false); }
+  });
   const refreshManually = async () => {
     setManualRefreshing(true);
     try { await refresh({ clearError: true }); }
     finally { setManualRefreshing(false); }
   };
-  useEffect(() => { refresh(); const timer = window.setInterval(refresh, 5000); return () => window.clearInterval(timer); }, []);
+  useEffect(() => {
+    sessionRefreshMounted.current = true;
+    const timer = window.setInterval(() => { void refresh(); }, 5000);
+    void refresh();
+    return () => { sessionRefreshMounted.current = false; window.clearInterval(timer); };
+  }, []);
   const loadQr = async (id) => {
     if (!canShowWahaQr(currentRole, sessions.find((item) => item.id === id)?.status)) return;
     const requestId = qrRequests.current.begin();
@@ -1405,7 +1415,7 @@ function Automations({ notify }) {
   const openEdit = (item) => {
     setFormError('');
     if (item.n8nWorkflowId) { notify('Este fluxo já foi criado no n8n. Edite os gatilhos e as ações lá para manter o Focusshub sincronizado.'); return; }
-    setEditing(item.id); setDraft({ name: item.name || '', detail: item.detail || '', trigger: item.trigger || triggers[0], action: item.action || actions[0] }); setForm(true);
+    setEditing(item.id); setDraft(automationDraftForEdit(item, triggers[0], automationTemplates)); setForm(true);
   };
   const saveDraft = async (event) => {
     event.preventDefault();

@@ -40,6 +40,7 @@ import { normalizeCommercialScreenRows } from "../lib/commercial-screen-data.js"
 import { createCommercialSubmissionLock } from "../lib/commercial-submission-lock.js";
 import { resolveLeadNavigation } from "../lib/lead-navigation-context.js";
 import { resolveClientBillingCancellation } from "../lib/client-billing-cancellation.js";
+import { clientProfileSelectionKey } from "../lib/client-profile-selection.js";
 const datasets = {
   leads: [],
   clients: [],
@@ -2643,7 +2644,7 @@ function ListView({
       const saved = await scheduleLeadFollowUp(selectedItem, patch, due);
       if (saved) setSelectedItem(null);
       return saved;
-    }} tasks={tasks} /> : page === "clientes" ? <ClientProfileModal client={selectedItem} onClose={() => setSelectedItem(null)} onArchive={onArchive} onUpdate={updated => onUpdate?.(selectedItem, updated)} onAction={onAction} preferences={preferences} /> : <div className="com-modal-backdrop" onMouseDown={event => {
+    }} tasks={tasks} /> : page === "clientes" ? <ClientProfileModal key={clientProfileSelectionKey(selectedItem)} client={selectedItem} onClose={() => setSelectedItem(null)} onArchive={onArchive} onUpdate={updated => onUpdate?.(selectedItem, updated)} onAction={onAction} preferences={preferences} /> : <div className="com-modal-backdrop" onMouseDown={event => {
       if (event.target === event.currentTarget) closeRecordEditor();
     }}><section className="com-create-modal com-edit-modal" data-commercial-editor-dirty={recordDirty ? "true" : "false"}><header><div><small>{page.toUpperCase()} · REGISTRO</small><h2>{selectedItem.name || selectedItem.title}</h2></div><button type="button" aria-label="Fechar" onClick={closeRecordEditor} disabled={recordSaving}><X size={15} /></button></header>{editableFields.length === 0 && <div className="com-record-details"><span>Cliente / empresa<b>{selectedItem.client || selectedItem.company || selectedItem.name || "?"}</b></span><span>Valor<b>{selectedItem.value || selectedItem.price || "A definir"}</b></span><span>Contato<b>{selectedItem.email || selectedItem.person || selectedItem.role || "?"}</b></span><span>Detalhes<b>{selectedItem.service || selectedItem.segment || selectedItem.description || selectedItem.code || "?"}</b></span></div>}{editableFields.length > 0 && <form className="com-commercial-editor" onSubmit={event => event.preventDefault()}><div className="com-commercial-editor-heading"><strong>Dados comerciais</strong><span>As alterações só serão aplicadas ao salvar.</span></div><div className="com-commercial-editor-grid">{editableFields.map(field => {
           const locked = (page === "propostas" && selectedItem.status === "Aprovada") || (page === "contratos" && Boolean(selectedItem.clicksign?.envelopeId || isLockedContractStatus(selectedItem.status)) && !["renewal", "progress"].includes(field.key));

@@ -48,6 +48,7 @@ import { projectTemplateChoices, buildProjectTemplateTasks } from '../lib/projec
 import { buildAgendaRecurrenceSeries } from '../lib/agenda-recurrence.js';
 import { shouldOpenFileDetailsByDefault } from '../lib/file-primary-action.js';
 import { createAsyncActionLock } from '../lib/async-action-lock.js';
+import { createKeyedActionLock } from '../lib/keyed-action-lock.js';
 
 function projectIsCompleted(project) {
   const status = String(project?.status || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
@@ -284,6 +285,8 @@ function WorkScreen({ page, navigationContext = null, onNavigationContextConsume
   const [tasks, setTasks, tasksError, tasksLoaded, refreshTasks] = useLocalState('nexo.work.tasks.v1', tasksSeed);
   const [events, setEvents, eventsError, eventsLoaded, refreshEvents] = useLocalState('nexo.work.events.v1', eventsSeed);
   const [approvals, setApprovals, approvalsError, approvalsLoaded] = useLocalState('nexo.work.approvals.v1', approvalsSeed);
+  const approvalActionLocks = useRef(null);
+  if (!approvalActionLocks.current) approvalActionLocks.current = createKeyedActionLock();
   const [workspaceClients, setWorkspaceClients] = useState([]);
   const [files, setFiles, filesError, filesLoaded, refreshFiles] = useLocalState('nexo.work.files.v1', filesSeed);
   const [hours, setHours, hoursError, hoursLoaded, refreshHours] = useLocalState('nexo.work.hours.v1', []);
@@ -804,7 +807,7 @@ function WorkScreen({ page, navigationContext = null, onNavigationContextConsume
       notify('Arquivo vinculado ao workspace.');
     } finally { setLinkingDriveFileId(''); }
   };
-  const decideApproval = async (id, status) => {
+  const decideApproval = async (id, status) => approvalActionLocks.current.run(id, async () => {
     const approval = approvals.find((item) => String(item.id) === String(id));
     if (!approval || !isApprovalAwaitingDecision(approval.status)) { notify('Esta solicitacao ja recebeu uma decisao. Atualize a tela antes de tentar novamente.'); return false; }
     const canonicalStatus = status === 'Aprovado' || status === 'Aprovada' ? 'Aprovada' : 'Alterações solicitadas';
@@ -812,14 +815,16 @@ function WorkScreen({ page, navigationContext = null, onNavigationContextConsume
     if (!saved.ok) { notify(`Não foi possível salvar a decisão: ${saved.error?.message || 'erro na API.'}`); return false; }
     notify(canonicalStatus === 'Aprovada' ? 'Material aprovado.' : 'Pedido de ajuste registrado.');
     return true;
-  };
-  const requestApprovalChanges = async (approval, text) => {
-    if (!approval || !isApprovalAwaitingDecision(approval.status) || String(text || '').trim().length < 3) return { ok: false };
+  });
+  const requestApprovalChanges = async (approval, text) => approvalActionLocks.current.run(approval?.id, async () => {
+    if (!approval || String(text || '').trim().length < 3) return { ok: false };
+    const current = approvals.find((item) => String(item.id) === String(approval.id));
+    if (!current || !isApprovalAwaitingDecision(current.status)) return { ok: false };
     const at = new Date().toISOString();
-    const saved = await setApprovals((items) => items.map((item) => String(item.id) === String(approval.id) ? { ...item, status: 'Alterações solicitadas', decidedAt: at, comments: [{ id: Date.now(), text: String(text).trim(), at }, ...(item.comments || [])] } : item));
+    const saved = await setApprovals((items) => items.map((item) => String(item.id) === String(approval.id) ? { ...item, status: 'Alterações solicitadas', decidedAt: at, comments: [{ id: Date.now(), text: String(text).trim(), at }, ...(current.comments || [])] } : item));
     notify(saved.ok ? 'Pedido de ajuste e comentario salvos juntos no historico.' : saved.error?.message || 'Nao foi possivel registrar o pedido de ajuste.');
     return saved;
-  };
+  });
   const withdrawApproval = async (approval) => {
     if (!approval || !isApprovalPending(approval.status)) return false;
     const attachment = approval.attachment || {};

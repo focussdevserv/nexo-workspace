@@ -500,3 +500,13 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - Integridade dos dados: as verificações de interface foram feitas em modo de demonstração local; nenhum cliente, cobrança, assinatura, mensagem, e-mail, evento ou fluxo externo real foi criado ou enviado.
 - Limites desta validação: builds e testes não substituem teste operacional das contas externas. Pareamento/escopos de Google e WhatsApp, tokens Clicksign/GitHub/Sentry e criação de cobranças reais seguem condicionados às configurações já registradas na seção de integrações acima.
 - Publicação: esta revisão ainda precisa ser enviada e o deploy confirmado pelo manifesto de build e health check após a execução da migration.
+
+## Onda seguinte de confiabilidade por módulo — 03/10/2026
+
+- **CRM:** ao trocar a ficha aberta, o modal agora é remontado pela identidade do cliente; rascunhos, dados financeiros e contatos da pessoa anterior não podem vazar para a ficha seguinte.
+- **Aprovações:** aprovar, rejeitar ou pedir ajuste não inicia mutações concorrentes para o mesmo registro; pedidos de ajuste consultam a versão mais recente antes de salvar.
+- **Atendimento / WhatsApp:** polling e atualização manual WAHA são serializados; resposta antiga não substitui o estado mais novo nem atualiza tela desmontada. Não houve chamada ao provedor.
+- **Automações:** editar um fluxo legado sem ação agora sugere uma ação compatível com o gatilho daquele próprio fluxo, evitando misturar a ação selecionada no formulário anterior. A execução continua explícita via n8n, conforme aviso da tela.
+- **Configurações financeiras / Assinaturas:** o controle “Permitir novas assinaturas recorrentes” agora desativa a opção no formulário e também é aplicado pela API, impedindo bypass direto. Assinaturas já autorizadas continuam intactas. O fluxo foi conferido no modo de demonstração: a opção ficou desativada e depois foi restaurada; nenhum cadastro real foi feito.
+- **Validação local:** 531 testes frontend e 221 testes API passaram; lint, builds frontend/API e `git diff --check` passaram. Os módulos alterados foram ainda verificados por testes focados de CRM, aprovações, polling e preferências.
+- **Publicação:** estas alterações ainda precisam ser enviadas e confirmadas no manifesto/health de produção; nenhum provedor ou cliente real foi acionado.
