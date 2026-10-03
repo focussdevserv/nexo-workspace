@@ -1246,6 +1246,15 @@ function ClientFinancialRecord({
       setSaving(false);
     }
   };
+  const settle = async () => {
+    if (!settlement || saving || deleting) return;
+    setSaving(true);
+    try {
+      await onUpdate(settlement);
+    } finally {
+      setSaving(false);
+    }
+  };
   if (editing) return <form className="com-client-finance-edit" onSubmit={save}><label>Descrição<input required={true} value={draft.description} onChange={event => setDraft({
         ...draft,
         description: event.target.value
@@ -1263,10 +1272,10 @@ function ClientFinancialRecord({
     ...item,
     resource
   });
-  return <article className="com-client-row com-client-finance-record" aria-busy={deleting}><CircleDollarSign size={15} /><div><b>{item.description || (expense ? "Despesa" : "Receita")}</b><small>{item.category || "Ficha do cliente"} · {item.date || item.dueDate || "Sem data"}{item.settledAt && ` · baixa ${new Date(item.settledAt).toLocaleDateString("pt-BR")}`}</small></div><strong>{new Intl.NumberFormat("pt-BR", {
+  return <article className="com-client-row com-client-finance-record" aria-busy={deleting || saving}><CircleDollarSign size={15} /><div><b>{item.description || (expense ? "Despesa" : "Receita")}</b><small>{item.category || "Ficha do cliente"} · {item.date || item.dueDate || "Sem data"}{item.settledAt && ` · baixa ${new Date(item.settledAt).toLocaleDateString("pt-BR")}`}</small></div><strong>{new Intl.NumberFormat("pt-BR", {
         style: "currency",
         currency: "BRL"
-      }).format(Number(item.amount) || 0)}</strong><Badge tone={paid ? "green" : cancelled ? "neutral" : "amber"}>{paid ? expense ? "Paga" : "Recebida" : cancelled ? "Cancelada" : item.status || "Pendente"}</Badge><div className="com-client-finance-row-actions"><button type="button" className="com-secondary" disabled={deleting} onClick={() => setEditing(true)}>Editar</button>{settlement && <button type="button" className="com-secondary" disabled={deleting} onClick={() => onUpdate(settlement)}>{expense ? "Dar baixa" : "Marcar recebida"}</button>}<button type="button" className="com-secondary com-delete-action" disabled={deleting} onClick={onDelete}>{deleting ? "Excluindo..." : "Excluir"}</button></div></article>;
+      }).format(Number(item.amount) || 0)}</strong><Badge tone={paid ? "green" : cancelled ? "neutral" : "amber"}>{paid ? expense ? "Paga" : "Recebida" : cancelled ? "Cancelada" : item.status || "Pendente"}</Badge><div className="com-client-finance-row-actions"><button type="button" className="com-secondary" disabled={deleting || saving} onClick={() => setEditing(true)}>Editar</button>{settlement && <button type="button" className="com-secondary" disabled={deleting || saving} onClick={settle}>{saving ? "Registrando baixa..." : expense ? "Dar baixa" : "Marcar recebida"}</button>}<button type="button" className="com-secondary com-delete-action" disabled={deleting || saving} onClick={onDelete}>{deleting ? "Excluindo..." : "Excluir"}</button></div></article>;
 }
 function ClientPlannedChargeRecord({
   charge,

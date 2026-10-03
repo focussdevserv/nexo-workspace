@@ -93,6 +93,9 @@ export function PaymentConsole({ kind = 'orders', notify = () => {}, navigationC
   const [subscriptionBusyId, setSubscriptionBusyId] = useState('');
   const [error, setError] = useState('');
   const [modal, setModal] = useState(false);
+  const paymentModalRef = useRef(null);
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
   const [result, setResult] = useState(null);
   const [search, setSearch] = useState('');
   const [clientScope, setClientScope] = useState(null);
@@ -116,6 +119,33 @@ export function PaymentConsole({ kind = 'orders', notify = () => {}, navigationC
     { value: 'credit_card', label: 'Cartão de crédito' },
     { value: 'debit_card', label: 'Cartão de débito disponível' },
   ].filter((choice) => (choice.value === 'pix' ? enabledMethods.pix : choice.value === 'boleto' ? enabledMethods.boleto : enabledMethods.card) && methods.some((method) => choice.value === 'pix' ? method.id === 'pix' || method.paymentType === 'bank_transfer' : choice.value === 'boleto' ? method.paymentType === 'ticket' : method.paymentType === choice.value));
+  useEffect(() => {
+    if (!modal) return undefined;
+    const previouslyFocused = document.activeElement;
+    const getFocusable = () => paymentModalRef.current?.querySelectorAll('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href]') || [];
+    getFocusable()[0]?.focus();
+    const handleModalKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        if (!busyRef.current) setModal(false);
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const focusable = [...getFocusable()];
+      if (!focusable.length) { event.preventDefault(); return; }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault(); last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault(); first.focus();
+      }
+    };
+    document.addEventListener('keydown', handleModalKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleModalKeyDown);
+      if (previouslyFocused instanceof HTMLElement && previouslyFocused.isConnected) previouslyFocused.focus();
+    };
+  }, [modal]);
   const request = useCallback(async (url, options = {}) => {
     if (isLocalDemoActive()) return apiRequest(url, options);
     const response = await fetch(url, { ...options, credentials: 'same-origin', headers: { 'Content-Type': 'application/json', ...(options.headers || {}) } });
@@ -308,7 +338,7 @@ export function PaymentConsole({ kind = 'orders', notify = () => {}, navigationC
       {!filtered.length && <div className="pay-empty"><Activity size={20} /><b>Nenhum registro encontrado</b><span>Crie uma cobrança ou assinatura para ela aparecer aqui.</span></div>}
     </div>
     <div className="pay-security-note"><ShieldCheck size={17} /><span>Credenciais privadas ficam no servidor. Dados de cartão são tokenizados pelo Mercado Pago e não passam pelos servidores do Focusshub.</span></div>
-    {modal && <div className="ns-integration-modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) setModal(false); }}><form className="ns-integration-modal pay-create-modal" onSubmit={submit}><header><span className="ns-integration-logo mercado">{subscriptionMode ? <RefreshCw size={18} /> : <CreditCard size={18} />}</span><div><h2>{subscriptionMode ? 'Nova assinatura recorrente' : 'Nova cobrança'}</h2><p>{subscriptionMode ? 'O cliente autoriza o método no Mercado Pago.' : 'Selecione como o cliente pagará.'}</p></div><button type="button" aria-label="Fechar" disabled={busy} onClick={() => setModal(false)}><X size={17} /></button></header><div className="ns-integration-fields pay-fields"><label>Cliente cadastrado<select value={form.clientId} onChange={(event) => { const client = clients.find((item) => String(item.id) === String(event.target.value)); setForm((current) => ({ ...current, clientId: client?.id || '', clientName: client?.name || '', payerEmail: client?.email || current.payerEmail })); }}><option value="">Selecionar cliente (opcional)</option>{clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}</select></label><label>Nome do cliente<input required value={form.clientName} onChange={(e) => setForm((current) => ({ ...current, clientId: '', clientName: e.target.value }))} /></label><label>E-mail do pagador<input required type="email" value={form.payerEmail} onChange={(e) => setForm((current) => updatePaymentField(current, 'payerEmail', e.target.value))} /></label><label>Descrição<input required value={form.description} onChange={(e) => setForm((current) => updatePaymentField(current, 'description', e.target.value))} /></label><label>Valor (R$)<input required type="number" min="0.01" step="0.01" value={form.amount} onChange={(e) => setForm((current) => updatePaymentField(current, 'amount', e.target.value))} /></label>
+    {modal && <div className="ns-integration-modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) setModal(false); }}><form ref={paymentModalRef} className="ns-integration-modal pay-create-modal" role="dialog" aria-modal="true" aria-labelledby="payment-create-title" aria-busy={busy} onSubmit={submit}><header><span className="ns-integration-logo mercado">{subscriptionMode ? <RefreshCw size={18} /> : <CreditCard size={18} />}</span><div><h2 id="payment-create-title">{subscriptionMode ? 'Nova assinatura recorrente' : 'Nova cobrança'}</h2><p>{subscriptionMode ? 'O cliente autoriza o método no Mercado Pago.' : 'Selecione como o cliente pagará.'}</p></div><button type="button" aria-label="Fechar" disabled={busy} onClick={() => setModal(false)}><X size={17} /></button></header><div className="ns-integration-fields pay-fields"><label>Cliente cadastrado<select value={form.clientId} onChange={(event) => { const client = clients.find((item) => String(item.id) === String(event.target.value)); setForm((current) => ({ ...current, clientId: client?.id || '', clientName: client?.name || '', payerEmail: client?.email || current.payerEmail })); }}><option value="">Selecionar cliente (opcional)</option>{clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}</select></label><label>Nome do cliente<input required value={form.clientName} onChange={(e) => setForm((current) => ({ ...current, clientId: '', clientName: e.target.value }))} /></label><label>E-mail do pagador<input required type="email" value={form.payerEmail} onChange={(e) => setForm((current) => updatePaymentField(current, 'payerEmail', e.target.value))} /></label><label>Descrição<input required value={form.description} onChange={(e) => setForm((current) => updatePaymentField(current, 'description', e.target.value))} /></label><label>Valor (R$)<input required type="number" min="0.01" step="0.01" value={form.amount} onChange={(e) => setForm((current) => updatePaymentField(current, 'amount', e.target.value))} /></label>
       {!subscriptionMode && <label className="pay-field-wide">Tipo de cobrança<select value={form.billingType} onChange={(event) => setForm((current) => updatePaymentField(current, 'billingType', event.target.value))}><option value="single">Cobrança única</option><option value="recurring" disabled={!subscriptionsEnabled}>Recorrência automática{!subscriptionsEnabled ? ' · desativada nas configurações' : ''}</option></select>{!subscriptionsEnabled && <small className="pay-hint">Novas assinaturas recorrentes estão desativadas nas Configurações financeiras.</small>}</label>}
       {creatingSubscription ? <>
         <label>Frequência<select value={form.frequency + ':' + form.frequencyInterval} onChange={(event) => { const [frequency, frequencyInterval] = event.target.value.split(':'); setForm((current) => ({ ...current, frequency, frequencyInterval: Number(frequencyInterval) })); }}><option value="months:1">Mensal</option><option value="months:3">Trimestral</option><option value="months:6">Semestral</option><option value="months:12">Anual</option><option value="days:7">Semanal</option></select></label>

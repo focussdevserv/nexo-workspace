@@ -158,6 +158,14 @@ test('manual settlement uses realized timestamp and cannot settle closed records
   assert.equal(manualFinanceSettlementPatch({ status: 'Cancelada' }, now), null);
 });
 
+test('client finance settlement action is locked while its update is in flight', async () => {
+  const source = await readFile(new URL('../screens/CommercialScreens.jsx', import.meta.url), 'utf8');
+  const record = source.slice(source.indexOf('function ClientFinancialRecord('), source.indexOf('function ClientPlannedChargeRecord('));
+  assert.match(record, /const settle = async \(\) => \{\s*if \(!settlement \|\| saving \|\| deleting\) return;/);
+  assert.match(record, /disabled=\{deleting \|\| saving\} onClick=\{settle\}/);
+  assert.match(record, /saving \? "Registrando baixa\.\.\."/);
+});
+
 test('editing a pending client finance record does not silently mark it paid', () => {
   const record = { id: 'r1', status: 'Pendente', resource: 'revenues' };
   const now = new Date('2026-10-02T12:00:00.000Z');

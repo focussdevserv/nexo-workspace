@@ -6,6 +6,7 @@ import { copyTextToClipboard } from '../lib/copy-to-clipboard.js';
 import { isLocalDemoActive } from '../lib/local-demo.js';
 import { createLatestRequestGuard } from '../lib/latest-request.js';
 import { averageActiveTeamLoad } from '../lib/team-capacity.js';
+import { hasTeamEmailConflict } from '../lib/team-email.js';
 import { confirmWorkspaceDelete, useWorkspacePreferences } from '../lib/workspace-preferences.js';
 import { effectiveModulePermissionDraft, permissionDraftForAccount, permissionsPayload, setModulePermissionMode, setModulePermissionValue, validatePermissionDraft } from '../lib/team-permissions.js';
 import { shouldCloseTeamDialog } from '../lib/team-dialog.js';
@@ -51,7 +52,7 @@ export default function TeamScreen({ notify }) {
     if (peopleLoading || peopleError) { notify('Atualize a lista da equipe antes de salvar para validar duplicidades.'); return; }
     const name = draft.name.trim(); const email = draft.email.trim().toLowerCase();
     if (!name) { notify('Informe o nome da pessoa.'); return; }
-    if (email && people.some((person) => String(person.email || '').toLowerCase() === email && person.id !== editing)) { notify('Este e-mail já está cadastrado na equipe.'); return; }
+    if (hasTeamEmailConflict(people, email, editing)) { notify('Este e-mail já está cadastrado na equipe.'); return; }
     const load = Number(draft.load);
     if (!Number.isFinite(load) || load < 0 || load > 100) { notify('Informe uma carga semanal entre 0 e 100%.'); return; }
     const title = draft.title.trim() || 'Sem função definida';
