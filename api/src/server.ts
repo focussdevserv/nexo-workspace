@@ -42,7 +42,7 @@ import { hashPortalLoginCode, maskPortalEmail, portalIdentifierMatches, portalLo
 import { safeClientPortalBranding } from './integrations/client-portal-branding.js';
 import { applyClientPortalCachePolicy } from './security/client-portal-cache.js';
 import { normalizeHostingerCredentials, verifyHostingerMailbox, type HostingerCredentials } from './integrations/hostinger-mail.js';
-import { buildOverduePaymentEvent, overduePaymentRetryDelayMs } from './integrations/overdue-payment.js';
+import { buildOverduePaymentEvent, overduePaymentCanRetry, overduePaymentDeliveryExhausted, overduePaymentHistoryEntryId, overduePaymentRetryDelayMs, parseOverduePaymentHistoryEntryId } from './integrations/overdue-payment.js';
 import { proposalAcceptanceDisposition } from './integrations/proposal-acceptance.js';
 import { proposalDeletionBlockReason } from './crm/proposal-deletion.js';
 import { resendOperationalReadiness } from './integrations/resend-readiness.js';
@@ -1987,24 +1987,73 @@ app.get('/api/integrations/n8n/deliveries', { preHandler: app.authenticate, conf
     lastError: n8nEventDeliveries.lastError, createdAt: n8nEventDeliveries.createdAt, record: n8nEventDeliveries.record,
   }).from(n8nEventDeliveries).where(eq(n8nEventDeliveries.organizationId, request.user.organizationId))
     .orderBy(desc(n8nEventDeliveries.createdAt)).limit(50);
+  const overdueRows = await db.select({
+    id: billingOverdueEvents.id, attempts: billingOverdueEvents.attempts, nextAttemptAt: billingOverdueEvents.nextAttemptAt,
+    deliveredAt: billingOverdueEvents.deliveredAt, discardedAt: billingOverdueEvents.discardedAt,
+    lastError: billingOverdueEvents.lastError, createdAt: billingOverdueEvents.createdAt,
+    billingStatus: billingOrders.status, dueAt: billingOrders.dueAt, description: billingOrders.description,
+  }).from(billingOverdueEvents).innerJoin(billingOrders, and(
+    eq(billingOrders.id, billingOverdueEvents.billingOrderId), eq(billingOrders.organizationId, request.user.organizationId),
+  )).where(eq(billingOverdueEvents.organizationId, request.user.organizationId))
+    .orderBy(desc(billingOverdueEvents.createdAt)).limit(50);
   const automationIds = [...new Set(rows.map((row) => row.automationId))];
-  const automations = automationIds.length ? await db.select({ id: workspaceRecords.id, name: sql<string>`coalesce(${workspaceRecords.data}->>'name', 'Automação removida')` })
-    .from(workspaceRecords).where(and(eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'automations'), inArray(workspaceRecords.id, automationIds))) : [];
-  const names = new Map(automations.map((item) => [item.id, item.name]));
-  const automationStates = automationIds.length ? await db.select({ id: workspaceRecords.id, data: workspaceRecords.data }).from(workspaceRecords).where(and(
-    eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'automations'), inArray(workspaceRecords.id, automationIds), isNull(workspaceRecords.archivedAt),
+  const allAutomations = await db.select({ id: workspaceRecords.id, data: workspaceRecords.data }).from(workspaceRecords).where(and(
+    eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'automations'), isNull(workspaceRecords.archivedAt),
+  ));
+  const automationById = new Map(allAutomations.map((item) => [item.id, item.data]));
+  const automationNameRows = automationIds.length ? await db.select({ id: workspaceRecords.id, data: workspaceRecords.data }).from(workspaceRecords).where(and(
+    eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'automations'), inArray(workspaceRecords.id, automationIds),
   )) : [];
-  const automationById = new Map(automationStates.map((item) => [item.id, item.data]));
+  const names = new Map(automationNameRows.map((item) => [item.id, String(item.data.name || 'Automacao removida')]));
   const integrationEnabled = await isIntegrationEnabled(request.user.organizationId, 'n8n');
-  return { data: rows.map((row) => ({ id: row.id, automationId: row.automationId, eventKey: row.eventKey, attempts: row.attempts, nextAttemptAt: row.nextAttemptAt, deliveredAt: row.deliveredAt, discardedAt: row.discardedAt, lastError: row.lastError, createdAt: row.createdAt, automationName: names.get(row.automationId) || 'Automação removida', status: row.deliveredAt ? 'delivered' : row.discardedAt ? 'discarded' : 'pending', retryable: n8nDeliveryCanRetry(row, { integrationEnabled, automationActive: automationById.get(row.automationId)?.active === true, automationEventKey: automationById.get(row.automationId)?.eventKey, eventKey: row.eventKey, webhookPath: automationById.get(row.automationId)?.n8nWebhookPath }) })) };
+  const hasActiveOverdueAutomation = allAutomations.some((item) => item.data.active === true && item.data.eventKey === 'payment.overdue'
+    && !item.data.archivedAt && /^nexo\/[0-9a-f-]{36}$/i.test(String(item.data.n8nWebhookPath ?? '')));
+  const standardHistory = rows.map((row) => ({ id: row.id, deliveryType: 'n8n' as const, automationId: row.automationId,
+    eventKey: row.eventKey, attempts: row.attempts, nextAttemptAt: row.nextAttemptAt, deliveredAt: row.deliveredAt,
+    discardedAt: row.discardedAt, lastError: row.lastError, createdAt: row.createdAt,
+    automationName: names.get(row.automationId) || 'Automacao removida',
+    status: row.deliveredAt ? 'delivered' : row.discardedAt ? 'discarded' : 'pending',
+    retryable: n8nDeliveryCanRetry(row, { integrationEnabled, automationActive: automationById.get(row.automationId)?.active === true,
+      automationEventKey: automationById.get(row.automationId)?.eventKey, eventKey: row.eventKey,
+      webhookPath: automationById.get(row.automationId)?.n8nWebhookPath }) }));
+  const overdueHistory = overdueRows.map((row) => ({ id: overduePaymentHistoryEntryId(row.id), deliveryType: 'billing_overdue' as const,
+    eventKey: 'payment.overdue', attempts: row.attempts, nextAttemptAt: row.nextAttemptAt, deliveredAt: row.deliveredAt,
+    discardedAt: row.discardedAt, lastError: row.lastError, createdAt: row.createdAt,
+    automationName: 'Cobranca vencida - ' + row.description,
+    status: row.deliveredAt ? 'delivered' : row.discardedAt ? 'discarded' : 'pending',
+    retryable: overduePaymentCanRetry(row, { orderIsDue: row.billingStatus === 'pending'
+      && Boolean(row.dueAt && row.dueAt.getTime() <= Date.now()), integrationEnabled, hasActiveAutomation: hasActiveOverdueAutomation }) }));
+  return { data: [...standardHistory, ...overdueHistory]
+    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()).slice(0, 50) };
 });
-
 app.post('/api/integrations/n8n/deliveries/:id/retry', { preHandler: app.authenticate, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
-  const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
-  if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Identificador de entrega inválido.' });
+  const params = z.object({ id: z.string().min(1).max(64) }).safeParse(request.params);
+  const overdueId = params.success ? parseOverduePaymentHistoryEntryId(params.data.id) : null;
+  const isOverdue = overdueId !== null;
+  const id = params.success ? overdueId ?? params.data.id : '';
+  if (!params.success || !z.string().uuid().safeParse(id).success) return reply.code(400).send({ error: 'validation_error', message: 'Identificador de entrega invalido.' });
   const now = new Date();
   const result = await db.transaction(async (tx) => {
-    const [row] = await tx.select().from(n8nEventDeliveries).where(and(eq(n8nEventDeliveries.id, params.data.id), eq(n8nEventDeliveries.organizationId, request.user.organizationId))).limit(1).for('update', { skipLocked: true });
+    if (isOverdue) {
+      const [row] = await tx.select().from(billingOverdueEvents).where(and(eq(billingOverdueEvents.id, id), eq(billingOverdueEvents.organizationId, request.user.organizationId))).limit(1).for('update', { skipLocked: true });
+      if (!row) return 'not_found' as const;
+      const [order] = await tx.select({ id: billingOrders.id, clientId: billingOrders.clientId, clientName: billingOrders.clientName,
+        description: billingOrders.description, amount: billingOrders.amount, status: billingOrders.status, dueAt: billingOrders.dueAt,
+      }).from(billingOrders).where(and(eq(billingOrders.id, row.billingOrderId), eq(billingOrders.organizationId, request.user.organizationId))).limit(1);
+      const orderIsDue = Boolean(order && buildOverduePaymentEvent(order, now));
+      const automations = await tx.select({ data: workspaceRecords.data }).from(workspaceRecords).where(and(
+        eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'automations'), isNull(workspaceRecords.archivedAt),
+      ));
+      const hasActiveAutomation = automations.some((item) => item.data.active === true && item.data.eventKey === 'payment.overdue'
+        && /^nexo\/[0-9a-f-]{36}$/i.test(String(item.data.n8nWebhookPath ?? '')));
+      const integrationEnabled = await isIntegrationEnabled(request.user.organizationId, 'n8n');
+      if (!overduePaymentCanRetry(row, { orderIsDue, integrationEnabled, hasActiveAutomation })) return 'not_retryable' as const;
+      await tx.update(billingOverdueEvents).set({ attempts: 0, discardedAt: null, lastError: null, nextAttemptAt: now, updatedAt: now }).where(eq(billingOverdueEvents.id, row.id));
+      await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub,
+        entityType: 'n8n_delivery', entityId: row.id, action: 'manual_retry', payload: { eventKey: 'payment.overdue', source: 'billing_overdue' } });
+      return 'queued' as const;
+    }
+    const [row] = await tx.select().from(n8nEventDeliveries).where(and(eq(n8nEventDeliveries.id, id), eq(n8nEventDeliveries.organizationId, request.user.organizationId))).limit(1).for('update', { skipLocked: true });
     if (!row) return 'not_found' as const;
     const [automation] = await tx.select({ data: workspaceRecords.data }).from(workspaceRecords).where(and(
       eq(workspaceRecords.id, row.automationId), eq(workspaceRecords.organizationId, request.user.organizationId),
@@ -2016,17 +2065,31 @@ app.post('/api/integrations/n8n/deliveries/:id/retry', { preHandler: app.authent
     await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'n8n_delivery', entityId: row.id, action: 'manual_retry', payload: { eventKey: row.eventKey } });
     return 'queued' as const;
   });
-  if (result === 'not_found') return reply.code(404).send({ error: 'delivery_not_found', message: 'Entrega não encontrada neste workspace.' });
-  if (result === 'not_retryable') return reply.code(409).send({ error: 'delivery_not_retryable', message: 'Esta entrega não pode ser reprocessada: o evento ainda está ativo, já foi entregue ou os dados foram descartados.' });
-  void processN8nEventDeliveries();
+  if (result === 'not_found') return reply.code(404).send({ error: 'delivery_not_found', message: 'Entrega nao encontrada neste workspace.' });
+  if (result === 'not_retryable') return reply.code(409).send({ error: 'delivery_not_retryable', message: 'A entrega precisa estar descartada e o evento, cobranca e workflow ainda devem estar aptos.' });
+  if (isOverdue) void processOverdueBillingEvents();
+  else void processN8nEventDeliveries();
   return { data: { id: params.data.id, status: 'pending' } };
 });
 
 app.post('/api/integrations/n8n/deliveries/:id/discard', { preHandler: app.authenticate, config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {
-  const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
-  if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Identificador de entrega inválido.' });
+  const params = z.object({ id: z.string().min(1).max(64) }).safeParse(request.params);
+  const overdueId = params.success ? parseOverduePaymentHistoryEntryId(params.data.id) : null;
+  const isOverdue = overdueId !== null;
+  const id = params.success ? overdueId ?? params.data.id : '';
+  if (!params.success || !z.string().uuid().safeParse(id).success) return reply.code(400).send({ error: 'validation_error', message: 'Identificador de entrega invalido.' });
   const result = await db.transaction(async (tx) => {
-    const [row] = await tx.select().from(n8nEventDeliveries).where(and(eq(n8nEventDeliveries.id, params.data.id), eq(n8nEventDeliveries.organizationId, request.user.organizationId))).limit(1).for('update', { skipLocked: true });
+    if (isOverdue) {
+      const [row] = await tx.select().from(billingOverdueEvents).where(and(eq(billingOverdueEvents.id, id), eq(billingOverdueEvents.organizationId, request.user.organizationId))).limit(1).for('update', { skipLocked: true });
+      if (!row) return 'not_found' as const;
+      if (row.deliveredAt || row.discardedAt) return 'not_pending' as const;
+      const now = new Date();
+      await tx.update(billingOverdueEvents).set({ discardedAt: now, lastError: row.lastError || 'manually_discarded', updatedAt: now }).where(eq(billingOverdueEvents.id, row.id));
+      await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub,
+        entityType: 'n8n_delivery', entityId: row.id, action: 'manual_discard', payload: { eventKey: 'payment.overdue', source: 'billing_overdue' } });
+      return 'discarded' as const;
+    }
+    const [row] = await tx.select().from(n8nEventDeliveries).where(and(eq(n8nEventDeliveries.id, id), eq(n8nEventDeliveries.organizationId, request.user.organizationId))).limit(1).for('update', { skipLocked: true });
     if (!row) return 'not_found' as const;
     if (row.deliveredAt || row.discardedAt) return 'not_pending' as const;
     const now = new Date();
@@ -2034,18 +2097,17 @@ app.post('/api/integrations/n8n/deliveries/:id/discard', { preHandler: app.authe
     await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'n8n_delivery', entityId: row.id, action: 'manual_discard', payload: { eventKey: row.eventKey } });
     return 'discarded' as const;
   });
-  if (result === 'not_found') return reply.code(404).send({ error: 'delivery_not_found', message: 'Entrega não encontrada neste workspace.' });
+  if (result === 'not_found') return reply.code(404).send({ error: 'delivery_not_found', message: 'Entrega nao encontrada neste workspace.' });
   if (result === 'not_pending') return reply.code(409).send({ error: 'delivery_not_pending', message: 'Somente entregas pendentes podem ser descartadas.' });
   return { data: { id: params.data.id, status: 'discarded' } };
 });
-
 app.get('/api/integrations/n8n/workflows', { preHandler: app.authenticate, config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {
   const query = z.object({ cursor: z.string().trim().min(1).max(512).optional() }).safeParse(request.query);
   if (!query.success) return reply.code(400).send({ error: 'validation_error', message: 'Cursor de workflows inválido.' });
   if (!process.env.N8N_BASE_URL || !process.env.N8N_API_KEY) return reply.code(503).send({ error: 'n8n_not_configured', message: 'Configure a URL segura do n8n e a chave da API no Coolify.' });
   if (!await isIntegrationEnabled(request.user.organizationId, 'n8n')) return reply.code(409).send({ error: 'integration_disconnected', message: 'Reative o n8n em Integrações para consultar workflows.' });
   try {
-    const [workflowResult, executionResult, deliveryQueueResult] = await Promise.all([
+    const [workflowResult, executionResult, deliveryQueueResult, overdueQueueResult] = await Promise.all([
       n8nApiRequest(n8nWorkflowsEndpoint(query.data.cursor)) as Promise<{ data?: unknown[]; nextCursor?: string | null }>,
       n8nApiRequest('/executions?limit=25&includeData=false') as Promise<{ data?: unknown[]; nextCursor?: string | null }>,
       db.select({
@@ -2053,13 +2115,23 @@ app.get('/api/integrations/n8n/workflows', { preHandler: app.authenticate, confi
         delivered: sql<number>`count(*) filter (where ${n8nEventDeliveries.deliveredAt} is not null)`,
         discarded: sql<number>`count(*) filter (where ${n8nEventDeliveries.discardedAt} is not null)`,
       }).from(n8nEventDeliveries).where(eq(n8nEventDeliveries.organizationId, request.user.organizationId)),
+      db.select({
+        pending: sql<number>`count(*) filter (where ${billingOverdueEvents.deliveredAt} is null and ${billingOverdueEvents.discardedAt} is null)`,
+        delivered: sql<number>`count(*) filter (where ${billingOverdueEvents.deliveredAt} is not null)`,
+        discarded: sql<number>`count(*) filter (where ${billingOverdueEvents.discardedAt} is not null)`,
+      }).from(billingOverdueEvents).where(eq(billingOverdueEvents.organizationId, request.user.organizationId)),
     ]);
     const mapped = mapN8nCollections(
       Array.isArray(workflowResult.data) ? workflowResult.data : [],
       Array.isArray(executionResult.data) ? executionResult.data : [],
     );
     const [queue] = deliveryQueueResult;
-    return { data: { ...mapped, workflowNextCursor: workflowResult.nextCursor ?? null, executionNextCursor: executionResult.nextCursor ?? null, deliveryQueue: { pending: Number(queue?.pending || 0), delivered: Number(queue?.delivered || 0), discarded: Number(queue?.discarded || 0) } } };
+    const [overdueQueue] = overdueQueueResult;
+    return { data: { ...mapped, workflowNextCursor: workflowResult.nextCursor ?? null, executionNextCursor: executionResult.nextCursor ?? null, deliveryQueue: {
+      pending: Number(queue?.pending || 0) + Number(overdueQueue?.pending || 0),
+      delivered: Number(queue?.delivered || 0) + Number(overdueQueue?.delivered || 0),
+      discarded: Number(queue?.discarded || 0) + Number(overdueQueue?.discarded || 0),
+    } } };
   } catch (error) {
     const statusCode = (error as { statusCode?: number }).statusCode ?? 502;
     return reply.code(statusCode).send({ error: statusCode === 403 ? 'n8n_api_forbidden' : 'n8n_request_failed', message: statusCode === 403 ? 'A chave do n8n não tem permissão para listar workflows e execuções.' : 'Não foi possível carregar workflows reais do n8n. Confira a integração e tente novamente.' });
@@ -4814,6 +4886,10 @@ async function processOverdueBillingEvents() {
       if (delivered) {
         await db.update(billingOverdueEvents).set({ deliveredAt: new Date(), lastError: null, updatedAt: new Date() })
           .where(eq(billingOverdueEvents.id, dispatch.id));
+      } else if (overduePaymentDeliveryExhausted(dispatch.attempts)) {
+        await db.update(billingOverdueEvents).set({ discardedAt: new Date(), lastError: 'delivery_attempts_exhausted', updatedAt: new Date() })
+          .where(eq(billingOverdueEvents.id, dispatch.id));
+        app.log.warn({ billingOrderId: dispatch.billingOrderId, reason: 'delivery_attempts_exhausted' }, 'Overdue billing automation delivery discarded');
       } else {
         const retryAt = new Date(Date.now() + overduePaymentRetryDelayMs(dispatch.attempts));
         await db.update(billingOverdueEvents).set({

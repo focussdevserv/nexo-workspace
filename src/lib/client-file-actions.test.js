@@ -20,6 +20,15 @@ test('file metadata can only be attached to a project belonging to the current c
   assert.throws(() => clientFileMetadataPatch(file, { name: ' ', projects, client }), /client_file_metadata_invalid/);
 });
 
+test('file editor accepts legacy projects linked by client name, as shown in the client profile', () => {
+  const client = { id: 'client-1', name: 'Acme' };
+  const file = { id: 'file-1' };
+  const project = { id: 'legacy-project', name: 'Site legado', client: 'Acme' };
+  assert.equal(clientFileMetadataPatch(file, {
+    name: 'brief.pdf', projectId: project.id, projects: [project], client,
+  }).projectId, project.id);
+});
+
 test('delete confirmation makes it explicit that the Drive original remains intact', () => {
   assert.match(clientFileDeleteConfirmation({ name: 'Escopo.pdf' }), /Google Drive será preservado/);
 });

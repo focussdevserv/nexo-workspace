@@ -9,6 +9,16 @@ function normalizedPhone(value) {
 }
 
 export function matchConversationClient(clients = [], contacts = [], conversation = {}) {
+  const explicitIds = [conversation.clientId, conversation.workspaceClientId, conversation.clientRecordId]
+    .filter((value) => value != null && String(value).trim())
+    .map((value) => String(value).trim());
+  if (explicitIds.length) {
+    // Honor an existing canonical link. If records disagree, fail closed instead
+    // of silently attaching the conversation to a different client by email.
+    if (new Set(explicitIds).size !== 1) return null;
+    return clients.find((client) => String(client.id) === explicitIds[0]) || null;
+  }
+
   const email = normalizedEmail(conversation.email || conversation.from || conversation.address || '');
   const phone = normalizedPhone(conversation.phone || conversation.telephone || '');
   const clientIdsByEmail = new Set();

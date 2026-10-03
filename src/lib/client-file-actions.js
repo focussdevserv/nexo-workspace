@@ -1,3 +1,5 @@
+import { belongsToClient } from '../data/client-link.js';
+
 export function safeClientFileHref(file) {
   if (!file || file.localOnly) return '';
   const raw = String(file.url || '').trim();
@@ -14,7 +16,7 @@ export function clientFileMetadataPatch(file, { name, projectId = '', projects =
   const nextName = String(name || '').trim();
   if (!file?.id || !client?.id || !nextName) throw new Error('client_file_metadata_invalid');
   const project = projectId ? projects.find((item) => String(item.id) === String(projectId)) : null;
-  if (projectId && (!project || String(project.clientId || '') !== String(client.id))) throw new Error('client_file_project_invalid');
+  if (projectId && (!project || !belongsToClient(project, client, project.client))) throw new Error('client_file_project_invalid');
   return {
     name: nextName,
     clientId: String(client.id),

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { filterSupportTickets, ticketQueueFilters } from './ticket-filter.js';
 
 const now = Date.parse('2026-10-02T12:00:00.000Z');
@@ -26,4 +27,13 @@ test('overdue filter excludes resolved tickets even when their old SLA date pass
 test('unknown filter and non-array input fail safely', () => {
   assert.deepEqual(filterSupportTickets(tickets, 'unknown', now), tickets);
   assert.deepEqual(filterSupportTickets(null, 'Todos', now), []);
+});
+
+test('ticket status chips are shown once and the table retains its own search tools', async () => {
+  const source = await readFile(new URL('../screens/ServiceScreens.jsx', import.meta.url), 'utf8');
+  const dataTable = source.slice(source.indexOf('function DataTable'), source.indexOf('function FinanceOverview'));
+  const ticketScreen = source.slice(source.indexOf('function Tickets('));
+  assert.match(dataTable, /hideStatusFilters = false/);
+  assert.match(dataTable, /!hideStatusFilters && <div className="ns-filter-tabs"/);
+  assert.match(ticketScreen, /hideStatusFilters \/>/);
 });
