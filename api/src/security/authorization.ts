@@ -78,6 +78,10 @@ export function isWorkspaceRequestAllowed(role: WorkspaceRole, method: string, r
   if (role === 'owner') return true;
   if (path === '/api/workspace/backup' || path === '/api/workspace/backup/restore') return false;
   if (path === '/api/auth/me' || path === '/api/auth/logout') return true;
+  // OAuth and disconnect actions change the workspace's shared provider
+  // identity. They remain owner-only even when another role has broad
+  // integration permissions for reading status or using connected features.
+  if (path === '/api/integrations/mercadopago/authorize' || path === '/api/integrations/mercadopago/disconnect') return false;
   if (permissions?.scope?.mode === 'selected' && (path === '/api/clients' || path.startsWith('/api/clients/'))) return false;
   if (path === '/api/team' || path.startsWith('/api/team/')) return false;
   if (path === '/api/workspace/assignees' || path.startsWith('/api/workspace/assignees/')) return verb === 'GET';

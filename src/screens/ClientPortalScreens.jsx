@@ -1,10 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowRight, Check, CheckCircle2, CircleDollarSign, Copy, ExternalLink, FileCheck2, FolderKanban, MessageCircle, Send, ShieldCheck, X } from 'lucide-react';
 import './client-portal.css';
-import { apiRequest, useWorkspaceRecords } from '../lib/workspace-api.js';
+import { apiRequest, fetchAllRecords, useWorkspaceRecords } from '../lib/workspace-api.js';
 import { isLocalDemoActive } from '../lib/local-demo.js';
 import { acquireClientPortalActionAfterConfirmation, appendSentPortalMessage, canSendPortalMessage, canSubmitPortalApprovalDecision, copyPortalLink, createClientPortalActionLock, portalLinkActionLabel, safeClientPortalHref, shouldConfirmPortalLinkRotation, splitClientPortalApprovals } from '../lib/client-portal-actions.js';
 import { recordBelongsToPortalClient } from '../lib/client-portal-scope.js';
+import { isApprovalPending } from '../lib/approval-status.js';
+import { buildClientPortalPaymentPreview } from '../lib/client-portal-payment-preview.js';
 
 const money = (value) => Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const relatedTo = (row, client) => Boolean(client?.id) && recordBelongsToPortalClient(row, client.id);
@@ -17,11 +19,15 @@ export function ClientPortalAdmin({ notify = () => {}, navigationContext = null,
   const projects = useWorkspaceRecords('projects');
   const tasks = useWorkspaceRecords('tasks');
   const contracts = useWorkspaceRecords('contracts');
+  const approvals = useWorkspaceRecords('approvals');
   const [clientId, setClientId] = useState('');
   const [portalUrl, setPortalUrl] = useState('');
   const [portalActive, setPortalActive] = useState(false);
   const [busy, setBusy] = useState(false);
   const [savingVisibility, setSavingVisibility] = useState(false);
+  const [clientPortalPayments, setClientPortalPayments] = useState([]);
+  const [paymentPreviewLoading, setPaymentPreviewLoading] = useState(false);
+  const [paymentPreviewError, setPaymentPreviewError] = useState('');
   const actionLock = useRef(createClientPortalActionLock());
   useEffect(() => {
     if (navigationContext?.clientId && clients.records.some((item) => String(item.id) === String(navigationContext.clientId))) {
@@ -31,18 +37,52 @@ export function ClientPortalAdmin({ notify = () => {}, navigationContext = null,
     }
   }, [navigationContext?.clientId, clients.records, onNavigationContextConsumed]);
   const client = clients.records.find((item) => String(item.id) === String(clientId)) || null;
-  const previewErrors = [projects.error && 'projetos', tasks.error && 'tarefas', contracts.error && 'contratos'].filter(Boolean);
-  const previewLoading = projects.loading || tasks.loading || contracts.loading;
-  const refreshPreview = () => Promise.all([projects.refresh(), tasks.refresh(), contracts.refresh()]);
+  const paymentPreviewClientRef = useRef(client?.id || '');
+  paymentPreviewClientRef.current = String(client?.id || '');
+  const visibility = { project: true, tasks: true, contracts: true, payments: true, approvals: true, ...(client?.portalVisibility || {}) };
+  const previewErrors = [projects.error && 'projetos', tasks.error && 'tarefas', contracts.error && 'contratos', approvals.error && 'aprovações', visibility.payments !== false && paymentPreviewError && 'pagamentos'].filter(Boolean);
+  const previewLoading = projects.loading || tasks.loading || contracts.loading || approvals.loading || (visibility.payments !== false && paymentPreviewLoading);
+  const refreshPaymentsPreview = async () => {
+    if (!client?.id) return;
+    setPaymentPreviewLoading(true);
+    setPaymentPreviewError('');
+    try {
+      const [orders, subscriptions] = await Promise.all([fetchAllRecords('/api/billing/orders'), fetchAllRecords('/api/billing/subscriptions')]);
+      if (paymentPreviewClientRef.current === String(client.id)) setClientPortalPayments(buildClientPortalPaymentPreview(orders, subscriptions, client.id));
+    } catch (error) {
+      if (paymentPreviewClientRef.current === String(client.id)) setPaymentPreviewError(error.message || 'Não foi possível conferir pagamentos e cobranças.');
+    } finally { if (paymentPreviewClientRef.current === String(client.id)) setPaymentPreviewLoading(false); }
+  };
+  const refreshPreview = async () => {
+    await Promise.all([projects.refresh(), tasks.refresh(), contracts.refresh(), approvals.refresh()]);
+    if (visibility.payments !== false) await refreshPaymentsPreview();
+  };
+  useEffect(() => {
+    let active = true;
+    if (!client?.id) {
+      setClientPortalPayments([]);
+      setPaymentPreviewError('');
+      setPaymentPreviewLoading(false);
+      return undefined;
+    }
+    setClientPortalPayments([]);
+    setPaymentPreviewLoading(true);
+    setPaymentPreviewError('');
+    Promise.all([fetchAllRecords('/api/billing/orders'), fetchAllRecords('/api/billing/subscriptions')])
+      .then(([orders, subscriptions]) => { if (active) setClientPortalPayments(buildClientPortalPaymentPreview(orders, subscriptions, client.id)); })
+      .catch((error) => { if (active) setPaymentPreviewError(error.message || 'Não foi possível conferir pagamentos e cobranças.'); })
+      .finally(() => { if (active) setPaymentPreviewLoading(false); });
+    return () => { active = false; };
+  }, [client?.id]);
   useEffect(() => {
     const expiry = client?.portalTokenExpiresAt ? new Date(client.portalTokenExpiresAt).valueOf() : 0;
     const hasLegacyToken = Number(client?.portalTokenVersion || 0) > 0 && !client?.portalTokenRevokedAt;
     setPortalActive(Boolean((client?.portalTokenActive || hasLegacyToken) && (!expiry || expiry > Date.now())));
   }, [client?.id, client?.portalTokenActive, client?.portalTokenVersion, client?.portalTokenRevokedAt, client?.portalTokenExpiresAt]);
-  const visibility = { project: true, tasks: true, contracts: true, ...(client?.portalVisibility || {}) };
   const clientProjects = useMemo(() => projects.records.filter((item) => client && relatedTo(item, client)), [projects.records, client]);
   const clientTasks = useMemo(() => tasks.records.filter((item) => client && relatedTo(item, client)), [tasks.records, client]);
   const clientContracts = useMemo(() => contracts.records.filter((item) => client && relatedTo(item, client)), [contracts.records, client]);
+  const clientApprovals = useMemo(() => approvals.records.filter((item) => client && relatedTo(item, client)), [approvals.records, client]);
   const createLink = async () => {
     if (!client || !client.email || busy || localDemo || previewLoading || previewErrors.length) return;
     if (!acquireClientPortalActionAfterConfirmation(actionLock.current, shouldConfirmPortalLinkRotation(portalActive), () => window.confirm('Gerar outro link invalida imediatamente o link atual. O cliente precisará receber e usar o novo link. Deseja continuar?'))) return;
@@ -83,7 +123,9 @@ export function ClientPortalAdmin({ notify = () => {}, navigationContext = null,
         {visibility.project && <article className="cp-info-card cp-project-card"><div className="cp-card-heading"><span className="cp-card-icon green"><FolderKanban size={17} /></span><small>PROJETOS</small></div><h3>{clientProjects.length} projeto(s)</h3><p>{clientProjects.filter((item) => !['Concluído', 'Entregue', 'Publicado'].includes(item.status)).map((item) => item.name || item.title).join(' · ') || 'Nenhum projeto aberto'}</p></article>}
         {visibility.contracts && <article className="cp-info-card"><div className="cp-card-heading"><span className="cp-card-icon blue"><FileCheck2 size={17} /></span><small>CONTRATOS</small></div><h3>{clientContracts.length} documento(s)</h3><p>{clientContracts.map((item) => `${item.title || item.name} · ${item.status}`).join(' · ') || 'Nenhum contrato cadastrado'}</p></article>}
         {visibility.tasks && <article className="cp-info-card"><div className="cp-card-heading"><span className="cp-card-icon amber"><CheckCircle2 size={17} /></span><small>PRÓXIMAS ENTREGAS</small></div><h3>{clientTasks.filter((item) => !['Concluída', 'Concluido'].includes(item.status)).length} tarefa(s)</h3><p>{clientTasks.filter((item) => !['Concluída', 'Concluido'].includes(item.status)).slice(0, 3).map((item) => item.title).join(' · ') || 'Nenhuma pendência compartilhada'}</p></article>}
+        {visibility.approvals !== false && <article className="cp-info-card"><div className="cp-card-heading"><span className="cp-card-icon indigo"><FileCheck2 size={17} /></span><small>APROVAÇÕES</small></div><h3>{clientApprovals.filter((item) => isApprovalPending(item.status)).length} aguardando</h3><p>{clientApprovals.slice(0, 3).map((item) => `${item.title || item.name} · ${item.status || 'Pendente'}`).join(' · ') || 'Nenhuma aprovação compartilhada'}</p></article>}
       </div></div></section>
+      {visibility.payments !== false && <section className="cp-preview-payments" aria-label="Pagamentos compartilhados no portal"><div className="cp-section-title"><div><h3>Pagamentos no portal</h3><p>Estes são os registros vinculados que o cliente verá, com o mesmo status e as mesmas ações disponíveis.</p></div><span>{clientPortalPayments.length} registro(s)</span></div>{paymentPreviewLoading ? <p className="cp-payment-preview-empty" role="status">Conferindo cobranças e assinaturas…</p> : paymentPreviewError ? <div className="cp-payment-preview-empty" role="alert"><span>Não foi possível carregar a prévia financeira.</span><button type="button" className="admin-secondary" onClick={refreshPaymentsPreview}>Tentar novamente</button></div> : clientPortalPayments.length ? <div className="cp-preview-payment-list">{clientPortalPayments.map((item) => <article className="cp-info-card" key={item.id}><div className="cp-card-heading"><span className="cp-card-icon amber"><CircleDollarSign size={17} /></span><small>PAGAMENTO</small><span>{item.status}</span></div><h3>{item.description}</h3><strong className="cp-payment-amount">{money(item.amount)}</strong><div className="cp-preview-payment-actions">{item.hasPixAction && <span>Cliente pode copiar Pix</span>}{item.hasTicketAction && <span>Cliente pode abrir boleto</span>}{!item.hasPixAction && !item.hasTicketAction && <span>Sem ação de pagamento</span>}</div></article>)}</div> : <div className="cp-payment-preview-empty"><CircleDollarSign size={17} /><div><b>Nenhuma cobrança ou assinatura</b><span>O cliente não verá registros financeiros enquanto não houver cobranças ou assinaturas vinculadas a este cadastro.</span></div></div>}</section>}
       {portalUrl && <p className="cp-preview-note">O link contém um token de acesso individual e expira em 90 dias. Gere outro se precisar revogá-lo.</p>}
     </>}
   </div>;
@@ -183,6 +225,7 @@ export function PublicClientPortal({ slug }) {
     {(data.projects || []).map((item) => <article className="cp-info-card cp-project-card" key={item.id}><div className="cp-card-heading"><span className="cp-card-icon green"><FolderKanban size={17} /></span><small>PROJETO</small><span>{item.status}</span></div><h3>{item.name || item.title}</h3><p>Próxima entrega: {item.due || 'em definição'}</p><div className="cp-project-progress"><div><i style={{ width: `${Math.min(100, Math.max(0, Number(item.progress) || 0))}%` }} /></div><b>{Number(item.progress) || 0}%</b></div></article>)}
     {(data.contracts || []).map((item) => <article className="cp-info-card" key={item.id}><div className="cp-card-heading"><span className="cp-card-icon blue"><FileCheck2 size={17} /></span><small>CONTRATO</small><span>{item.status}</span></div><h3>{item.title || item.name}</h3><p>{item.code} · {item.renewal || 'Vigência conforme documento'}</p></article>)}
     {(data.payments || []).map((item) => <article className="cp-info-card" key={item.id}><div className="cp-card-heading"><span className="cp-card-icon amber"><CircleDollarSign size={17} /></span><small>PAGAMENTO</small><span>{item.status}</span></div><h3>{item.description}</h3><strong className="cp-payment-amount">{money(item.amount)}</strong>{item.paymentDetails?.pixCode && <button className="cp-action-button" onClick={() => copyPixCode(item.paymentDetails.pixCode)}>Copiar Pix <Copy size={12} /></button>}{safeClientPortalHref(item.paymentDetails?.ticketUrl) && <a className="cp-action-button" href={safeClientPortalHref(item.paymentDetails.ticketUrl)} target="_blank" rel="noopener noreferrer">Abrir boleto <ExternalLink size={12} /></a>}</article>)}
+    {data.visibility?.payments !== false && !(data.payments || []).length && <article className="cp-info-card cp-public-payment-empty"><div className="cp-card-heading"><span className="cp-card-icon amber"><CircleDollarSign size={17} /></span><small>PAGAMENTOS</small></div><h3>Nenhuma cobrança ou assinatura</h3><p>Não há registros financeiros vinculados a este cadastro.</p></article>}
     </div>
     {!!pendingApprovals.length && <section className="cp-activity"><div className="cp-section-title"><div><h3>Aprovações pendentes</h3><p>Revise os materiais enviados pela equipe.</p></div></div>{pendingApprovals.map((item) => { const comment = approvalNotes[item.id] || ''; const canRequestChanges = canSubmitPortalApprovalDecision('changes_requested', comment, busy); return <article className="cp-activity-row" key={item.id}><FileCheck2 size={15} /><span className="cp-approval-content"><b>{item.title || item.name}</b>{item.project && <small>{item.project}</small>}{safeClientPortalHref(item.attachment?.url) && <a href={safeClientPortalHref(item.attachment.url)} target="_blank" rel="noopener noreferrer">Revisar {item.attachment.name || 'arquivo'}</a>}{item.clientComment && <small>{item.clientComment}</small>}<label className="cp-approval-comment"><span>Comentário ou ajuste solicitado</span><textarea aria-label={`Comentário para ${item.title || 'aprovação'}`} maxLength={2000} rows={2} value={comment} onChange={(event) => setApprovalNotes((notes) => ({ ...notes, [item.id]: event.target.value }))} placeholder="Adicione contexto se precisar de uma alteração" aria-describedby={`approval-comment-hint-${item.id}`} /></label><small id={`approval-comment-hint-${item.id}`} className="cp-approval-hint">{comment.trim().length < 3 ? 'Para pedir um ajuste, descreva a mudança (mínimo de 3 caracteres).' : 'Seu comentário será enviado junto com o pedido de ajuste.'}</small></span><button type="button" disabled={!canRequestChanges} className="admin-secondary" onClick={() => decide(item, 'changes_requested')}>Pedir ajuste</button><button type="button" disabled={!canSubmitPortalApprovalDecision('approved', comment, busy)} className="admin-primary" onClick={() => decide(item, 'approved')}><Check size={13} />Aprovar</button></article>;})}</section>}
     {!!approvalHistory.length && <section className="cp-activity cp-approval-history"><div className="cp-section-title"><div><h3>Hist&#243;rico de aprova&#231;&#245;es</h3><p>Decis&#245;es anteriores continuam dispon&#237;veis para consulta.</p></div></div>{approvalHistory.map((item) => { const date = item.decidedAt || item.sent; const parsedDate = date ? new Date(date) : null; return <article className="cp-activity-row" key={item.id}><FileCheck2 size={15} /><span className="cp-approval-content"><b>{item.title || item.name}</b><small>{item.status || 'Sem status'}{parsedDate && !Number.isNaN(parsedDate.valueOf()) ? ` ? ${parsedDate.toLocaleString('pt-BR')}` : ''}</small>{item.project && <small>{item.project}</small>}{item.clientComment && <small>{item.clientComment}</small>}</span></article>;})}</section>}

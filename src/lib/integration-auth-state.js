@@ -61,6 +61,11 @@ export function canAuthorizeOAuthIntegrations(role) {
   return role === 'owner';
 }
 
+/** Provider credentials, connection state and health tests are workspace-owner controls. */
+export function canManageIntegrationSettings(role) {
+  return role === 'owner';
+}
+
 /** Keep demo workspaces from leaving the local app for real provider consent. */
 export function navigateToOAuthConsent({ localDemo = false, navigate, notify, path, demoMessage = 'A autorização externa fica desativada na demonstração local.' }) {
   if (localDemo) {

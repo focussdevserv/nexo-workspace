@@ -1619,4 +1619,9 @@ html[data-theme] #root .app-shell .day-strip .strip-idle { border-left: 1px soli
   html[data-theme] #root .app-shell .dashboard-view > .welcome-row .dashboard-header-actions { gap: 6px; }
   html[data-theme] #root .app-shell .dashboard-view .dashboard-refresh-button { width: 42px; padding: 0; font-size: 0; }
   html[data-theme] #root .app-shell .dashboard-view .dashboard-refresh-button svg { flex: none; }
+  html[data-theme] #root .app-shell .topbar .day-strip .time-pin { display: none; }
+  html[data-theme] #root .app-shell .topbar .day-strip .strip-empty { display: none; }
+  html[data-theme] #root .app-shell .topbar .day-strip .strip-title { gap: 7px; padding-inline: 7px; }
+  html[data-theme] #root .app-shell .topbar .day-strip .strip-event { gap: 5px; padding-inline: 8px; }
+  html[data-theme] #root .app-shell .topbar .day-strip .strip-event strong { min-width: 0; }
 }

@@ -1,11 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { canAuthorizeOAuthIntegrations, googleReauthorizationButtonState, integrationOAuthRedirectUri, integrationStatusLabel, integrationStatusTone, mercadoPagoAuthorizationButtonState, navigateToOAuthConsent } from './integration-auth-state.js';
+import { canAuthorizeOAuthIntegrations, canManageIntegrationSettings, googleReauthorizationButtonState, integrationOAuthRedirectUri, integrationStatusLabel, integrationStatusTone, mercadoPagoAuthorizationButtonState, navigateToOAuthConsent } from './integration-auth-state.js';
 
 test('only the workspace owner can start provider OAuth consent', () => {
   assert.equal(canAuthorizeOAuthIntegrations('owner'), true);
   for (const role of ['admin', 'member', 'viewer', '', undefined, null]) {
     assert.equal(canAuthorizeOAuthIntegrations(role), false);
+  }
+});
+
+test('only the workspace owner can change provider settings or run connection tests', () => {
+  assert.equal(canManageIntegrationSettings('owner'), true);
+  for (const role of ['admin', 'member', 'viewer', '', undefined, null]) {
+    assert.equal(canManageIntegrationSettings(role), false);
   }
 });
 

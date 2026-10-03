@@ -34,7 +34,7 @@ import { isWahaChatIdBoundToConversation } from './integrations/waha-chat-scope.
 import { validateClientServiceCharges } from './integrations/client-service-charges.js';
 import { clientApprovalDecisionHasValidComment, clientPortalApprovalDecisionRecord, isClientApprovalPending, portalApprovalRecord } from './integrations/client-approvals.js';
 import { recordBelongsToPortalClient } from './security/client-portal-record-scope.js';
-import { isClientPortalSectionVisible } from './security/client-portal-visibility.js';
+import { clientPortalVisibleSections, isClientPortalSectionVisible } from './security/client-portal-visibility.js';
 import { approvalFileMatchesClientScope } from './security/approval-file-scope.js';
 import { hashPortalLoginCode, maskPortalEmail, portalIdentifierMatches, portalLoginCodeMatches } from './integrations/client-portal-auth.js';
 import { safeClientPortalBranding } from './integrations/client-portal-branding.js';
@@ -67,6 +67,7 @@ import { billingRequestFingerprint, billingRequestIdempotencyKey, decideBillingI
 import { canTransitionBillingSubscription, normalizeBillingSubscriptionStatus } from './billing/subscription-transitions.js';
 import { buildFinanceRecurrenceDates } from './integrations/finance-recurrence.js';
 import { buildWahaSendFilePayload, classifyWahaQrResponse, classifyWahaSessionReadiness } from './integrations/waha.js';
+import { claimWahaMessage } from './integrations/waha-send-claim.js';
 import { clicksignBaseUrl, createClicksignEnvelope, getClicksignEnvelope, notifyClicksignEnvelope } from './integrations/clicksign.js';
 import { mapN8nCollections, n8nAutomationTemplates, buildN8nAutomationWorkflow, n8nApiKeyFailureMessage, n8nApiValidationMessage, n8nProposalTaskMatchesSource, n8nWorkflowActionEndpoint, n8nWorkflowsEndpoint, type N8nAutomationTemplateId } from './integrations/n8n.js';
 import { N8N_DELIVERY_MAX_ATTEMPTS, n8nCallbackRejectionReason, n8nDeliveryCanRetry, n8nDeliveryExhausted, n8nDeliveryRetryDelayMs } from './integrations/n8n-delivery.js';
@@ -75,6 +76,7 @@ import { checkPublicSite } from './monitoring/site-check.js';
 import { siteCheckFailureData } from './monitoring/site-check-failure.js';
 import { siteCheckResultData, siteCheckResultMatchesAsset, siteCheckTargetFor } from './monitoring/site-check-result.js';
 import { siteAssetScheduleIds } from './monitoring/site-asset-removal.js';
+import { findOtherRunningHoursTimer } from './security/active-hours-timer.js';
 import { scrubSentryEvent } from './integrations/sentry-scrub.js';
 import { normalizeBrowserNotificationPreferences, notificationAccessPath, resolveActivityNotificationTitle } from './notifications.js';
 import { googleCalendarAttendeesPayload, mapGoogleCalendarEvents } from './integrations/google-calendar.js';
@@ -645,20 +647,29 @@ app.post('/api/integrations/waha/send', { preHandler: app.authenticate, bodyLimi
   if (!await isIntegrationEnabled(request.user.organizationId, 'waha')) return reply.code(409).send({ error: 'integration_disconnected', message: 'WAHA está desconectada no Focusshub. Reative em Integrações para enviar.' });
   const sessionRow = await findOwnedWahaSession(request.user.organizationId, body.sessionId);
   if (!sessionRow) return reply.code(404).send({ error: 'waha_session_not_found', message: 'A sessão WhatsApp selecionada não pertence a este workspace.' });
-  const [conversation] = await db.select().from(workspaceRecords).where(and(
-    eq(workspaceRecords.id, body.conversationId), eq(workspaceRecords.organizationId, request.user.organizationId),
-    eq(workspaceRecords.resource, 'inbox'), isNull(workspaceRecords.archivedAt),
-  )).limit(1);
-  if (!conversation) return reply.code(404).send({ error: 'conversation_not_found', message: 'A conversa não está mais disponível no workspace.' });
-  const data = conversation.data as Record<string, any>;
-  if (!isWahaChatIdBoundToConversation(body.chatId, data)) return reply.code(409).send({ error: 'waha_recipient_mismatch', message: 'O destinatário não corresponde ao telefone desta conversa. Atualize os dados do contato antes de enviar.' });
-  const existingHistory = Array.isArray(data.history) ? data.history as Array<Record<string, any>> : [];
-  const duplicate = existingHistory.find((message) => message.clientMessageId === body.clientMessageId);
-  if (duplicate?.status === 'sent' && duplicate.providerMessageId) return { data: { messageId: duplicate.providerMessageId, status: 'sent', duplicated: true } };
-  if (duplicate?.status === 'sending' && Date.now() - Date.parse(String(duplicate.createdAt || '')) < 30_000) return reply.code(202).send({ data: { messageId: duplicate.clientMessageId, status: 'sending', duplicated: true } });
-  const pending = { id: body.clientMessageId, clientMessageId: body.clientMessageId, side: 'sent', text: body.text, ...(body.attachment ? { attachment: body.attachment.filename } : {}), time: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }), createdAt: new Date().toISOString(), status: 'sending' };
-  const pendingHistory = duplicate ? existingHistory.map((message) => message.clientMessageId === body.clientMessageId ? pending : message) : [...existingHistory, pending];
-  await db.update(workspaceRecords).set({ data: { ...data, whatsappSessionId: sessionRow.id, whatsappChatId: body.chatId, channel: 'WhatsApp', history: pendingHistory }, updatedAt: new Date() }).where(eq(workspaceRecords.id, conversation.id));
+  const claim = await db.transaction(async (tx) => {
+    const [conversation] = await tx.select().from(workspaceRecords).where(and(
+      eq(workspaceRecords.id, body.conversationId), eq(workspaceRecords.organizationId, request.user.organizationId),
+      eq(workspaceRecords.resource, 'inbox'), isNull(workspaceRecords.archivedAt),
+    )).for('update').limit(1);
+    if (!conversation) return { kind: 'missing' as const };
+    const currentData = conversation.data as Record<string, any>;
+    if (!isWahaChatIdBoundToConversation(body.chatId, currentData)) return { kind: 'recipient_mismatch' as const };
+    const outcome = claimWahaMessage(currentData, body);
+    if (outcome.kind !== 'claimed') return outcome;
+    await tx.update(workspaceRecords).set({ data: outcome.data, updatedAt: new Date() }).where(and(
+      eq(workspaceRecords.id, conversation.id), eq(workspaceRecords.organizationId, request.user.organizationId),
+      eq(workspaceRecords.resource, 'inbox'), isNull(workspaceRecords.archivedAt),
+    ));
+    return { ...outcome, conversationId: conversation.id };
+  });
+  if (claim.kind === 'missing') return reply.code(404).send({ error: 'conversation_not_found', message: 'A conversa n\u00e3o est\u00e1 mais dispon\u00edvel no workspace.' });
+  if (claim.kind === 'recipient_mismatch') return reply.code(409).send({ error: 'waha_recipient_mismatch', message: 'O destinat\u00e1rio n\u00e3o corresponde ao telefone desta conversa. Atualize os dados do contato antes de enviar.' });
+  if (claim.kind === 'already_sent') return { data: { messageId: claim.messageId, status: 'sent', duplicated: true } };
+  if (claim.kind === 'already_sending') return reply.code(202).send({ data: { messageId: claim.messageId, status: 'sending', duplicated: true } });
+  const conversation = { id: claim.conversationId, data: claim.data };
+  const data = claim.data;
+  const pending = claim.pending;
   try {
     const remote = await wahaRequest<Array<{ name?: string; status?: string }>>('/api/sessions');
     const remoteSession = remote.find((session) => String(session.name || '') === wahaSessionName(sessionRow));
@@ -671,14 +682,14 @@ app.post('/api/integrations/waha/send', { preHandler: app.authenticate, bodyLimi
       : await wahaRequest<{ id?: string }>('/api/sendText', { method: 'POST', body: JSON.stringify({ session: wahaSessionName(sessionRow), chatId: body.chatId, text: body.text }) });
     const [fresh] = await db.select().from(workspaceRecords).where(eq(workspaceRecords.id, conversation.id)).limit(1);
     const freshData = (fresh?.data || data) as Record<string, any>;
-    const history = Array.isArray(freshData.history) ? freshData.history as Array<Record<string, any>> : pendingHistory;
+    const history = Array.isArray(freshData.history) ? freshData.history as Array<Record<string, any>> : [pending];
     const savedMessage = { ...pending, providerMessageId: result.id || '', status: 'sent' };
     await db.update(workspaceRecords).set({ data: { ...freshData, whatsappSessionId: sessionRow.id, whatsappChatId: body.chatId, channel: 'WhatsApp', text: body.text || (body.attachment ? `Arquivo: ${body.attachment.filename}` : ''), time: savedMessage.time, history: history.map((message) => message.clientMessageId === body.clientMessageId ? savedMessage : message) }, updatedAt: new Date() }).where(eq(workspaceRecords.id, conversation.id));
     return { data: { messageId: result.id || body.clientMessageId, status: 'sent' } };
   } catch (error) {
     const [fresh] = await db.select().from(workspaceRecords).where(eq(workspaceRecords.id, conversation.id)).limit(1);
     const freshData = (fresh?.data || data) as Record<string, any>;
-    const history = Array.isArray(freshData.history) ? freshData.history as Array<Record<string, any>> : pendingHistory;
+    const history = Array.isArray(freshData.history) ? freshData.history as Array<Record<string, any>> : [pending];
     await db.update(workspaceRecords).set({ data: { ...freshData, history: history.map((message) => message.clientMessageId === body.clientMessageId ? { ...pending, status: 'failed' } : message) }, updatedAt: new Date() }).where(eq(workspaceRecords.id, conversation.id));
     const statusCode = (error as { statusCode?: number }).statusCode;
     return reply.code(statusCode === 409 ? 409 : 502).send({ error: 'waha_send_failed', message: statusCode === 409 ? 'A sessão WhatsApp não está conectada. Escaneie o QR e tente novamente.' : 'WAHA não confirmou o envio. Confira a conexão da sessão antes de tentar novamente.' });
@@ -3677,6 +3688,14 @@ app.post('/api/workspace/:resource', { preHandler: app.authenticate }, async (re
   if (params.data.resource === 'proposals' && proposalAcceptanceDisposition(body.data.status) === 'return_existing') return reply.code(409).send({ error: 'proposal_acceptance_required', message: 'Use a aprovacao para criar contrato, projeto e tarefas de forma atomica.' });
   if (params.data.resource === 'contracts' && requiresExternalSignature(body.data.status)) return reply.code(409).send({ error: 'contract_signature_required', message: 'Contrato so muda para Aguardando assinatura, Assinado ou Ativo apos confirmacao do provedor.' });
   const outcome = await db.transaction(async (tx) => {
+    if (params.data.resource === 'hours' && body.data.status === 'running') {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${request.user.organizationId}), hashtext('hours-active-timer'))`);
+      const activeTimers = await tx.select({ id: workspaceRecords.id, data: workspaceRecords.data }).from(workspaceRecords).where(and(
+        eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'hours'),
+        isNull(workspaceRecords.archivedAt), sql`${workspaceRecords.data}->>'status' = 'running'`,
+      ));
+      if (findOtherRunningHoursTimer(activeTimers.map((row) => ({ id: row.id, status: row.data.status })))) return { created: [], activeTimerConflict: true as const };
+    }
     let monitorAsset: { id: string; data: Record<string, unknown> } | undefined;
     if (params.data.resource === 'monitors' && monitorAssetId?.success) {
       const [linkedAsset] = await tx.select({ id: workspaceRecords.id, data: workspaceRecords.data }).from(workspaceRecords).where(and(
@@ -3715,6 +3734,7 @@ app.post('/api/workspace/:resource', { preHandler: app.authenticate }, async (re
     }
     return { created };
   });
+  if ('activeTimerConflict' in outcome && outcome.activeTimerConflict) return reply.code(409).send({ error: 'hours_timer_already_running', message: 'Já existe um cronômetro em andamento neste workspace. Pare-o antes de iniciar outro.' });
   if ('duplicateId' in outcome) return reply.code(409).send({ error: 'duplicate_lead', message: 'Ja existe uma oportunidade com este e-mail ou telefone.', duplicateId: outcome.duplicateId });
   if ('monitorAssetMissing' in outcome && outcome.monitorAssetMissing) return reply.code(409).send({ error: 'monitor_site_asset_missing', message: 'O ativo foi removido ou nao esta mais disponivel.' });
   if ('monitorAssetScopeDenied' in outcome && outcome.monitorAssetScopeDenied) return reply.code(403).send({ error: 'record_scope_denied', message: 'O ativo vinculado esta fora do seu escopo.' });
@@ -3740,11 +3760,20 @@ app.patch('/api/workspace/:resource/:id', { preHandler: app.authenticate }, asyn
   let linkedTransferMutationBlocked = false;
   let financeAccountBalanceMutationBlocked = false;
   let projectArchiveTransitionBlocked = false;
+  let activeHoursTimerConflict = false;
   const updated = await db.transaction(async (tx) => {
     const [current] = await tx.select().from(workspaceRecords).where(and(eq(workspaceRecords.id, params.data.id), eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, params.data.resource), isNull(workspaceRecords.archivedAt))).limit(1);
     if (!current) return undefined;
     if (!recordMatchesWorkspaceScope(params.data.resource, current.id, current.data, request.user.permissions?.scope)) return undefined;
     if (!recordMatchesWorkspaceScope(params.data.resource, current.id, { ...current.data, ...body.data }, request.user.permissions?.scope)) return undefined;
+    if (params.data.resource === 'hours' && body.data.status === 'running') {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${request.user.organizationId}), hashtext('hours-active-timer'))`);
+      const activeTimers = await tx.select({ id: workspaceRecords.id, data: workspaceRecords.data }).from(workspaceRecords).where(and(
+        eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'hours'),
+        isNull(workspaceRecords.archivedAt), sql`${workspaceRecords.data}->>'status' = 'running'`,
+      ));
+      if (findOtherRunningHoursTimer(activeTimers.map((row) => ({ id: row.id, status: row.data.status })), current.id)) { activeHoursTimerConflict = true; return undefined; }
+    }
     if (params.data.resource === 'projects' && Object.hasOwn(body.data, 'status') && !canChangeProjectArchiveState(request.user.role, current.data.status, body.data.status)) { projectArchiveTransitionBlocked = true; return undefined; }
     if (params.data.resource === 'finance-transactions' && current.data.transferId) { linkedTransferMutationBlocked = true; return undefined; }
     if (params.data.resource === 'finance-accounts' && Object.hasOwn(body.data, 'balance') && !canUpdateFinanceAccountBalance(current.data.balance, body.data.balance)) { financeAccountBalanceMutationBlocked = true; return undefined; }
@@ -3800,6 +3829,7 @@ app.patch('/api/workspace/:resource/:id', { preHandler: app.authenticate }, asyn
     }
     return saved;
   });
+  if (activeHoursTimerConflict) return reply.code(409).send({ error: 'hours_timer_already_running', message: 'Já existe um cronômetro em andamento neste workspace. Pare-o antes de iniciar outro.' });
   if (invalidClientBilling) return reply.code(400).send({ error: 'client_billing_invalid', message: invalidClientBilling });
   if (rejectedContractTransition) return reply.code(409).send({ error: 'contract_signature_required', message: 'Contrato so muda para Aguardando assinatura, Assinado ou Ativo apos confirmacao do provedor.' });
   if (rejectedManagedSignatureMutation) return reply.code(409).send({ error: 'clicksign_contract_managed', message: 'Este contrato possui envelope Clicksign. Sincronize o status no provedor; documento, metadados e estado de assinatura ficam bloqueados para edicao manual.' });
@@ -4152,13 +4182,7 @@ app.get('/api/public/client-portal/:token', async (request, reply) => {
   const preferenceSettings = (preferences?.data as Record<string, any> | undefined)?.settings;
   const branding = safeClientPortalBranding(preferenceSettings?.workspace?.brandLogo);
   const clientName = String(client.name ?? client.title ?? 'Cliente');
-  const visibility = {
-    project: isClientPortalSectionVisible(client, 'project'),
-    tasks: isClientPortalSectionVisible(client, 'tasks'),
-    contracts: isClientPortalSectionVisible(client, 'contracts'),
-    payments: isClientPortalSectionVisible(client, 'payments'),
-    approvals: isClientPortalSectionVisible(client, 'approvals'),
-  };
+  const visibility = clientPortalVisibleSections(client);
   const resources = ['projects', 'tasks', 'contracts', 'approvals'];
   const relatedRows = await Promise.all(resources.map((resource) => db.select().from(workspaceRecords).where(and(
     eq(workspaceRecords.organizationId, claims.organizationId), eq(workspaceRecords.resource, resource), isNull(workspaceRecords.archivedAt),
@@ -4191,7 +4215,7 @@ app.get('/api/public/client-portal/:token', async (request, reply) => {
     ...subscriptions.map((item) => ({ id: item.id, description: item.description, amount: item.amount, status: item.status, dueAt: item.dueAt, paymentDetails: {} })),
   ].sort((a, b) => new Date(b.dueAt || 0).valueOf() - new Date(a.dueAt || 0).valueOf()).slice(0, 100);
   const publicApprovals = visibility.approvals ? (related.approvals ?? []) : [];
-  return { data: { client: { name: clientName, person: client.person ?? '' }, branding, projects: visibility.project ? related.projects : [], tasks: visibility.tasks ? related.tasks : [], contracts: visibility.contracts ? related.contracts : [], approvals: publicApprovals, payments: visibility.payments ? publicPayments : [] } };
+  return { data: { client: { name: clientName, person: client.person ?? '' }, branding, visibility, projects: visibility.project ? related.projects : [], tasks: visibility.tasks ? related.tasks : [], contracts: visibility.contracts ? related.contracts : [], approvals: publicApprovals, payments: visibility.payments ? publicPayments : [] } };
 });
 
 app.post('/api/public/client-portal/:token/messages', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {

@@ -38,3 +38,14 @@ test('Google Calendar failure notices remain readable, actionable and stack on n
   assert.ok(action.nodes.find((node) => node.prop === 'min-height')?.value === '36px');
   assert.equal(mobile.nodes.find((node) => node.prop === 'flex-direction')?.value, 'column');
 });
+
+test('mobile schedule strip gives room to the date and event instead of clipping the status and empty label', () => {
+  const mobile = findRule('html[data-theme] #root .app-shell .topbar .day-strip .time-pin', 'max-width:760px');
+  const empty = findRule('html[data-theme] #root .app-shell .topbar .day-strip .strip-empty', 'max-width:760px');
+  const title = findRule('html[data-theme] #root .app-shell .topbar .day-strip .strip-title', 'max-width:760px');
+  const event = findRule('html[data-theme] #root .app-shell .topbar .day-strip .strip-event', 'max-width:760px');
+  assert.equal(mobile.nodes.find((node) => node.prop === 'display')?.value, 'none');
+  assert.equal(empty.nodes.find((node) => node.prop === 'display')?.value, 'none');
+  assert.equal(title.nodes.find((node) => node.prop === 'gap')?.value, '7px');
+  assert.equal(event.nodes.find((node) => node.prop === 'gap')?.value, '5px');
+});

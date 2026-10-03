@@ -35,8 +35,8 @@ test('the WAHA send route checks the recipient before recording or sending a mes
   const routeEnd = source.indexOf("app.post('/api/integrations/waha/webhook'", routeStart);
   assert.ok(routeStart >= 0 && routeEnd > routeStart, 'WAHA send route should be present');
   const route = source.slice(routeStart, routeEnd);
-  const guard = route.indexOf('isWahaChatIdBoundToConversation(body.chatId, data)');
-  const historyMutation = route.indexOf('const pendingHistory');
+  const guard = route.indexOf('isWahaChatIdBoundToConversation(body.chatId, currentData)');
+  const historyMutation = route.indexOf('claimWahaMessage(currentData, body)');
   const providerSend = route.indexOf("'/api/sendText'");
   assert.ok(guard >= 0, 'send route must enforce conversation recipient binding');
   assert.ok(historyMutation > guard, 'recipient guard must run before message history changes');

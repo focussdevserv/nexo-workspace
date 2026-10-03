@@ -8,3 +8,7 @@ export function isClientPortalSectionVisible(client: Record<string, unknown>, se
   const value = (visibility as Record<string, unknown>)[section];
   return value !== false;
 }
+
+export function clientPortalVisibleSections(client: Record<string, unknown>) {
+  return Object.fromEntries(portalSections.map((section) => [section, isClientPortalSectionVisible(client, section)])) as Record<ClientPortalSection, boolean>;
+}

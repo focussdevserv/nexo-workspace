@@ -30,7 +30,11 @@ test('admins can run agency workflows but cannot manage accounts or integrations
   assert.equal(isWorkspaceRequestAllowed('admin', 'POST', '/api/integrations/waha/send'), true);
   assert.equal(isWorkspaceRequestAllowed('admin', 'POST', '/api/team/invites'), false);
   assert.equal(isWorkspaceRequestAllowed('admin', 'POST', '/api/integrations/mercadopago/connection'), false);
+  assert.equal(isWorkspaceRequestAllowed('admin', 'GET', '/api/integrations/mercadopago/authorize'), false);
+  assert.equal(isWorkspaceRequestAllowed('admin', 'POST', '/api/integrations/mercadopago/disconnect'), false);
   assert.equal(isWorkspaceRequestAllowed('admin', 'POST', '/api/integrations/waha/sessions'), false);
+  assert.equal(isWorkspaceRequestAllowed('owner', 'GET', '/api/integrations/mercadopago/authorize'), true);
+  assert.equal(isWorkspaceRequestAllowed('owner', 'POST', '/api/integrations/mercadopago/disconnect'), true);
 });
 
 test('members can work on delivery and respond through connected inbox channels', () => {
@@ -121,6 +125,8 @@ test('module permissions cannot grant account administration or provider credent
   assert.equal(isWorkspaceRequestAllowed('admin', 'POST', '/api/team/invites', all), false);
   assert.equal(isWorkspaceRequestAllowed('member', 'POST', '/api/integrations/google/authorize', all), false);
   assert.equal(isWorkspaceRequestAllowed('admin', 'POST', '/api/integrations/mercadopago/connection', all), false);
+  assert.equal(isWorkspaceRequestAllowed('member', 'GET', '/api/integrations/mercadopago/authorize', all), false);
+  assert.equal(isWorkspaceRequestAllowed('member', 'POST', '/api/integrations/mercadopago/disconnect', all), false);
 });
 
 test('selected client scope blocks the legacy unlinked client API', () => {
