@@ -1268,6 +1268,7 @@ html[data-theme='dark'] .app-shell :is(
 ) { background: #27331e !important; border-color: #425432 !important; color: #d2f39f !important; }
 html[data-theme='dark'] .app-shell .work-button-approve { background: #233c2a !important; border-color: #416947 !important; color: #c4f493 !important; }
 html[data-theme='dark'] .app-shell .work-button-approve:hover:not(:disabled) { background: #2d4b32 !important; border-color: #5c8a5d !important; }
+html[data-theme='light'] .app-shell .work-button-approve { color: #208451 !important; }
 html[data-theme='dark'] .app-shell .work-button.file-remove { background: #321f22 !important; border-color: #6a3d43 !important; color: #f0a0a5 !important; }
 html[data-theme='dark'] .app-shell .work-button.file-remove:hover:not(:disabled) { background: #42262a !important; border-color: #865059 !important; }
 html[data-theme='dark'] .app-shell :is(.stat-icon,.com-metric-icon,.ns-metric-icon,.work-metric-icon) { background: #252f1e !important; color: #b6ed66 !important; }

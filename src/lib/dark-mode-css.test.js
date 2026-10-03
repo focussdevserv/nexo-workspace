@@ -10,5 +10,6 @@ test('dark theme preserves semantic colors on styled actions and links', () => {
   assert.match(darkModeCss, /\.work-button:not\(\.work-button-primary\):not\(\.work-button-approve\):not\(\.file-remove\)/);
   assert.doesNotMatch(darkModeCss, /\.work-button:not\(\.work-button-primary\)(?!:not\(\.work-button-approve\))/);
   assert.match(darkModeCss, /\.work-button-approve\s*\{[^}]*color:\s*#c4f493/s);
+  assert.match(darkModeCss, /html\[data-theme='light'\] \.app-shell \.work-button-approve\s*\{[^}]*color:\s*#208451/s);
   assert.match(darkModeCss, /\.work-button\.file-remove\s*\{[^}]*color:\s*#f0a0a5/s);
 });
