@@ -1,4 +1,5 @@
 import { isFinanceReceivableStatusOpen } from './finance-receivable-status.js';
+import { canCancelPaymentOrder, normalizePaymentStatus } from './payment-status.js';
 
 const settledStatuses = new Set(['recebida', 'recebido', 'paga', 'pago', 'paid', 'received', 'settled']);
 const cancelledStatuses = new Set(['cancelada', 'cancelado', 'cancelled', 'canceled', 'estornada', 'refunded']);
@@ -24,6 +25,21 @@ export function safeClientFinanceExternalHref(value) {
   } catch {
     return '';
   }
+}
+
+const clientBillingStatusLabels = {
+  pending: 'Aguardando pagamento', creating: 'Criando', processing: 'Em processamento', paid: 'Paga',
+  overdue: 'Vencida', failed: 'Falhou', refunded: 'Estornada', canceled: 'Cancelada', expired: 'Expirada',
+};
+
+export function clientBillingRecordState(item, localDemo = false) {
+  const status = normalizePaymentStatus(item?.status);
+  return {
+    status,
+    label: clientBillingStatusLabels[status] || item?.status || 'Sem status',
+    paid: status === 'paid',
+    cancellable: canCancelPaymentOrder(item, localDemo),
+  };
 }
 
 export function clientFinanceFilterForPage(page) {

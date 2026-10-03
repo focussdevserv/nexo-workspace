@@ -9,5 +9,13 @@ export function createCommercialSubmissionLock() {
     release() {
       locked = false;
     },
+    async run(action) {
+      if (!this.acquire()) return false;
+      try {
+        return await action();
+      } finally {
+        this.release();
+      }
+    },
   };
 }

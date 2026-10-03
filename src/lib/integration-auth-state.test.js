@@ -1,12 +1,36 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { canAuthorizeOAuthIntegrations, googleReauthorizationButtonState, integrationOAuthRedirectUri, integrationStatusLabel, integrationStatusTone, mercadoPagoAuthorizationButtonState } from './integration-auth-state.js';
+import { canAuthorizeOAuthIntegrations, googleReauthorizationButtonState, integrationOAuthRedirectUri, integrationStatusLabel, integrationStatusTone, mercadoPagoAuthorizationButtonState, navigateToOAuthConsent } from './integration-auth-state.js';
 
 test('only the workspace owner can start provider OAuth consent', () => {
   assert.equal(canAuthorizeOAuthIntegrations('owner'), true);
   for (const role of ['admin', 'member', 'viewer', '', undefined, null]) {
     assert.equal(canAuthorizeOAuthIntegrations(role), false);
   }
+});
+
+test('OAuth reauthorization in local demo explains the block without navigating externally', () => {
+  const navigations = [];
+  const notices = [];
+  const started = navigateToOAuthConsent({
+    localDemo: true,
+    path: '/api/integrations/google/authorize',
+    navigate: (path) => navigations.push(path),
+    notify: (message) => notices.push(message),
+  });
+  assert.equal(started, false);
+  assert.deepEqual(navigations, []);
+  assert.match(notices[0], /demonstração local/);
+});
+
+test('OAuth consent navigates to the requested provider when not in local demo', () => {
+  const navigations = [];
+  const started = navigateToOAuthConsent({
+    path: '/api/integrations/mercadopago/authorize',
+    navigate: (path) => navigations.push(path),
+  });
+  assert.equal(started, true);
+  assert.deepEqual(navigations, ['/api/integrations/mercadopago/authorize']);
 });
 
 test('offers OAuth setup when server client credentials are missing', () => {

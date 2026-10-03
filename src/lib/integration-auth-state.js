@@ -60,3 +60,14 @@ export function integrationOAuthRedirectUri(state, origin, provider) {
 export function canAuthorizeOAuthIntegrations(role) {
   return role === 'owner';
 }
+
+/** Keep demo workspaces from leaving the local app for real provider consent. */
+export function navigateToOAuthConsent({ localDemo = false, navigate, notify, path, demoMessage = 'A autorização externa fica desativada na demonstração local.' }) {
+  if (localDemo) {
+    notify?.(demoMessage);
+    return false;
+  }
+  if (typeof navigate !== 'function' || !path) return false;
+  navigate(path);
+  return true;
+}

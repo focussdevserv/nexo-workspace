@@ -25,7 +25,7 @@ import { splitInstallmentAmounts } from "../lib/installment-plan.js";
 import { clientMonthlyRevenue, clientMonthlyRevenueLabel, parseDisplayAmount, recurringMonthlyAmount } from "../lib/client-billing-summary.js";
 import { downloadCsvFile, recordsToCsv } from "../lib/csv.js";
 import { isLocalDemoActive } from "../lib/local-demo.js";
-import { advanceClientInstallmentProgress, buildClientFinanceHistory, clientFinanceDateKey, clientFinanceDueDateLabel, clientFinanceEditPatch, clientFinanceFailedResources, clientFinanceFilterCounts, clientFinanceFilterForPage, clientFinanceLegacyClientValue, clientFinanceOpenBillingCount, isClientFinanceCancelled, isClientFinanceSettled, manualFinanceSettlementPatch, normalizeClientSubscriptionTerms, prepareClientContractTrackingPatch, prepareClientServiceChargeUpdate, safeClientFinanceExternalHref } from "../lib/client-finance.js";
+import { advanceClientInstallmentProgress, buildClientFinanceHistory, clientBillingRecordState, clientFinanceDateKey, clientFinanceDueDateLabel, clientFinanceEditPatch, clientFinanceFailedResources, clientFinanceFilterCounts, clientFinanceFilterForPage, clientFinanceLegacyClientValue, clientFinanceOpenBillingCount, isClientFinanceCancelled, isClientFinanceSettled, manualFinanceSettlementPatch, normalizeClientSubscriptionTerms, prepareClientContractTrackingPatch, prepareClientServiceChargeUpdate, safeClientFinanceExternalHref } from "../lib/client-finance.js";
 import { clientContactActions } from "../lib/client-contact-actions.js";
 import { removeClientContact } from "../lib/client-contact-records.js";
 import { presentClientContact } from "../lib/client-contact-presentation.js";
@@ -366,6 +366,16 @@ export default function CommercialScreen({
   const [composerSaving, setComposerSaving] = useState(false);
   const composerSubmitLock = useRef(null);
   if (!composerSubmitLock.current) composerSubmitLock.current = createCommercialSubmissionLock();
+  useEffect(() => {
+    if (!composer) return undefined;
+    const closeOnEscape = event => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setComposer(false);
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [composer]);
   const [proposalServiceSearch, setProposalServiceSearch] = useState("");
   const [showAllProposalServices, setShowAllProposalServices] = useState(false);
   const emptyDraft = {
@@ -1026,7 +1036,7 @@ export default function CommercialScreen({
       });
         }} onAction={notify} onUpdate={updateServiceRecord} onDelete={deleteServiceRecord} onImportCatalog={importCatalog} catalogImporting={catalogSeedState === "loading" || servicesLoading} catalogSeedState={catalogSeedState} search={search} setSearch={setSearch} preferences={preferences} /> : <ListView page={key} items={visible} relatedProjects={records.projects || []} relatedSubscriptions={relatedSubscriptions} relatedContracts={displayRows.contracts} onArchive={archiveClient} openClientId={key === "clientes" ? navigationContext?.clientId : ""} onClientOpened={onNavigationContextConsumed} openLeadId={key === "leads" ? navigationContext?.leadId : ""} leadRecords={displayRows.leads} leadRecordsLoading={recordLoadings.leads} leadRecordsLoadError={recordErrors.leads} onLeadOpened={onNavigationContextConsumed} search={search} setSearch={setSearch} filter={filter} setFilter={setFilter} extraFilterFields={extraFilterFields} extraFilters={extraFilters} setExtraFilters={setExtraFilters} onAction={notify} onAccept={acceptProposal} onSendProposal={sendProposal} localDemo={localDemo} onRefreshRecords={refreshRecords} onUpdate={updateCommercialRecord} onDelete={deleteCommercialRecord} clients={displayRows.clients} companies={displayRows.companies} contacts={displayRows.contacts} services={displayRows.services} tasks={records.tasks || []} totalItems={data.length} preferences={preferences} />}{composer && <div className="com-modal-backdrop" onMouseDown={event => {
       if (event.target === event.currentTarget) setComposer(false);
-    }}><form className="com-create-modal" onSubmit={createRecord}><header><div><small>{current.eyebrow}</small><h2>{createLabel}</h2></div><button type="button" aria-label="Fechar" onClick={() => setComposer(false)}><X size={15} /></button></header>{key === "clientes" && <label>Tipo de cadastro<select value={draft.clientType} onChange={e => setDraft({
+    }}><form className="com-create-modal" role="dialog" aria-modal="true" aria-labelledby="commercial-create-title" onSubmit={createRecord}><header><div><small>{current.eyebrow}</small><h2 id="commercial-create-title">{createLabel}</h2></div><button type="button" aria-label="Fechar" onClick={() => setComposer(false)}><X size={15} /></button></header>{key === "clientes" && <label>Tipo de cadastro<select value={draft.clientType} onChange={e => setDraft({
             ...draft,
             clientType: e.target.value
           })}><option value="pf">Pessoa física</option><option value="pj">Pessoa jurídica</option><option value="both">Pessoa física e jurídica</option></select></label>}<label>{key === "clientes" ? draft.clientType === "pj" ? "Nome fantasia ou nome da empresa" : "Nome completo" : ["leads", "clientes", "empresas", "contatos"].includes(key) ? "Nome" : key === "servicos" ? "Nome do serviço" : key === "propostas" ? "Título da proposta" : key === "contratos" ? "Título do contrato" : "Nome da oportunidade"}<input autoFocus={true} required={true} value={draft.title} onChange={e => setDraft({
@@ -1454,22 +1464,10 @@ function ClientBillingRecord({
   cancelling,
   localDemo
 }) {
-  const labels = {
-    pending: "Aguardando pagamento",
-    creating: "Criando",
-    processing: "Em processamento",
-    paid: "Paga",
-    overdue: "Vencida",
-    failed: "Falhou",
-    refunded: "Estornada",
-    canceled: "Cancelada",
-    cancelled: "Cancelada",
-    expired: "Expirada"
-  };
   const due = item.dueAt || item.due;
   const ticketHref = safeClientFinanceExternalHref(item.paymentDetails?.ticketUrl);
   const dueLabel = clientFinanceDueDateLabel(due) || "Vencimento n\u00e3o informado";
-  const paid = item.status === "paid" || item.status === "Paga";
+  const { status, label, paid, cancellable } = clientBillingRecordState(item, localDemo);
   const copyCode = async () => {
     try {
       await navigator.clipboard.writeText(item.paymentDetails?.pixCode || "");
@@ -1481,7 +1479,7 @@ function ClientBillingRecord({
   return <article className="com-client-row com-client-billing-record" aria-busy={refreshing || cancelling}><CircleDollarSign size={15} /><div><b>{item.description || "Cobrança"}</b><small>{item.method || item.paymentDetails?.paymentMethod || "Pagamento"} · {dueLabel}</small></div><strong>{new Intl.NumberFormat("pt-BR", {
         style: "currency",
         currency: "BRL"
-      }).format(Number(item.amount) || 0)}</strong><Badge tone={paid ? "green" : "amber"}>{labels[item.status] || item.status || "Sem status"}</Badge><div className="com-client-finance-row-actions">{(localDemo || item.mpOrderId) && <button type="button" className="com-secondary" disabled={refreshing || cancelling} onClick={() => onRefresh(item)}><RefreshCw size={13} />{refreshing ? "Consultando..." : "Consultar status"}</button>}{item.paymentDetails?.pixCode && <button type="button" className="com-secondary" disabled={refreshing || cancelling} onClick={copyCode}>Copiar Pix</button>}{ticketHref && <a className="com-secondary" href={ticketHref} target="_blank" rel="noopener noreferrer">Abrir boleto</a>}{item.status === "pending" && (localDemo || ["created", "action_required"].includes(item.paymentDetails?.status)) && <button type="button" className="com-secondary com-delete-action" disabled={refreshing || cancelling} onClick={() => onCancel(item)}>{cancelling ? "Cancelando..." : "Cancelar cobran\u00e7a"}</button>}{!paid && <small className="com-client-provider-note">O status é atualizado pelo provedor de pagamento.</small>}</div></article>;
+      }).format(Number(item.amount) || 0)}</strong><Badge tone={paid ? "green" : "amber"}>{label}</Badge><div className="com-client-finance-row-actions">{(localDemo || item.mpOrderId) && <button type="button" className="com-secondary" disabled={refreshing || cancelling} onClick={() => onRefresh(item)}><RefreshCw size={13} />{refreshing ? "Consultando..." : "Consultar status"}</button>}{item.paymentDetails?.pixCode && <button type="button" className="com-secondary" disabled={refreshing || cancelling} onClick={copyCode}>Copiar Pix</button>}{ticketHref && <a className="com-secondary" href={ticketHref} target="_blank" rel="noopener noreferrer">Abrir boleto</a>}{cancellable && <button type="button" className="com-secondary com-delete-action" disabled={refreshing || cancelling} onClick={() => onCancel(item)}>{cancelling ? "Cancelando..." : "Cancelar cobran\u00e7a"}</button>}{status !== "paid" && <small className="com-client-provider-note">O status é atualizado pelo provedor de pagamento.</small>}</div></article>;
 }
 function ClientProfileModal({
   client: initialClient,
@@ -2381,6 +2379,8 @@ function ListView({
   const [contractDocDraft, setContractDocDraft] = useState("");
   const [sendingContract, setSendingContract] = useState(false);
   const [syncingContract, setSyncingContract] = useState(false);
+  const leadFollowUpSubmitLock = useRef(null);
+  if (!leadFollowUpSubmitLock.current) leadFollowUpSubmitLock.current = createCommercialSubmissionLock();
   useEffect(() => {
     if (listPageRef.current === page) return;
     listPageRef.current = page;
@@ -2613,7 +2613,7 @@ function ListView({
     style: "currency",
     currency: "BRL"
   }).format(contractMonthlyRevenue), "somente termos recorrentes", CircleDollarSign, "green"], ["Renovam em breve", String(items.filter(item => isCommercialDateWithinNextDays(item.renewal || item.renewalDate) && !["Cancelado", "Concluído", "Concluido"].includes(String(item.status || ""))).length), "nos próximos 30 dias", CalendarDays, "amber"], ["Valor contratado", amountLabel, "soma dos valores informados", Wallet, "purple"]] : null;
-  const scheduleLeadFollowUp = async (lead, patch, due) => {
+  const scheduleLeadFollowUp = async (lead, patch, due) => leadFollowUpSubmitLock.current.run(async () => {
     const saved = await onUpdate?.(lead, patch);
     if (saved === false) return false;
     const updatedLead = { ...lead, ...patch };
@@ -2641,7 +2641,7 @@ function ListView({
       onAction?.(`Lead salvo, mas a tarefa não foi agendada. Tente novamente. ${error.message || ""}`.trim());
       return false;
     }
-  };
+  });
   return <Fragment>{stats && <div className="com-metrics">{stats.map(([label2, value, detail, Icon, tone]) => <Metric key={label2} {...{
         label: label2,
         value,

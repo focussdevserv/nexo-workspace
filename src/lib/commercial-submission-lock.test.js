@@ -16,3 +16,13 @@ test('release is safe after a rejected create attempt', () => {
   lock.release();
   assert.equal(lock.acquire(), true);
 });
+
+test('runs only one asynchronous submission at a time and releases after it settles', async () => {
+  const lock = createCommercialSubmissionLock();
+  let finish;
+  const first = lock.run(() => new Promise((resolve) => { finish = resolve; }));
+  assert.equal(await lock.run(async () => 'duplicate'), false);
+  finish('saved');
+  assert.equal(await first, 'saved');
+  assert.equal(await lock.run(async () => 'retry'), 'retry');
+});

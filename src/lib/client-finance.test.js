@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { advanceClientInstallmentProgress, buildClientFinanceHistory, clientFinanceDateKey, clientFinanceDueDateLabel, clientFinanceEditPatch, clientFinanceFailedResources, clientFinanceFilterCounts, clientFinanceFilterForPage, clientFinanceLegacyClientValue, clientFinanceOpenBillingCount, isClientFinanceCancelled, isClientFinanceSettled, manualFinanceSettlementPatch, normalizeClientSubscriptionTerms, prepareClientContractTrackingPatch, prepareClientServiceChargeUpdate, safeClientFinanceExternalHref } from './client-finance.js';
+import { advanceClientInstallmentProgress, buildClientFinanceHistory, clientBillingRecordState, clientFinanceDateKey, clientFinanceDueDateLabel, clientFinanceEditPatch, clientFinanceFailedResources, clientFinanceFilterCounts, clientFinanceFilterForPage, clientFinanceLegacyClientValue, clientFinanceOpenBillingCount, isClientFinanceCancelled, isClientFinanceSettled, manualFinanceSettlementPatch, normalizeClientSubscriptionTerms, prepareClientContractTrackingPatch, prepareClientServiceChargeUpdate, safeClientFinanceExternalHref } from './client-finance.js';
 import { belongsToClient } from '../data/client-link.js';
 
 test('client finance shortcuts map to an in-profile filter', () => {
@@ -23,6 +23,16 @@ test('client billing links allow only credential-free HTTP or HTTPS URLs', () =>
   for (const value of ['javascript:alert(1)', 'data:text/html,unsafe', '//attacker.example/path', 'https://user:secret@example.test/ticket', '', null]) {
     assert.equal(safeClientFinanceExternalHref(value), '');
   }
+});
+
+test('client billing actions and badges use normalized provider status', () => {
+  assert.deepEqual(clientBillingRecordState({ status: 'PENDING', paymentDetails: { status: 'CREATED' } }), {
+    status: 'pending', label: 'Aguardando pagamento', paid: false, cancellable: true,
+  });
+  assert.deepEqual(clientBillingRecordState({ status: 'Recebida' }), {
+    status: 'paid', label: 'Paga', paid: true, cancellable: false,
+  });
+  assert.equal(clientBillingRecordState({ status: 'pending', paymentDetails: { status: 'paid' } }).cancellable, false);
 });
 
 test('finance failure state is scoped to the active client-profile filter', () => {

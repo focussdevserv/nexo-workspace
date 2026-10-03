@@ -1,19 +1,25 @@
 import { normalizePaymentStatus } from './payment-status.js';
 
 function dueTimestamp(item) {
-  const value = item.dueAt || item.dueDate;
-  if (!value) return Number.NaN;
-  const dateOnly = String(value).match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!dateOnly) return Date.parse(value);
+  for (const value of [item.dueAt, item.dueDate]) {
+    if (!value) continue;
+    const dateOnly = String(value).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!dateOnly) {
+      const timestamp = Date.parse(value);
+      if (Number.isFinite(timestamp)) return timestamp;
+      continue;
+    }
 
-  const [, year, month, day] = dateOnly;
-  const original = new Date(0);
-  original.setFullYear(Number(year), Number(month) - 1, Number(day));
-  original.setHours(0, 0, 0, 0);
-  if (original.getFullYear() !== Number(year) || original.getMonth() !== Number(month) - 1 || original.getDate() !== Number(day)) return Number.NaN;
-  const nextDay = new Date(original);
-  nextDay.setDate(nextDay.getDate() + 1);
-  return nextDay.getTime() - 1;
+    const [, year, month, day] = dateOnly;
+    const original = new Date(0);
+    original.setFullYear(Number(year), Number(month) - 1, Number(day));
+    original.setHours(0, 0, 0, 0);
+    if (original.getFullYear() !== Number(year) || original.getMonth() !== Number(month) - 1 || original.getDate() !== Number(day)) continue;
+    const nextDay = new Date(original);
+    nextDay.setDate(nextDay.getDate() + 1);
+    return nextDay.getTime() - 1;
+  }
+  return Number.NaN;
 }
 
 export function filterPayments(items, { status = 'Todos', due = 'Todos', now = Date.now() } = {}) {
@@ -31,7 +37,7 @@ export function filterPayments(items, { status = 'Todos', due = 'Todos', now = D
       const dueAt = dueTimestamp(item);
       return normalizePaymentStatus(item.status) === 'pending' && Number.isFinite(dueAt) && dueAt >= now && dueAt <= now + 7 * 24 * 60 * 60 * 1000;
     });
-  } else if (due === 'Sem vencimento') rows = rows.filter((item) => !Number.isFinite(dueTimestamp(item)));
+  } else if (due === 'Sem vencimento') rows = rows.filter((item) => !item.dueAt && !item.dueDate);
   return rows;
 }
 

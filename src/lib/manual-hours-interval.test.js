@@ -21,3 +21,11 @@ test('rejects invalid calendar dates, times, and equal endpoints', () => {
   assert.match(buildManualHoursInterval('2026-10-02', '25:00', '10:00').error, /data e horários/);
   assert.match(buildManualHoursInterval('2026-10-02', '09:00', '09:00').error, /iguais/);
 });
+
+test('rejects manual time entries that end in the future', () => {
+  const now = new Date(2026, 9, 3, 10, 0, 0);
+  assert.deepEqual(buildManualHoursInterval('2026-10-03', '09:00', '10:30', now), {
+    error: 'O término do registro não pode estar no futuro.',
+  });
+  assert.equal(buildManualHoursInterval('2026-10-03', '09:00', '10:00', now).seconds, 3600);
+});

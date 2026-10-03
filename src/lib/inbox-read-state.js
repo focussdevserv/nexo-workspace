@@ -1,6 +1,8 @@
-export function buildInboxReadPatch(conversation) {
-  const data = Object.fromEntries(Object.entries(conversation || {}).filter(([field]) => !['id', 'createdAt', 'updatedAt'].includes(field)));
-  return { ...data, unread: 0 };
+export function buildInboxReadPatch() {
+  // Workspace PATCH merges this partial object into the latest stored record.
+  // Sending the selected conversation's full snapshot here could overwrite a
+  // message/history or assignment saved after the list was loaded.
+  return { unread: 0 };
 }
 
 export async function markInboxConversationRead(conversation, { update, refresh }) {

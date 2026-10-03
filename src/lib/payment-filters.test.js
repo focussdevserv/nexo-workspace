@@ -58,6 +58,19 @@ test('uses legacy date-only dueDate values as local calendar dates', () => {
   assert.deepEqual(filterPayments(items, { due: 'Vencidas', now: startOfDay }).map((item) => item.id), ['legacy-late']);
   assert.deepEqual(filterPayments(items, { due: 'Vencidas', now: endOfDueDay }).map((item) => item.id), ['legacy-late']);
   assert.deepEqual(filterPayments(items, { due: 'Próximos 7 dias', now: startOfDay }).map((item) => item.id), ['legacy-today']);
-  assert.deepEqual(filterPayments(items, { due: 'Sem vencimento', now: startOfDay }).map((item) => item.id), ['invalid-date', 'undated']);
+  assert.deepEqual(filterPayments(items, { due: 'Sem vencimento', now: startOfDay }).map((item) => item.id), ['undated']);
   assert.deepEqual(filterPayments(items, { due: 'Vencidas', now: endOfDueDay + 1 }).map((item) => item.id), ['legacy-today', 'legacy-late']);
+});
+
+test('falls back to a valid due date when the provider timestamp is malformed', () => {
+  const now = Date.parse('2026-10-01T09:00:00.000Z');
+  const items = [
+    { id: 'fallback-late', status: 'pending', dueAt: 'not-a-date', dueDate: '2026-09-30' },
+    { id: 'fallback-soon', status: 'pending', dueAt: 'not-a-date', dueDate: '2026-10-03' },
+    { id: 'invalid', status: 'pending', dueAt: 'not-a-date', dueDate: '2026-02-30' },
+    { id: 'missing', status: 'pending' },
+  ];
+
+  assert.deepEqual(filterPayments(items, { due: 'Vencidas', now }).map((item) => item.id), ['fallback-late']);
+  assert.deepEqual(filterPayments(items, { due: 'Sem vencimento', now }).map((item) => item.id), ['missing']);
 });
