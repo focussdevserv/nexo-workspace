@@ -66,6 +66,14 @@ export function canManageIntegrationSettings(role) {
   return role === 'owner';
 }
 
+/** Describe the actual credential flow so token-only providers are never presented as OAuth logins. */
+export function integrationCredentialFlow(name) {
+  if (name === 'Google Workspace' || name === 'Mercado Pago') return { type: 'oauth', actionLabel: name === 'Google Workspace' ? 'Autorizar Google' : 'Autorizar conta' };
+  if (name === 'WAHA') return { type: 'qr', actionLabel: 'Conectar número / QR Code' };
+  if (name === 'Hostinger E-mail') return { type: 'mailbox', actionLabel: 'Conectar caixa postal' };
+  return { type: 'server_token', actionLabel: 'Configurar token e testar' };
+}
+
 /** Keep demo workspaces from leaving the local app for real provider consent. */
 export function navigateToOAuthConsent({ localDemo = false, navigate, notify, path, demoMessage = 'A autorização externa fica desativada na demonstração local.' }) {
   if (localDemo) {

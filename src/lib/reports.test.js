@@ -165,7 +165,17 @@ test('an unrelated source failure does not hide a report chart with all its own 
 
 test('report date labels preserve date-only values and handle missing dates', () => {
   assert.equal(reportDateLabel('2026-10-02'), '02/10/2026');
+  assert.equal(reportDateLabel('2026-10-02', { language: 'en-US', dateFormat: 'MM/dd/yyyy' }), '10/02/2026');
   assert.equal(reportDateLabel(''), '—');
+});
+
+test('report chart month labels follow workspace language', () => {
+  const now = new Date('2026-10-20T12:00:00');
+  const rows = [{ paidAt: '2026-10-02', amount: 5 }];
+  const en = buildChartBuckets('year', now, rows, (item) => item.amount, 'paid', { language: 'en-US' });
+  const pt = buildChartBuckets('year', now, rows, (item) => item.amount, 'paid', { language: 'pt-BR' });
+  assert.equal(en[9].label, 'Oct');
+  assert.equal(pt[9].label, 'out');
 });
 
 test('project reports count legacy duration fields and retain fractional hours', () => {

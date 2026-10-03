@@ -24,8 +24,10 @@ import { subscriptionStatusUrl } from '../lib/subscription-status-url.js';
 import { updatePaymentAddress, updatePaymentField } from '../lib/payment-form.js';
 import { replacePaymentRecord } from '../lib/payment-record-update.js';
 import { paymentNavigationContextKey } from '../lib/payment-navigation-context.js';
+import { useWorkspacePreferences } from '../lib/workspace-preferences.js';
+import { formatWorkspaceCurrency } from '../lib/workspace-formatting.js';
 
-const money = (value) => Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const money = (value, preferences) => formatWorkspaceCurrency(Number(value || 0), preferences);
 const labels = { pending: 'Aguardando pagamento', creating: 'Criando', processing: 'Em processamento', paid: 'Paga', authorized: 'Autorizada', paused: 'Pausada', canceled: 'Cancelada', cancelled: 'Cancelada', overdue: 'Vencida', failed: 'Falhou', refunded: 'Estornada', rejected: 'Recusada', expired: 'Expirada' };
 
 function MercadoPagoBrick({ amount, onSubmit, onError }) {
@@ -82,6 +84,7 @@ function PaymentAccess({ onConnected }) {
 }
 
 export function PaymentConsole({ kind = 'orders', notify = () => {}, navigationContext = null, onNavigationContextConsumed = () => {} }) {
+  const preferences = useWorkspacePreferences();
   const subscriptionMode = kind === 'subscriptions';
   const demoMode = isLocalDemoActive();
   const [token, setToken] = useState(() => isLocalDemoActive());
@@ -275,7 +278,7 @@ export function PaymentConsole({ kind = 'orders', notify = () => {}, navigationC
     finally { setSubscriptionBusyId(''); }
   };
   const cancelOrder = async (item) => {
-    if (!window.confirm(`Cancelar este pagamento de ${item.clientName} no valor de ${money(item.amount)}? O cliente não poderá mais pagar.`)) return;
+    if (!window.confirm(`Cancelar este pagamento de ${item.clientName} no valor de ${money(item.amount, preferences)}? O cliente não poderá mais pagar.`)) return;
     setCancelingId(item.id);
     try {
       const response = await request(`/api/billing/orders/${encodeURIComponent(item.id)}/cancel`, { method: 'POST' });
@@ -305,7 +308,7 @@ export function PaymentConsole({ kind = 'orders', notify = () => {}, navigationC
     const details = result.paymentDetails || {};
     const resultIsSubscription = result.isSubscription ?? subscriptionMode;
     const resultStatus = normalizePaymentStatus(result.status);
-    return <section className="pay-result"><button className="pay-back" onClick={() => setResult(null)}>← Voltar ao financeiro</button><span className="pay-access-icon success"><CheckCircle2 size={21} /></span><span className="pay-eyebrow">{resultIsSubscription ? 'ASSINATURA CRIADA' : 'COBRANÇA CRIADA'}</span><h2>{result.clientName} · {money(result.amount)}</h2><p>{result.description}</p><span className={`pay-status status-${resultStatus}`}>{labels[resultStatus] || result.status}</span>
+    return <section className="pay-result"><button className="pay-back" onClick={() => setResult(null)}>← Voltar ao financeiro</button><span className="pay-access-icon success"><CheckCircle2 size={21} /></span><span className="pay-eyebrow">{resultIsSubscription ? 'ASSINATURA CRIADA' : 'COBRANÇA CRIADA'}</span><h2>{result.clientName} · {money(result.amount, preferences)}</h2><p>{result.description}</p><span className={`pay-status status-${resultStatus}`}>{labels[resultStatus] || result.status}</span>
       {resultIsSubscription && result.checkoutUrl && <div className="pay-result-action"><p>O cliente precisa confirmar o meio de pagamento no Mercado Pago. Depois da autorização, a renovação será automática.</p><a className="ns-primary" href={result.checkoutUrl} target="_blank" rel="noreferrer">Abrir autorização <ExternalLink size={15} /></a><button className="ns-secondary" onClick={() => copy(result.checkoutUrl)}><Copy size={14} />Copiar link</button></div>}
       {!resultIsSubscription && details.pixQrCodeBase64 && <div className="pay-pix"><img width={190} height={190} alt="QR Code Pix" src={`data:image/png;base64,${details.pixQrCodeBase64}`} /><span>Escaneie o QR Code ou use Pix Copia e Cola.</span><button className="ns-secondary" onClick={() => copy(details.pixCode)}><Copy size={14} />Copiar Pix Copia e Cola</button></div>}
       {!resultIsSubscription && details.ticketUrl && <div className="pay-result-action"><a className="ns-primary" href={details.ticketUrl} target="_blank" rel="noreferrer">Abrir boleto <ExternalLink size={15} /></a>{details.digitableLine && <button className="ns-secondary" onClick={() => copy(details.digitableLine)}><Copy size={14} />Copiar linha digitável</button>}</div>}
@@ -325,7 +328,7 @@ export function PaymentConsole({ kind = 'orders', notify = () => {}, navigationC
           {subscriptionMode && (item.nextPaymentAt || item.startAt) && <small>Próxima cobrança · {formatPaymentDate(item.nextPaymentAt || item.startAt)}</small>}
           {subscriptionMode && item.endAt && <small>Recorrência até · {formatPaymentDate(item.endAt)}</small>}
           {!subscriptionMode && (item.dueAt || item.dueDate) && <small>Vencimento · {formatPaymentDate(item.dueAt || item.dueDate)}</small>}
-        </div><strong>{money(item.amount)}</strong><span className={'pay-status status-' + normalizePaymentStatus(item.status)}>{labels[normalizePaymentStatus(item.status)] || item.status}</span>
+        </div><strong>{money(item.amount, preferences)}</strong><span className={'pay-status status-' + normalizePaymentStatus(item.status)}>{labels[normalizePaymentStatus(item.status)] || item.status}</span>
         {subscriptionMode ? <div className="pay-record-actions">
           {canSimulateSubscriptionAuthorization(item, demoMode) && <button className="ns-secondary" disabled={subscriptionBusyId === item.id} title="Ação demonstrativa local; não contata o Mercado Pago." onClick={() => simulateSubscriptionAuthorization(item)}>{subscriptionBusyId === item.id ? <LoaderCircle className="spin" size={14} /> : <CheckCircle2 size={14} />}{subscriptionBusyId === item.id ? 'Atualizando...' : 'Simular autorização'}</button>}
           {item.checkoutUrl && normalizePaymentStatus(item.status) === 'pending' && <button className="ns-secondary" onClick={() => copy(item.checkoutUrl)}><Copy size={14} />Copiar link</button>}

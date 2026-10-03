@@ -3,15 +3,8 @@ import { ArrowRight, KeyRound, LoaderCircle, LockKeyhole, Moon, ShieldCheck, Spa
 import { apiRequest, parseApiResponse } from '../lib/workspace-api.js';
 import { activateLocalDemo, getLocalDemoUser, isLocalDemoActive, isLocalDemoRequested } from '../lib/local-demo.js';
 import { applyWorkspaceTheme, publishWorkspacePreferences, readCachedWorkspacePreferences, rememberWorkspaceThemePreference } from '../lib/workspace-preferences.js';
-import { normalizeAuthEmail, passwordConfirmationMatches, prefillRecoveryEmail, readPasswordResetToken, readWorkspaceAccessMode, stripWorkspaceAccessTokens, workspaceAccessModeUrl } from './workspace-access-helpers.js';
+import { normalizeAuthEmail, passwordConfirmationMatches, prefillRecoveryEmail, readPasswordResetToken, readWorkspaceAccessMode, readWorkspaceInvite, shouldAutoEnterLocalDemo, stripWorkspaceAccessTokens, workspaceAccessModeUrl } from './workspace-access-helpers.js';
 import './workspace-access.css';
-
-function readInviteToken() {
-  const queryToken = new URLSearchParams(window.location.search).get('invite');
-  if (queryToken) return queryToken;
-  const hash = window.location.hash.slice(1);
-  return new URLSearchParams(hash).get('invite') || '';
-}
 
 function isValidWorkspaceProfile(profile) {
   return Boolean(profile && typeof profile === 'object' && ['owner', 'admin', 'member'].includes(profile.role));
@@ -34,7 +27,9 @@ export default function WorkspaceAccess({ children }) {
   const [sessionCheckFailed, setSessionCheckFailed] = useState(false);
   const [retryingSession, setRetryingSession] = useState(false);
   const [form, setForm] = useState({ email: '', password: '', rememberMe: true });
-  const [inviteToken, setInviteToken] = useState(() => readInviteToken());
+  const [invite, setInvite] = useState(() => readWorkspaceInvite(window.location.search, window.location.hash));
+  const inviteToken = invite.token;
+  const [suppressDemoAutologin, setSuppressDemoAutologin] = useState(false);
   const [resetToken, setResetToken] = useState(() => readPasswordResetToken(window.location.hash));
   const [accessMode, setAccessMode] = useState(() => readWorkspaceAccessMode(window.location.hash));
   const [resetEmail, setResetEmail] = useState('');
@@ -80,8 +75,16 @@ export default function WorkspaceAccess({ children }) {
   };
 
   useEffect(() => {
-    if (inviteToken || resetToken) { setChecking(false); return undefined; }
-    if (isLocalDemoRequested() || isLocalDemoActive()) {
+    if (inviteToken || invite.invalid || resetToken || accessMode === 'reset-invalid') { setChecking(false); return undefined; }
+    if (suppressDemoAutologin) {
+      sessionStorage.removeItem('nexo.api.token');
+      sessionStorage.removeItem('nexo.api.user');
+      setUser(null);
+      setChecking(false);
+      setError('');
+      return undefined;
+    }
+    if (shouldAutoEnterLocalDemo({ requested: isLocalDemoRequested(), active: isLocalDemoActive() })) {
       activateLocalDemo();
       const profile = getLocalDemoUser();
       sessionStorage.setItem('nexo.api.user', JSON.stringify(profile));
@@ -98,7 +101,7 @@ export default function WorkspaceAccess({ children }) {
       .catch((err) => { if (active) { sessionStorage.removeItem('nexo.api.user'); setUser(null); const authFailure = err.code === 'unauthorized' || err.code === 'forbidden' ; if (!authFailure) { setSessionCheckFailed(true); setError(err.message || 'Nao foi possivel verificar a sessao. Tente novamente.'); } } })
       .finally(() => { if (active) setChecking(false); });
     return () => { active = false; window.removeEventListener('nexo:session-expired', onExpired); };
-  }, [inviteToken, resetToken]);
+  }, [accessMode, invite.invalid, inviteToken, resetToken, suppressDemoAutologin]);
 
   const retrySessionCheck = async () => {
     setRetryingSession(true); setError('');
@@ -124,7 +127,7 @@ export default function WorkspaceAccess({ children }) {
       const profile = { ...payload.user, organizationName: payload.organization?.name };
       sessionStorage.setItem('nexo.api.user', JSON.stringify(profile));
       const url = new URL(window.location.href); url.searchParams.delete('invite'); if (new URLSearchParams(url.hash.slice(1)).has('invite')) url.hash = ''; window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
-      setUser(profile); setSessionCheckFailed(false); setInviteToken(''); setInvitePassword(''); setInvitePasswordConfirm('');
+      setUser(profile); setSessionCheckFailed(false); setInvite({ token: '', invalid: false }); setInvitePassword(''); setInvitePasswordConfirm('');
     } catch (err) { setError(err.message || 'Não foi possível aceitar o convite.'); }
     finally { setBusy(false); }
   };
@@ -190,7 +193,7 @@ export default function WorkspaceAccess({ children }) {
 
   if (checking) return <div className="workspace-access-loading"><LoaderCircle className="spin" size={24} /><span>Verificando sua sessão...</span></div>;
   if (user) return <>{children}</>;
-  if (inviteToken) return <main className="workspace-access-page"><button className="workspace-theme-toggle" type="button" onClick={toggleTheme} aria-label={darkMode ? 'Ativar modo claro' : 'Ativar modo escuro'} title={darkMode ? 'Ativar modo claro' : 'Ativar modo escuro'}>{darkMode ? <Sun size={16} /> : <Moon size={16} />}<span>{darkMode ? 'Modo claro' : 'Modo escuro'}</span></button><AccessBrandPanel /><section className="workspace-access-card" aria-labelledby="workspace-invite-title"><div className="workspace-access-brand"><span className="brand-glyph"><i /><b /><em /></span><strong>Focusshub</strong><small>WORKSPACE</small></div><span className="workspace-access-icon"><ShieldCheck size={18} /></span><p className="eyebrow">CONVITE DE EQUIPE</p><h1 id="workspace-invite-title">Ative seu acesso</h1><p className="workspace-access-description">Crie uma senha com pelo menos 12 caracteres. Este link pode ser usado uma vez e expira em 48 horas.</p><form onSubmit={acceptInvite}><label htmlFor="invite-password">Nova senha<input id="invite-password" type="password" autoComplete="new-password" minLength={12} maxLength={128} required disabled={busy} value={invitePassword} onChange={(event) => setInvitePassword(event.target.value)} /></label><label htmlFor="invite-password-confirm">Confirme a senha<input id="invite-password-confirm" type="password" autoComplete="new-password" minLength={12} maxLength={128} required disabled={busy} value={invitePasswordConfirm} onChange={(event) => setInvitePasswordConfirm(event.target.value)} /></label>{error && <p className="workspace-access-error" role="alert">{error}</p>}<button className="admin-primary workspace-access-submit" disabled={busy}>{busy ? <LoaderCircle className="spin" size={15} /> : <KeyRound size={15} />}{busy ? 'Ativando...' : 'Ativar acesso'}<ArrowRight size={15} /></button><button type="button" className="workspace-access-switch" disabled={busy} onClick={() => { const url = new URL(window.location.href); url.searchParams.delete('invite'); if (new URLSearchParams(url.hash.slice(1)).has('invite')) url.hash = ''; window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`); setInviteToken(''); setError(''); }}>Voltar para entrar</button></form></section></main>;
+  if (inviteToken || invite.invalid) return <main className="workspace-access-page"><button className="workspace-theme-toggle" type="button" onClick={toggleTheme} aria-label={darkMode ? 'Ativar modo claro' : 'Ativar modo escuro'} title={darkMode ? 'Ativar modo claro' : 'Ativar modo escuro'}>{darkMode ? <Sun size={16} /> : <Moon size={16} />}<span>{darkMode ? 'Modo claro' : 'Modo escuro'}</span></button><AccessBrandPanel /><section className="workspace-access-card" aria-labelledby="workspace-invite-title"><div className="workspace-access-brand"><span className="brand-glyph"><i /><b /><em /></span><strong>Focusshub</strong><small>WORKSPACE</small></div><span className="workspace-access-icon"><ShieldCheck size={18} /></span><p className="eyebrow">CONVITE DE EQUIPE</p><h1 id="workspace-invite-title">{invite.invalid ? 'Convite inválido' : 'Ative seu acesso'}</h1><p className="workspace-access-description">{invite.invalid ? 'Este link não contém um convite válido. Peça à pessoa proprietária para enviar um novo convite.' : 'Crie uma senha com pelo menos 12 caracteres. Este link pode ser usado uma vez e expira em 48 horas.'}</p>{invite.invalid ? <p className="workspace-access-error" role="alert">Não foi possível identificar o código deste convite.</p> : <form onSubmit={acceptInvite}><label htmlFor="invite-password">Nova senha<input id="invite-password" type="password" autoComplete="new-password" minLength={12} maxLength={128} required disabled={busy} value={invitePassword} onChange={(event) => setInvitePassword(event.target.value)} /></label><label htmlFor="invite-password-confirm">Confirme a senha<input id="invite-password-confirm" type="password" autoComplete="new-password" minLength={12} maxLength={128} required disabled={busy} value={invitePasswordConfirm} onChange={(event) => setInvitePasswordConfirm(event.target.value)} /></label>{error && <p className="workspace-access-error" role="alert">{error}</p>}<button className="admin-primary workspace-access-submit" disabled={busy}>{busy ? <LoaderCircle className="spin" size={15} /> : <KeyRound size={15} />}{busy ? 'Ativando...' : 'Ativar acesso'}<ArrowRight size={15} /></button></form>}<button type="button" className="workspace-access-switch" disabled={busy} onClick={() => { setSuppressDemoAutologin(true); const url = new URL(window.location.href); url.searchParams.delete('invite'); const hash = new URLSearchParams(url.hash.slice(1)); hash.delete('invite'); url.hash = hash.toString(); window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`); setInvite({ token: '', invalid: false }); setError(''); }}>Voltar para entrar</button></section></main>;
 
   if (resetToken || ['reset-request', 'reset-complete', 'reset-invalid'].includes(accessMode)) return <main className="workspace-access-page"><button className="workspace-theme-toggle" type="button" onClick={toggleTheme} aria-label={darkMode ? 'Ativar modo claro' : 'Ativar modo escuro'} title={darkMode ? 'Ativar modo claro' : 'Ativar modo escuro'}>{darkMode ? <Sun size={16} /> : <Moon size={16} />}<span>{darkMode ? 'Modo claro' : 'Modo escuro'}</span></button><AccessBrandPanel /><section className="workspace-access-card" aria-labelledby="workspace-reset-title"><div className="workspace-access-brand"><span className="brand-glyph"><i /><b /><em /></span><strong>Focusshub</strong><small>WORKSPACE</small></div><span className="workspace-access-icon"><KeyRound size={18} /></span><p className="eyebrow">RECUPERAÇÃO DE ACESSO</p><h1 id="workspace-reset-title">{accessMode === 'reset-complete' ? 'Crie uma nova senha' : accessMode === 'reset-invalid' ? 'Link de recuperação inválido' : 'Redefina sua senha'}</h1><p className="workspace-access-description">{accessMode === 'reset-complete' ? 'Escolha uma senha com pelo menos 12 caracteres. O link pode ser usado uma vez e expira em 30 minutos.' : accessMode === 'reset-invalid' ? 'Este link não contém um código de recuperação válido. Solicite um novo link para continuar.' : 'Informe o e-mail da sua conta. Se ela estiver ativa e a recuperação estiver funcionando, enviaremos um link. Caso não receba, contate a pessoa administradora do workspace.'}</p>{accessMode === 'reset-invalid' ? <p className="workspace-access-error" role="alert">Não é possível redefinir a senha com este link.</p> : accessMode === 'reset-request' ? <form onSubmit={requestPasswordReset}><label htmlFor="reset-email">E-mail<input id="reset-email" type="email" autoComplete="email" required disabled={busy} value={resetEmail} onChange={(event) => setResetEmail(event.target.value)} /></label>{error && <p className="workspace-access-error" role="alert">{error}</p>}{resetNotice && <p className="workspace-access-success" role="status">{resetNotice}</p>}<button className="admin-primary workspace-access-submit" disabled={busy}>{busy ? <LoaderCircle className="spin" size={15} /> : <KeyRound size={15} />}{busy ? 'Enviando...' : 'Enviar link de recuperação'}<ArrowRight size={15} /></button></form> : <form onSubmit={completePasswordReset}><label htmlFor="reset-password">Nova senha<input id="reset-password" type="password" autoComplete="new-password" minLength={12} maxLength={128} required disabled={busy} value={resetPassword} onChange={(event) => setResetPassword(event.target.value)} /></label><label htmlFor="reset-password-confirm">Confirme a senha<input id="reset-password-confirm" type="password" autoComplete="new-password" minLength={12} maxLength={128} required disabled={busy} value={resetPasswordConfirm} onChange={(event) => setResetPasswordConfirm(event.target.value)} /></label>{error && <p className="workspace-access-error" role="alert">{error}</p>}<button className="admin-primary workspace-access-submit" disabled={busy}>{busy ? <LoaderCircle className="spin" size={15} /> : <KeyRound size={15} />}{busy ? 'Atualizando...' : 'Salvar nova senha'}<ArrowRight size={15} /></button></form>}<button type="button" className="workspace-access-switch" disabled={busy} onClick={returnToLogin}>Voltar para entrar</button></section></main>;
 

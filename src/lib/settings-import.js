@@ -1,8 +1,11 @@
-import { workspaceStartPages } from './workspace-preferences.js';
+import { supportedWorkspaceCurrencies, supportedWorkspaceDateFormats, supportedWorkspaceLocales, workspaceStartPages } from './workspace-preferences.js';
 
 const allowedValues = {
   'workspace.timezone': ['America/Sao_Paulo', 'America/Manaus', 'UTC'],
   'workspace.weekStart': ['monday', 'sunday'],
+  'workspace.language': supportedWorkspaceLocales,
+  'workspace.currency': supportedWorkspaceCurrencies,
+  'workspace.dateFormat': supportedWorkspaceDateFormats,
   'preferences.startPage': workspaceStartPages,
   'billing.defaultDueDays': ['1', '3', '7', '15', '30'],
 };

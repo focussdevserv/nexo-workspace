@@ -326,6 +326,13 @@ function WorkScreen({ page, navigationContext = null, onNavigationContextConsume
   const [tasks, setTasks, tasksError, tasksLoaded, refreshTasks] = useLocalState('nexo.work.tasks.v1', tasksSeed);
   const [events, setEvents, eventsError, eventsLoaded, refreshEvents] = useLocalState('nexo.work.events.v1', eventsSeed);
   const [approvals, setApprovals, approvalsError, approvalsLoaded] = useLocalState('nexo.work.approvals.v1', approvalsSeed);
+  useEffect(() => {
+    if (key !== 'aprovacoes' || !navigationContext?.approvalId || !approvalsLoaded) return;
+    const approval = approvals.find((item) => String(item.id) === String(navigationContext.approvalId));
+    if (approval) setSelectedApproval(approval);
+    else setToast('Approval unavailable in this list.');
+    onNavigationContextConsumed();
+  }, [key, navigationContext?.approvalId, approvals, approvalsLoaded, onNavigationContextConsumed]);
   const approvalActionLocks = useRef(null);
   if (!approvalActionLocks.current) approvalActionLocks.current = createKeyedActionLock();
   const taskCompletionLocks = useRef(null);

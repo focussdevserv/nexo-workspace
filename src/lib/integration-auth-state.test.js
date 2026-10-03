@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { canAuthorizeOAuthIntegrations, canManageIntegrationSettings, googleReauthorizationButtonState, integrationOAuthRedirectUri, integrationStatusLabel, integrationStatusTone, mercadoPagoAuthorizationButtonState, navigateToOAuthConsent } from './integration-auth-state.js';
+import { canAuthorizeOAuthIntegrations, canManageIntegrationSettings, googleReauthorizationButtonState, integrationCredentialFlow, integrationOAuthRedirectUri, integrationStatusLabel, integrationStatusTone, mercadoPagoAuthorizationButtonState, navigateToOAuthConsent } from './integration-auth-state.js';
 
 test('only the workspace owner can start provider OAuth consent', () => {
   assert.equal(canAuthorizeOAuthIntegrations('owner'), true);
@@ -14,6 +14,16 @@ test('only the workspace owner can change provider settings or run connection te
   for (const role of ['admin', 'member', 'viewer', '', undefined, null]) {
     assert.equal(canManageIntegrationSettings(role), false);
   }
+});
+
+test('shows provider authorization only for implemented OAuth providers', () => {
+  assert.deepEqual(integrationCredentialFlow('Google Workspace'), { type: 'oauth', actionLabel: 'Autorizar Google' });
+  assert.deepEqual(integrationCredentialFlow('Mercado Pago'), { type: 'oauth', actionLabel: 'Autorizar conta' });
+  for (const name of ['Evolution API', 'Resend', 'Clicksign', 'GitHub', 'n8n', 'Sentry']) {
+    assert.deepEqual(integrationCredentialFlow(name), { type: 'server_token', actionLabel: 'Configurar token e testar' });
+  }
+  assert.deepEqual(integrationCredentialFlow('WAHA'), { type: 'qr', actionLabel: 'Conectar número / QR Code' });
+  assert.deepEqual(integrationCredentialFlow('Hostinger E-mail'), { type: 'mailbox', actionLabel: 'Conectar caixa postal' });
 });
 
 test('OAuth reauthorization in local demo explains the block without navigating externally', () => {

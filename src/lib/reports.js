@@ -146,37 +146,30 @@ function normalizeSingleCurrencySeparator(value, separator) {
   return parts.length === 2 ? `${parts[0]}.${parts[1]}` : value;
 }
 
-export const reportDateLabel = (value) => {
-  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    const [, year, month, day] = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    return `${day}/${month}/${year}`;
-  }
-  const date = value instanceof Date ? value : new Date(value);
-  return Number.isNaN(date.getTime()) ? '—' : new Intl.DateTimeFormat('pt-BR').format(date);
-};
+export const reportDateLabel = (value, preferences = {}) => formatWorkspaceDate(value, preferences);
 
-export function buildProjectReportRows(projects = [], tasks = [], hours = [], periodId, now = new Date()) {
+export function buildProjectReportRows(projects = [], tasks = [], hours = [], periodId, now = new Date(), preferences = {}) {
   const rows = [
     ...projects.filter((item) => inPeriod(item, periodId, now)).map((item) => [
       item.name || item.title || 'Projeto', `Projeto · ${item.client || 'Cliente não informado'}`,
-      item.status || 'Em andamento', reportDateLabel(item.date || item.createdAt || item.created_at),
+      item.status || 'Em andamento', reportDateLabel(item.date || item.createdAt || item.created_at, preferences),
       dateOf(item).getTime(),
     ]),
     ...tasks.filter((item) => inPeriod(item, periodId, now, 'task')).map((item) => [
       item.title || item.name || 'Tarefa', `Tarefa · ${item.project || item.client || 'Projeto não informado'}`,
-      item.status || item.state || 'Em andamento', reportDateLabel(item.due || item.dueAt || item.due_at || item.createdAt || item.created_at),
+      item.status || item.state || 'Em andamento', reportDateLabel(item.due || item.dueAt || item.due_at || item.createdAt || item.created_at, preferences),
       dateOf(item, 'task').getTime(),
     ]),
     ...hours.filter((item) => inPeriod(item, periodId, now, 'work')).map((item) => [
       item.title || item.project || 'Registro de horas', `Horas · ${item.project || item.client || 'Projeto não informado'}`,
-      `${reportHours(item)}h · ${item.status || 'Registradas'}`, reportDateLabel(item.date || item.startedAt || item.started_at || item.createdAt || item.created_at),
+      `${reportHours(item)}h · ${item.status || 'Registradas'}`, reportDateLabel(item.date || item.startedAt || item.started_at || item.createdAt || item.created_at, preferences),
       dateOf(item, 'work').getTime(),
     ]),
   ];
   return rows.sort((a, b) => b[4] - a[4]).map(([name, category, status, date]) => [name, category, status, date]);
 }
 
-export function buildChartBuckets(periodId, now, rows, valueOf, dateField = 'default') {
+export function buildChartBuckets(periodId, now, rows, valueOf, dateField = 'default', preferences = {}) {
   const starts = periodId === 'year'
     ? Array.from({ length: 12 }, (_, index) => new Date(now.getFullYear(), index, 1))
     : periodId === 'quarter'
@@ -188,8 +181,9 @@ export function buildChartBuckets(periodId, now, rows, valueOf, dateField = 'def
       : new Date(start.getFullYear(), start.getMonth(), start.getDate() + 7);
     const value = rows.filter((row) => { const date = dateOf(row, dateField); return date >= start && date < end && date <= now; }).reduce((sum, row) => sum + valueOf(row), 0);
     const label = periodId !== 'year'
-      ? start.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }).replace('.', '')
-      : start.toLocaleDateString('pt-BR', { month: 'short' }).replace('.', '');
+      ? formatWorkspaceDate(start, preferences, { day: '2-digit', month: 'short' }).replace('.', '')
+      : formatWorkspaceDate(start, preferences, { month: 'short' }).replace('.', '');
     return { key: `${start.toISOString()}-${index}`, label, value };
   });
 }
+import { formatWorkspaceDate } from './workspace-formatting.js';

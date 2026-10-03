@@ -7,6 +7,8 @@ import { downloadCsvFile, rowsToCsv } from '../lib/csv.js';
 import { reportTabForKey } from '../lib/report-tab-navigation.js';
 import { isReportProjectActive, isReportProjectCompleted } from '../lib/report-project-status.js';
 import { createLatestRequestGuard } from '../lib/latest-request.js';
+import { useWorkspacePreferences } from '../lib/workspace-preferences.js';
+import { formatWorkspaceCurrency } from '../lib/workspace-formatting.js';
 
 const periods = [{ id: 'month', label: 'Este mês', months: 1 }, { id: 'quarter', label: 'Últimos 90 dias', months: 3 }, { id: 'year', label: 'Este ano', months: 12 }];
 const tabs = ['Visão geral', 'Comercial', 'Projetos', 'Financeiro'];
@@ -31,10 +33,11 @@ const canOpenReportDestination = (page) => {
   if (modulePermissions) return false;
   return user?.role !== 'member' || page === 'Projetos';
 };
-const currency = (value) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 2 }).format(parseReportAmount(value));
 const statusKey = (value) => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
 
 export default function ReportsScreen({ notify }) {
+  const preferences = useWorkspacePreferences();
+  const currency = (value) => formatWorkspaceCurrency(parseReportAmount(value), preferences, { maximumFractionDigits: 2 });
   const [periodId, setPeriodId] = useState('month');
   const [tab, setTab] = useState('Visão geral');
   const [data, setData] = useState({ leads: [], projects: [], tasks: [], revenues: [], expenses: [], orders: [], hours: [] });
@@ -103,15 +106,15 @@ export default function ReportsScreen({ notify }) {
     ...paidOrders.map((item) => [item.description || 'Pagamento', `Cobrança · ${item.clientName || 'Cliente'}`, currency(item.amount ?? item.value), dateOf(item, 'paid')]),
     ...periodRevenues.map((item) => [item.description || item.name || 'Receita', `Receita · ${item.counterparty || item.client || 'Cliente'}`, `${item.status || 'Registrada'} · ${currency(item.amount ?? item.value)}`, reportRevenueDate(item)]),
     ...periodExpenses.map((item) => [item.description || item.name || 'Despesa', `Despesa · ${item.category || item.supplier || 'Sem categoria'}`, `− ${currency(item.amount ?? item.value)}`, item.date || item.createdAt || '']),
-  ].sort((a, b) => new Date(b[3] || 0).getTime() - new Date(a[3] || 0).getTime()).map(([name, category, status, date]) => [name, category, status, reportDateLabel(date)]);
-  const rows = tab === 'Comercial' ? leads.map((item) => [item.name || item.title || 'Lead', item.source || '—', item.stage || item.status || '—', reportDateLabel(item.createdAt || item.created_at || item.date)]) : tab === 'Projetos' ? buildProjectReportRows(projects, data.tasks, data.hours, periodId, now) : tab === 'Financeiro' ? [...periodRevenues.map((item) => [item.description || item.name || 'Receita', item.counterparty || item.client || 'Cliente', `${item.status || 'Registrada'} · ${currency(item.amount ?? item.value)}`, reportDateLabel(reportRevenueDate(item))]), ...paidOrders.map((item) => [item.description || 'Pagamento', item.clientName || item.client || 'Cliente', `Pago · ${currency(item.amount ?? item.value)}`, reportDateLabel(dateOf(item, 'paid'))]), ...periodExpenses.map((item) => [item.description || item.name || 'Despesa', item.category || item.supplier || 'Despesa', `− ${currency(item.amount ?? item.value)}`, reportDateLabel(item.date || item.createdAt || item.created_at)])] : overviewRows;
+  ].sort((a, b) => new Date(b[3] || 0).getTime() - new Date(a[3] || 0).getTime()).map(([name, category, status, date]) => [name, category, status, reportDateLabel(date, preferences)]);
+  const rows = tab === 'Comercial' ? leads.map((item) => [item.name || item.title || 'Lead', item.source || '—', item.stage || item.status || '—', reportDateLabel(item.createdAt || item.created_at || item.date, preferences)]) : tab === 'Projetos' ? buildProjectReportRows(projects, data.tasks, data.hours, periodId, now, preferences) : tab === 'Financeiro' ? [...periodRevenues.map((item) => [item.description || item.name || 'Receita', item.counterparty || item.client || 'Cliente', `${item.status || 'Registrada'} · ${currency(item.amount ?? item.value)}`, reportDateLabel(reportRevenueDate(item), preferences)]), ...paidOrders.map((item) => [item.description || 'Pagamento', item.clientName || item.client || 'Cliente', `Pago · ${currency(item.amount ?? item.value)}`, reportDateLabel(dateOf(item, 'paid'), preferences)]), ...periodExpenses.map((item) => [item.description || item.name || 'Despesa', item.category || item.supplier || 'Despesa', `− ${currency(item.amount ?? item.value)}`, reportDateLabel(item.date || item.createdAt || item.created_at, preferences)])] : overviewRows;
   const exportCsv = () => { const csv = rowsToCsv([['Registro','Categoria / cliente','Status / valor','Data'], ...rows]); downloadCsvFile(`relatorio-${periodId}-${tab.toLowerCase().replaceAll(' ','-')}.csv`, csv); notify('CSV exportado com os registros permitidos pelo seu perfil.'); };
   const chartRows = tab === 'Projetos' ? completedProjects : tab === 'Comercial' ? leads : [...paidOrders, ...paidRevenues.map((item) => ({ ...item, paidAt: reportRevenueDate(item) }))];
   const chartField = tab === 'Projetos' ? 'completed' : tab === 'Comercial' ? 'created' : 'paid';
   const chartSource = tab === 'Projetos' ? 'projects' : tab === 'Comercial' ? 'leads' : 'orders';
   const chartUnavailable = restricted(chartSource) || failed(chartSource) || ((tab === 'Financeiro' || tab === 'Visão geral') && (restricted('revenues') || failed('revenues')));
   const chartLoadFailed = hasReportChartFailures(tab, failedSources);
-  const chartValues = buildChartBuckets(periodId, now, chartRows, tab === 'Projetos' || tab === 'Comercial' ? () => 1 : (item) => parseReportAmount(item.amount ?? item.value), chartField);
+  const chartValues = buildChartBuckets(periodId, now, chartRows, tab === 'Projetos' || tab === 'Comercial' ? () => 1 : (item) => parseReportAmount(item.amount ?? item.value), chartField, preferences);
   const chartTotal = chartValues.reduce((sum, bucket) => sum + bucket.value, 0);
   const chartMax = Math.max(1, ...chartValues.map((bucket) => bucket.value));
   const chartFormat = tab === 'Projetos' ? (value) => `${value} entrega${value === 1 ? '' : 's'}` : tab === 'Comercial' ? (value) => `${value} lead${value === 1 ? '' : 's'}` : currency;

@@ -34,6 +34,21 @@ test('settings reset publishes the reset timezone and week start rather than sta
   assert.equal(normalizeWorkspacePreferences(reset).weekStart, 'monday');
 });
 
+test('workspace locale, currency, and date format flow from saved settings into shared preferences', () => {
+  const settings = workspacePreferencesFromSettings({ workspace: { language: 'en-US', currency: 'USD', dateFormat: 'MM/dd/yyyy' } });
+  assert.deepEqual(normalizeWorkspacePreferences(settings), {
+    compact: false, darkMode: false, showCompleted: false, confirmDelete: true, startPage: 'Meu Dia',
+    timezone: 'America/Sao_Paulo', weekStart: 'monday', language: 'en-US', currency: 'USD', dateFormat: 'MM/dd/yyyy',
+  });
+});
+
+test('invalid locale, currency, and date format values safely use Portuguese Brazilian defaults', () => {
+  const prefs = normalizeWorkspacePreferences({ language: 'xx-INVALID', currency: 'DOGE', dateFormat: 'yyyy-dd-MM' });
+  assert.equal(prefs.language, 'pt-BR');
+  assert.equal(prefs.currency, 'BRL');
+  assert.equal(prefs.dateFormat, 'dd/MM/yyyy');
+});
+
 test('delete preference skips routine confirmation only when explicitly disabled', () => {
   let asked = 0;
   const confirmAction = () => { asked += 1; return false; };

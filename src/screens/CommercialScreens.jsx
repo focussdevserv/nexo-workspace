@@ -1,7 +1,7 @@
 import React from "react";
 import { Fragment } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Archive, ArrowDown, ArrowDownRight, ArrowRight, ArrowUpRight, Building2, CalendarDays, Check, CheckCircle2, ChevronDown, ChevronRight, CircleDollarSign, Clock3, Copy, Download, Ellipsis, FileCheck2, FileText, Filter, LifeBuoy, Mail, MessageCircle, MoreHorizontal, Phone, Plus, RefreshCw, Search, Send, ShieldCheck, SlidersHorizontal, Sparkles, Users, Wallet, X } from "lucide-react";
+import { Archive, ArrowDown, ArrowDownRight, ArrowRight, ArrowUpRight, Building2, CalendarDays, Check, CheckCircle2, ChevronDown, ChevronRight, CircleDollarSign, Clock3, Copy, Download, Ellipsis, ExternalLink, FileCheck2, FileText, Filter, LifeBuoy, Mail, MessageCircle, MoreHorizontal, Pencil, Phone, Plus, RefreshCw, Search, Send, ShieldCheck, SlidersHorizontal, Sparkles, Trash2, Users, Wallet, X } from "lucide-react";
 import "../screens/commercial.css";
 import { apiRequest, fetchAllRecords, useWorkspaceRecords } from "../lib/workspace-api.js";
 import { dateAfterDays } from "../lib/payment-due-date.js";
@@ -35,6 +35,7 @@ import { removeClientContact } from "../lib/client-contact-records.js";
 import { presentClientContact } from "../lib/client-contact-presentation.js";
 import { archiveClientRecord, isArchivedClient, restoreClientRecord } from "../lib/client-archive.js";
 import { clientFileRecordForUpload } from "../lib/client-file-link.js";
+import { clientFileDeleteConfirmation, clientFileMetadataPatch, safeClientFileHref } from "../lib/client-file-actions.js";
 import { buildClientRelationshipHistory, clientRelationshipHistoryDateLabel } from "../lib/client-relationship-history.js";
 import { buildCommercialRecordEditorPatch, companyContactCount, commercialContactCompanySelection, commercialRecordEditorDraft, commercialRecordEditorFields, commercialRecordEditorIsDirty } from "../lib/commercial-record-editor.js";
 import { filterCommercialRecords } from "../lib/commercial-record-filter.js";
@@ -1534,6 +1535,9 @@ function ClientProfileModal({
   const [noteSaving, setNoteSaving] = useState(false);
   const [contactSaving, setContactSaving] = useState(false);
   const [fileUploading, setFileUploading] = useState(false);
+  const [editingFileId, setEditingFileId] = useState("");
+  const [fileDraft, setFileDraft] = useState({ name: "", projectId: "" });
+  const [fileBusyId, setFileBusyId] = useState("");
   const [financeDialog, setFinanceDialog] = useState(false);
   const [financeSaving, setFinanceSaving] = useState(false);
   const billingRequestAttempt = useRef(null);
@@ -1798,6 +1802,46 @@ function ClientProfileModal({
     } finally {
       setFileUploading(false);
       if (fileUploadRef.current) fileUploadRef.current.value = "";
+    }
+  };
+  const beginFileEdit = file => {
+    setEditingFileId(String(file.id));
+    setFileDraft({ name: file.name || "", projectId: String(file.projectId || "") });
+  };
+  const saveClientFile = async (event, file) => {
+    event.preventDefault();
+    if (fileBusyId) return;
+    let patch;
+    try {
+      patch = clientFileMetadataPatch(file, { ...fileDraft, projects, client });
+    } catch (error) {
+      onAction(error.message === "client_file_project_invalid" ? "Selecione um projeto deste cliente." : "Informe um nome válido para o arquivo.");
+      return;
+    }
+    setFileBusyId(String(file.id));
+    try {
+      if (!localDemo && file.driveFileId && patch.name !== file.name) await apiRequest(`/api/integrations/google/drive/${encodeURIComponent(file.driveFileId)}/metadata`, { method: "PATCH", body: JSON.stringify({ name: patch.name }) });
+      const saved = await apiRequest(`/api/workspace/files/${encodeURIComponent(file.id)}`, { method: "PATCH", body: JSON.stringify({ data: patch }) });
+      setRelated(current => ({ ...current, files: (current.files || []).map(item => String(item.id) === String(file.id) ? { ...item, ...patch, ...(saved.data || {}) } : item) }));
+      setEditingFileId("");
+      onAction("Dados do arquivo atualizados na ficha do cliente.");
+    } catch (error) {
+      onAction(error.message || "Não foi possível atualizar os dados do arquivo.");
+    } finally {
+      setFileBusyId("");
+    }
+  };
+  const removeClientFile = async file => {
+    if (fileBusyId || !confirmWorkspaceDelete(clientFileDeleteConfirmation(file), preferences)) return;
+    setFileBusyId(String(file.id));
+    try {
+      await apiRequest(`/api/workspace/files/${encodeURIComponent(file.id)}`, { method: "DELETE" });
+      setRelated(current => ({ ...current, files: (current.files || []).filter(item => String(item.id) !== String(file.id)) }));
+      onAction("Vínculo removido da ficha. O arquivo original no Google Drive foi preservado.");
+    } catch (error) {
+      onAction(error.message || "Não foi possível remover o vínculo do arquivo.");
+    } finally {
+      setFileBusyId("");
     }
   };
   const createProject = async event => {
@@ -2298,22 +2342,19 @@ function ClientProfileModal({
                 clientPhone: client.phone,
                 action: "open",
                 intentId: String(client.id) + "-" + Date.now()
-              })}><MessageCircle size={14} />Abrir atendimento</button></div>{messages.map((message, index) => <article key={message.id ?? index} className="com-client-row"><MessageCircle size={16} /><div><b>{message.name}</b><small>{message.time} · {message.text}</small></div><Badge>{message.unread ? `${message.unread} não lidas` : "WhatsApp"}</Badge></article>)}{approvals.map((approval, index) => <article key={approval.id ?? index} className="com-client-row"><CheckCircle2 size={15} /><div><b>{approval.title}</b><small>{approval.project} · enviado {approval.sent}</small></div><Badge tone={approval.status === "Aprovado" ? "green" : "amber"}>{approval.status}</Badge></article>)}{!messages.length && !approvals.length && <EmptyState noun="conversas" onClear={() => openTab("Caixa de entrada", {
+              })}><MessageCircle size={14} />Abrir atendimento</button></div>{relatedErrors.inbox && <p role="alert">Falha ao carregar conversas: {relatedErrors.inbox}</p>}{relatedErrors.approvals && <p role="alert">Falha ao carregar aprovacoes: {relatedErrors.approvals}</p>}{relatedLoading && !related.inbox && <p role="status">Carregando conversas do cliente...</p>}{messages.map((message, index) => <article key={message.id ?? index} className="com-client-row"><MessageCircle size={16} /><div><b>{message.name || message.contactName || client.name}</b><small>{message.time || message.createdAt || "Conversa registrada"} | {message.text || message.lastMessage || "Sem prévia de mensagem"}</small></div><Badge>{message.unread ? `${message.unread} unread` : message.channel || "WhatsApp"}</Badge><button type="button" className="com-secondary" onClick={() => openTab("Caixa de entrada", { clientId: client.id, clientName: client.name, clientEmail: client.email, clientPhone: client.phone, action: "open", intentId: `client-message-${message.id}-${Date.now()}` })}><ExternalLink size={13} />Abrir atendimento</button></article>)}{approvals.map((approval, index) => <article key={approval.id ?? index} className="com-client-row"><CheckCircle2 size={15} /><div><b>{approval.title || "Material para aprovação"}</b><small>{approval.project || "Sem projeto"} | enviado {approval.sent || "recentemente"}</small></div><Badge tone={approval.status === "Aprovado" ? "green" : "amber"}>{approval.status || "Aguardando"}</Badge><button type="button" className="com-secondary" onClick={() => openTab("Aprova\u00e7\u00f5es", { approvalId: approval.id, intentId: `client-approval-${approval.id}-${Date.now()}` })}><ExternalLink size={13} />Ver aprovacao</button></article>)}{!messages.length && !approvals.length && <EmptyState noun="conversas" onClear={() => openTab("Caixa de entrada", {
               clientId: client.id,
               clientName: client.name,
               clientEmail: client.email,
               clientPhone: client.phone,
               action: "open",
               intentId: String(client.id) + "-" + Date.now()
-            })} />}</section>}{tab === "Arquivos" && <section className="com-client-info"><div className="com-client-section-heading"><div><h3>Arquivos do cliente</h3><p>Documentos e materiais vinculados aos projetos.</p></div><input ref={fileUploadRef} type="file" hidden={true} onChange={event => addClientFile(event.target.files?.[0])} /><button type="button" className="com-primary" disabled={fileUploading} onClick={() => fileUploadRef.current?.click()}><Plus size={14} />{fileUploading ? "Adicionando..." : "Adicionar arquivo"}</button></div>{files.map((file, index) => <article key={file.id ?? index} className="com-client-row"><FileText size={16} /><div><b>{file.name}</b><small>{file.project || "Arquivo do cliente"} · {file.date}</small></div><span>{file.size}</span></article>)}{!files.length && <EmptyState noun="arquivos" />}</section>}{tab === "Suporte" && <section className="com-client-info"><div className="com-client-section-heading"><div><h3>Suporte e tickets</h3><p>Solicitações técnicas abertas por este cliente.</p></div><button className="com-primary" onClick={() => openTab("Tickets", {
+            })} />}</section>}{tab === "Arquivos" && <section className="com-client-info"><div className="com-client-section-heading"><div><h3>Arquivos do cliente</h3><p>Documentos e materiais vinculados aos projetos.</p></div><input ref={fileUploadRef} type="file" hidden={true} onChange={event => addClientFile(event.target.files?.[0])} /><button type="button" className="com-primary" disabled={fileUploading} onClick={() => fileUploadRef.current?.click()}><Plus size={14} />{fileUploading ? "Adicionando..." : "Adicionar arquivo"}</button></div>{relatedErrors.files && <p role="alert">Falha ao carregar arquivos: {relatedErrors.files}<button type="button" className="com-secondary" onClick={async () => { try { const rows = await fetchAllRecords("/api/workspace/files"); setRelated(current => ({ ...current, files: rows })); setRelatedErrors(current => { const next = { ...current }; delete next.files; return next; }); } catch (error) { setRelatedErrors(current => ({ ...current, files: error.message || "Falha ao carregar arquivos." })); } }}>Tentar novamente</button></p>}{relatedLoading && !related.files && <p role="status">Carregando arquivos do cliente...</p>}{files.map((file, index) => { const href = safeClientFileHref(file); const busy = fileBusyId === String(file.id); return <article key={file.id ?? index} className="com-client-row com-client-file-record"><FileText size={16} /><div><b>{file.name}</b><small>{file.project || "Arquivo do cliente"} | {file.date || "Data indisponível"} | {file.size || "Tamanho indisponível"}{file.localOnly ? " | demonstração local (somente cadastro)" : ""}</small>{editingFileId === String(file.id) && <form className="com-client-file-edit" onSubmit={event => saveClientFile(event, file)}><label>Nome<input required maxLength={180} value={fileDraft.name} onChange={event => setFileDraft(current => ({ ...current, name: event.target.value }))} /></label><label>Projeto<select value={fileDraft.projectId} onChange={event => setFileDraft(current => ({ ...current, projectId: event.target.value }))}><option value="">No project linked</option>{projects.map(project => <option key={project.id} value={project.id}>{project.name || project.title}</option>)}</select></label><button type="submit" className="com-secondary" disabled={busy}>{busy ? "Salvando..." : "Save"}</button><button type="button" className="com-secondary" disabled={busy} onClick={() => setEditingFileId("")}>Cancel</button></form>}</div><div className="com-client-row-actions">{href ? <a className="com-secondary" href={href} target="_blank" rel="noopener noreferrer"><ExternalLink size={13} />Abrir arquivo</a> : <span className="com-client-file-unavailable">Conteudo indisponivel</span>}<button type="button" className="com-secondary" disabled={busy} onClick={() => beginFileEdit(file)}><Pencil size={13} />Editar</button><button type="button" className="com-secondary com-delete-action" disabled={busy} onClick={() => removeClientFile(file)}>{busy ? "Removendo..." : <><Trash2 size={13} />Remover vinculo</>}</button></div></article>; })}{!files.length && <EmptyState noun="arquivos" />}</section>}{tab === "Suporte" && <section className="com-client-info"><div className="com-client-section-heading"><div><h3>Suporte e tickets</h3><p>Solicitações técnicas abertas por este cliente.</p></div><button className="com-primary" onClick={() => openTab("Tickets", {
                 clientId: client.id,
                 clientName: client.name,
                 action: "create",
                 intentId: crypto.randomUUID()
-              })}><Plus size={14} />Novo ticket</button></div>{tickets.map((item, index) => {
-              const ticket = clientTicketPresentation(item);
-              return <article key={item.id ?? index} className="com-client-row"><LifeBuoy size={16} /><div><b>{ticket.code} · {ticket.title}</b><small>{ticket.updatedAt ? new Date(ticket.updatedAt).toLocaleString("pt-BR") : "Sem data de atualização"}</small></div><Badge tone={ticket.tone}>{ticket.status}</Badge></article>;
-            })}{!tickets.length && <EmptyState noun="tickets" onClear={() => openTab("Tickets", {
+              })}><Plus size={14} />Novo ticket</button></div>{relatedErrors.tickets && <p role="alert">Falha ao carregar tickets: {relatedErrors.tickets}<button type="button" className="com-secondary" onClick={async () => { try { const rows = await fetchAllRecords("/api/workspace/tickets"); setRelated(current => ({ ...current, tickets: rows })); setRelatedErrors(current => { const next = { ...current }; delete next.tickets; return next; }); } catch (error) { setRelatedErrors(current => ({ ...current, tickets: error.message || "Falha ao carregar tickets." })); } }}>Tentar novamente</button></p>}{relatedLoading && !related.tickets && <p role="status">Carregando tickets...</p>}{tickets.map((item, index) => { const ticket = clientTicketPresentation(item); return <article key={item.id ?? index} className="com-client-row"><LifeBuoy size={16} /><div><b>{ticket.code} | {ticket.title}</b><small>{ticket.updatedAt ? new Date(ticket.updatedAt).toLocaleString("pt-BR") : "Sem data de atualização"}</small></div><Badge tone={ticket.tone}>{ticket.status}</Badge><button type="button" className="com-secondary" onClick={() => openTab("Tickets", { ticketId: item.id, intentId: `client-ticket-${item.id}-${Date.now()}` })}><ExternalLink size={13} />Abrir ticket</button></article>; })}{!tickets.length && <EmptyState noun="tickets" onClear={() => openTab("Tickets", {
               clientId: client.id,
               clientName: client.name,
               action: "create",

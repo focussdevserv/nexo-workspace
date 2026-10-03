@@ -3166,6 +3166,9 @@ app.get('/api/workspace/preferences', { preHandler: app.authenticate }, async (r
     startPage: typeof preferences.startPage === 'string' ? preferences.startPage : undefined,
     timezone: normalizeCalendarTimeZone(workspace.timezone),
     weekStart: workspace.weekStart === 'sunday' ? 'sunday' : 'monday',
+    language: typeof workspace.language === 'string' ? workspace.language : undefined,
+    currency: typeof workspace.currency === 'string' ? workspace.currency : undefined,
+    dateFormat: typeof workspace.dateFormat === 'string' ? workspace.dateFormat : undefined,
     notifications: normalizeBrowserNotificationPreferences(notifications),
   } };
 });
@@ -4536,6 +4539,13 @@ app.get('/api/public/client-portal/:token', async (request, reply) => {
   )).limit(1);
   const preferenceSettings = (preferences?.data as Record<string, any> | undefined)?.settings;
   const branding = safeClientPortalBranding(preferenceSettings?.workspace?.brandLogo);
+  const workspaceDisplay = preferenceSettings?.workspace && typeof preferenceSettings.workspace === 'object' ? preferenceSettings.workspace as Record<string, unknown> : {};
+  const formatting = {
+    language: ['pt-BR', 'en-US', 'es-ES'].includes(String(workspaceDisplay.language)) ? workspaceDisplay.language : 'pt-BR',
+    currency: ['BRL', 'USD', 'EUR'].includes(String(workspaceDisplay.currency)) ? workspaceDisplay.currency : 'BRL',
+    dateFormat: ['dd/MM/yyyy', 'MM/dd/yyyy', 'yyyy-MM-dd'].includes(String(workspaceDisplay.dateFormat)) ? workspaceDisplay.dateFormat : 'dd/MM/yyyy',
+    timezone: normalizeCalendarTimeZone(workspaceDisplay.timezone),
+  };
   const clientName = String(client.name ?? client.title ?? 'Cliente');
   const visibility = clientPortalVisibleSections(client);
   const resources = ['projects', 'tasks', 'contracts', 'approvals'];
@@ -4575,7 +4585,7 @@ app.get('/api/public/client-portal/:token', async (request, reply) => {
     ...subscriptions.map((item) => ({ id: item.id, description: item.description, amount: item.amount, status: item.status, dueAt: item.dueAt, paymentDetails: {} })),
   ].sort((a, b) => new Date(b.dueAt || 0).valueOf() - new Date(a.dueAt || 0).valueOf()).slice(0, 100);
   const publicApprovals = visibility.approvals ? (related.approvals ?? []) : [];
-  return { data: { client: { name: clientName, person: client.person ?? '' }, branding, visibility, projects: visibility.project ? related.projects : [], tasks: visibility.tasks ? related.tasks : [], contracts: visibility.contracts ? related.contracts : [], approvals: publicApprovals, payments: visibility.payments ? publicPayments : [] } };
+  return { data: { client: { name: clientName, person: client.person ?? '' }, branding, formatting, visibility, projects: visibility.project ? related.projects : [], tasks: visibility.tasks ? related.tasks : [], contracts: visibility.contracts ? related.contracts : [], approvals: publicApprovals, payments: visibility.payments ? publicPayments : [] } };
 });
 
 app.post('/api/public/client-portal/:token/messages', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {

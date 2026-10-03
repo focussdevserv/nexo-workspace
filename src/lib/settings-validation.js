@@ -5,6 +5,10 @@ const parseFiniteNumber = (value) => {
 };
 
 export function validateWorkspaceSettings(settings = {}) {
+  const workspace = settings.workspace || {};
+  if (workspace.language != null && !supportedWorkspaceLocales.includes(workspace.language)) return 'Idioma e região: selecione uma opção disponível.';
+  if (workspace.currency != null && !supportedWorkspaceCurrencies.includes(workspace.currency)) return 'Moeda: selecione uma opção disponível.';
+  if (workspace.dateFormat != null && !supportedWorkspaceDateFormats.includes(workspace.dateFormat)) return 'Formato de data: selecione uma opção disponível.';
   const billing = settings.billing || {};
   const percentFields = [
     ['lateFee', 'Multa por atraso'],
@@ -31,3 +35,4 @@ export function validateWorkspaceSettings(settings = {}) {
 
   return '';
 }
+import { supportedWorkspaceCurrencies, supportedWorkspaceDateFormats, supportedWorkspaceLocales } from './workspace-preferences.js';

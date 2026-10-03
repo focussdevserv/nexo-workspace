@@ -148,3 +148,20 @@ html[data-theme='dark'] .workspace-access-card .workspace-access-brand { color: 
   .workspace-access-card label { font-size: 13px; }
   .workspace-access-submit { min-height: 48px; }
 }
+
+/* Keep every access action visibly keyboard-operable in all entry states. */
+.workspace-access-page :is(button, input):focus-visible {
+  outline: 3px solid #23845b;
+  outline-offset: 3px;
+}
+html[data-theme='dark'] .workspace-access-page :is(button, input):focus-visible {
+  outline-color: #c6f542;
+}
+.workspace-access-card button:disabled { cursor: not-allowed; }
+@media (prefers-reduced-motion: reduce) {
+  .workspace-access-page .spin { animation: none; }
+}
+@media (forced-colors: active) {
+  .workspace-access-page :is(button, input):focus-visible { outline-color: Highlight; }
+  .workspace-access-error { color: Mark; }
+}

@@ -1,11 +1,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeAuthEmail, passwordConfirmationMatches, prefillRecoveryEmail, readPasswordResetToken, readWorkspaceAccessMode, workspaceAccessModeUrl } from './workspace-access-helpers.js';
+import { normalizeAuthEmail, passwordConfirmationMatches, prefillRecoveryEmail, readPasswordResetToken, readWorkspaceAccessMode, readWorkspaceInvite, shouldAutoEnterLocalDemo, workspaceAccessModeUrl } from './workspace-access-helpers.js';
 
 test('recovery pre-fills the email already entered on the login form', () => {
   assert.equal(prefillRecoveryEmail('  User@Example.com  '), 'User@Example.com');
   assert.equal(prefillRecoveryEmail(''), '');
   assert.equal(prefillRecoveryEmail(null), '');
+});
+
+test('recognizes invitation tokens in query or fragment and surfaces empty invite links as invalid', () => {
+  assert.deepEqual(readWorkspaceInvite('?invite=signed-token', ''), { token: 'signed-token', invalid: false });
+  assert.deepEqual(readWorkspaceInvite('', '#invite=signed-token'), { token: 'signed-token', invalid: false });
+  assert.deepEqual(readWorkspaceInvite('?invite=', ''), { token: '', invalid: true });
+  assert.deepEqual(readWorkspaceInvite('', '#invite='), { token: '', invalid: true });
+  assert.deepEqual(readWorkspaceInvite('', ''), { token: '', invalid: false });
+});
+
+test('explicit return to login suppresses local-demo autologin without disabling normal demo entry', () => {
+  assert.equal(shouldAutoEnterLocalDemo({ active: true }), true);
+  assert.equal(shouldAutoEnterLocalDemo({ requested: true }), true);
+  assert.equal(shouldAutoEnterLocalDemo({ active: true, suppress: true }), false);
+  assert.equal(shouldAutoEnterLocalDemo({ requested: true, active: true, suppress: true }), false);
 });
 
 test('auth requests normalize e-mail case and surrounding whitespace', () => {

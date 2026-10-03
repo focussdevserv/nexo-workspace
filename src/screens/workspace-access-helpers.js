@@ -2,6 +2,18 @@ export function prefillRecoveryEmail(loginEmail) {
   return typeof loginEmail === 'string' ? loginEmail.trim() : '';
 }
 
+export function readWorkspaceInvite(search, hash) {
+  const query = new URLSearchParams(typeof search === 'string' ? search.replace(/^\?/, '') : '');
+  const fragment = new URLSearchParams(typeof hash === 'string' ? hash.replace(/^#/, '') : '');
+  const hasToken = query.has('invite') || fragment.has('invite');
+  const token = query.get('invite') || fragment.get('invite') || '';
+  return { token, invalid: hasToken && !token };
+}
+
+export function shouldAutoEnterLocalDemo({ requested = false, active = false, suppress = false } = {}) {
+  return !suppress && (requested || active);
+}
+
 export function normalizeAuthEmail(email) {
   return typeof email === 'string' ? email.trim().toLowerCase() : '';
 }

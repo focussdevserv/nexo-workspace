@@ -8,6 +8,7 @@ import { createLatestRequestGuard } from '../lib/latest-request.js';
 import { averageActiveTeamLoad } from '../lib/team-capacity.js';
 import { hasTeamEmailConflict } from '../lib/team-email.js';
 import { confirmWorkspaceDelete, useWorkspacePreferences } from '../lib/workspace-preferences.js';
+import { formatWorkspaceDateTime } from '../lib/workspace-formatting.js';
 import { effectiveModulePermissionDraft, permissionDraftForAccount, permissionsPayload, setModulePermissionMode, setModulePermissionValue, validatePermissionDraft } from '../lib/team-permissions.js';
 import { shouldCloseTeamDialog } from '../lib/team-dialog.js';
 import { confirmDiscardTeamPermissionDraft, teamPermissionDraftHasChanges } from '../lib/team-permission-draft.js';
@@ -99,6 +100,7 @@ export default function TeamScreen({ notify }) {
 }
 
 function TeamAccessPanel({ notify, onAccountCountChange }) {
+  const preferences = useWorkspacePreferences();
   const currentUser = (() => { try { return JSON.parse(sessionStorage.getItem('nexo.api.user') || 'null'); } catch { return null; } })();
   const localDemo = isLocalDemoActive();
   const [accounts, setAccounts] = useState([]);
@@ -233,7 +235,7 @@ function TeamAccessPanel({ notify, onAccountCountChange }) {
       inactive: 'Acesso inativo',
     };
     const deadline = status === 'invite_pending' && account.inviteExpiresAt
-      ? `Válido até ${new Date(account.inviteExpiresAt).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}`
+      ? `Válido até ${formatWorkspaceDateTime(account.inviteExpiresAt, preferences, { timeZone: preferences.timezone })}`
       : '';
     return { status, label: labels[status] || labels.inactive, deadline };
   };

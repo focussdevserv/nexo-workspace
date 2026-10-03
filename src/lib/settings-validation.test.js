@@ -3,6 +3,7 @@ import test from 'node:test';
 import { validateWorkspaceSettings } from './settings-validation.js';
 
 const valid = {
+  workspace: { language: 'pt-BR', currency: 'BRL', dateFormat: 'dd/MM/yyyy' },
   billing: { lateFee: '2', interest: '1', reminderDays: '3, 1, 0, -3', defaultDueDays: '7' },
 };
 
@@ -26,4 +27,10 @@ test('requires reminder offsets to be comma-separated integers in a bounded rang
 
 test('only accepts billing due-day choices offered by the settings control', () => {
   assert.match(validateWorkspaceSettings({ billing: { ...valid.billing, defaultDueDays: '0' } }), /Vencimento padrão/);
+});
+
+test('rejects unsupported workspace locale, currency, or date pattern', () => {
+  for (const [field, value] of [['language', 'fr-FR'], ['currency', 'JPY'], ['dateFormat', 'yyyy-dd-MM']]) {
+    assert.match(validateWorkspaceSettings({ ...valid, workspace: { ...valid.workspace, [field]: value } }), /selecione uma opção disponível/);
+  }
 });

@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { fetchAllRecords, useWorkspaceRecords } from '../lib/workspace-api.js';
 import { confirmWorkspaceDelete, useWorkspacePreferences } from '../lib/workspace-preferences.js';
+import { formatWorkspaceCurrency, formatWorkspaceDate, formatWorkspaceNumber } from '../lib/workspace-formatting.js';
 import { calculateGoalMetric, calculateGoalsSummary, goalMetricDefinitions } from '../lib/goal-metrics.js';
 import { guardGoalsNavigation } from '../lib/goals-navigation.js';
 import { createLatestRequestGuard } from '../lib/latest-request.js';
@@ -9,8 +10,8 @@ import { Activity, ArrowDown, ArrowUp, Check, CircleDollarSign, Clock3, Flag, Pe
 import './goals.css';
 
 const icons = { Financeiro: CircleDollarSign, Comercial: Users, Projetos: Flag, Operação: Activity };
-const money = (value) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 2 }).format(Number(value) || 0);
-const number = (value) => new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 1 }).format(Number(value) || 0);
+const money = (value, preferences) => formatWorkspaceCurrency(value, preferences, { maximumFractionDigits: 2 });
+const number = (value, preferences) => formatWorkspaceNumber(value, preferences, { maximumFractionDigits: 1 });
 const safeCurrent = (goal) => Number.isFinite(Number(goal.current)) ? Math.max(0, Number(goal.current)) : 0;
 const safeTarget = (goal) => Number.isFinite(Number(goal.target)) && Number(goal.target) > 0 ? Number(goal.target) : 0;
 const sourcePaths = { leads: '/api/workspace/leads', projects: '/api/workspace/projects', hours: '/api/workspace/hours', revenues: '/api/workspace/revenues', orders: '/api/billing/orders' };
@@ -82,7 +83,7 @@ export default function GoalsScreen({ notify }) {
   const metricResult = (goal) => calculateGoalMetric(goal.metric || 'manual', metricData, metricStates, goal.period || period, new Date(), preferences);
   const goalCurrent = (goal) => goal.metric && goal.metric !== 'manual' ? metricResult(goal).value : safeCurrent(goal);
   const goalProgress = (goal) => { const current = goalCurrent(goal); return current === null ? null : safeTarget(goal) ? Math.max(0, Math.min(100, Math.round(current / safeTarget(goal) * 100))) : 0; };
-  const currentLabel = (goal) => { const result = metricResult(goal); if (!goal.metric || goal.metric === 'manual') return goal.unit === 'BRL' ? money(safeCurrent(goal)) : number(safeCurrent(goal)); if (result.state === 'loading') return 'Carregando…'; if (result.state === 'restricted') return 'Sem acesso'; if (result.state !== 'ready') return 'Indisponível'; return goal.unit === 'BRL' ? money(result.value) : `${number(result.value)}${goal.unit === 'hours' ? ' h' : ''}`; };
+  const currentLabel = (goal) => { const result = metricResult(goal); if (!goal.metric || goal.metric === 'manual') return goal.unit === 'BRL' ? money(safeCurrent(goal), preferences) : number(safeCurrent(goal), preferences); if (result.state === 'loading') return 'Carregando…'; if (result.state === 'restricted') return 'Sem acesso'; if (result.state !== 'ready') return 'Indisponível'; return goal.unit === 'BRL' ? money(result.value, preferences) : `${number(result.value, preferences)}${goal.unit === 'hours' ? ' h' : ''}`; };
   const visibleGoals = useMemo(() => goals.filter((goal) => goal.period === period), [goals, period]);
   const summary = calculateGoalsSummary(goals, metricData, metricStates, period, new Date(), preferences);
   const totalProgress = summary.averageProgress;
@@ -157,12 +158,12 @@ export default function GoalsScreen({ notify }) {
     if (!confirmWorkspaceDelete(`Excluir a meta “${goal.name}”?`, preferences)) return;
     setGoals((current) => current.filter((item) => item.id !== goal.id)); setDirty(true);
   };
-  const periodLabel = period === 'month' ? new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric' }).format(new Date()) : 'semana atual';
+  const periodLabel = period === 'month' ? formatWorkspaceDate(new Date(), preferences, { month: 'long', year: 'numeric', timeZone: preferences.timezone }) : 'semana atual';
 
   return <div className="goals-module">
     <div className="goals-toolbar"><div className="goals-period"><button type="button" className={period === 'week' ? 'active' : ''} disabled={saving || showForm} onClick={() => setPeriod('week')}>Esta semana</button><button type="button" className={period === 'month' ? 'active' : ''} disabled={saving || showForm} onClick={() => setPeriod('month')}>Este mês</button></div><div className="goals-actions"><span className={`goals-saved ${dirty ? 'pending' : ''}`} role="status"><i />{saving ? 'Salvando metas…' : dirty ? 'Alterações não salvas' : savedAt ? `Salvo às ${savedAt}` : 'Salve para registrar'}</span><button type="button" className="admin-secondary" disabled={loading || Boolean(error) || saving} onClick={openNew}><Plus size={14} /> Nova meta</button><button type="button" className="admin-primary" disabled={!dirty || loading || Boolean(error) || saving} onClick={() => save()}><Check size={14} /> {saving ? 'Salvando…' : 'Salvar metas'}</button></div></div>
 
-    <section className="goals-summary"><div className="goals-summary-main"><div className="goals-summary-title"><span className="goals-icon-main"><Target size={19} /></span><span><small>PROGRESSO GERAL · {periodLabel}</small><b>Seu foco para este período</b></span></div><div className="goals-total"><strong>{totalProgress === null ? '—' : `${totalProgress}%`}</strong><span>{totalProgress === null && visibleGoals.length ? 'aguardando os dados das fontes' : 'de progresso médio'}</span></div><div className="goals-progress-track"><i style={{ width: `${totalProgress ?? 0}%` }} /></div><div className="goals-summary-foot"><span>{achieved} de {visibleGoals.length} metas atingidas</span><span>{summary.revenue.state === 'ready' ? money(summary.revenue.value) : '—'} em receita recebida</span></div></div><div className="goals-summary-side"><span className="goals-summary-side-icon"><TrendingUp size={19} /></span><b>{visibleGoals.length ? 'Acompanhe seu ritmo' : 'Comece definindo uma meta'}</b><p>{visibleGoals.length ? 'Atualize os resultados conforme sua equipe avança.' : 'Crie objetivos para acompanhar receita, clientes e entregas.'}</p><span className="goals-period-label"><Clock3 size={13} /> {periodLabel}</span></div></section>
+    <section className="goals-summary"><div className="goals-summary-main"><div className="goals-summary-title"><span className="goals-icon-main"><Target size={19} /></span><span><small>PROGRESSO GERAL · {periodLabel}</small><b>Seu foco para este período</b></span></div><div className="goals-total"><strong>{totalProgress === null ? '—' : `${totalProgress}%`}</strong><span>{totalProgress === null && visibleGoals.length ? 'aguardando os dados das fontes' : 'de progresso médio'}</span></div><div className="goals-progress-track"><i style={{ width: `${totalProgress ?? 0}%` }} /></div><div className="goals-summary-foot"><span>{achieved} de {visibleGoals.length} metas atingidas</span><span>{summary.revenue.state === 'ready' ? money(summary.revenue.value, preferences) : '—'} em receita recebida</span></div></div><div className="goals-summary-side"><span className="goals-summary-side-icon"><TrendingUp size={19} /></span><b>{visibleGoals.length ? 'Acompanhe seu ritmo' : 'Comece definindo uma meta'}</b><p>{visibleGoals.length ? 'Atualize os resultados conforme sua equipe avança.' : 'Crie objetivos para acompanhar receita, clientes e entregas.'}</p><span className="goals-period-label"><Clock3 size={13} /> {periodLabel}</span></div></section>
 
     <div className="goals-list-head"><div><h2>Metas do período</h2><p>Resultados conectados ao Financeiro, CRM, Projetos e Horas ou atualizados manualmente.</p></div><span>{visibleGoals.length} {visibleGoals.length === 1 ? 'meta' : 'metas'}</span></div>
     {loading ? <div className="goals-empty" role="status">Carregando metas do workspace…</div> : error ? <div className="goals-empty" role="alert"><b>Não foi possível carregar as metas.</b><p>{error}</p><button className="admin-secondary" onClick={refresh}>Tentar novamente</button></div> : visibleGoals.length ? <section className="goals-grid">{visibleGoals.map((goal) => {
@@ -172,7 +173,7 @@ export default function GoalsScreen({ notify }) {
       return <article className={`goal-item ${goal.color}`} key={goal.id}>
         <div className="goal-item-head"><span className="goal-item-icon"><Icon size={17} /></span><div className="goal-item-menu"><button type="button" disabled={saving} aria-label={`Editar meta ${goal.name}`} onClick={() => openEdit(goal)}><Pencil size={14} /></button><button type="button" disabled={saving} aria-label={`Excluir meta ${goal.name}`} onClick={() => removeGoal(goal)}><Trash2 size={14} /></button></div></div>
         <span className="goal-item-group">{goal.group}</span><h3>{goal.name}</h3>
-        <div className="goal-item-numbers"><strong>{currentLabel(goal)}</strong><span>de {goal.unit === 'BRL' ? money(goal.target) : `${number(goal.target)}${goal.unit === 'hours' ? ' h' : ''}`}</span></div>
+        <div className="goal-item-numbers"><strong>{currentLabel(goal)}</strong><span>de {goal.unit === 'BRL' ? money(goal.target, preferences) : `${number(goal.target, preferences)}${goal.unit === 'hours' ? ' h' : ''}`}</span></div>
         <div className="goal-item-track"><i style={{ width: `${progress ?? 0}%` }} /></div>
         <div className="goal-item-footer"><span className={complete ? 'complete' : ''}>{complete ? <Check size={13} /> : null}{complete ? 'Meta atingida' : progress === null ? metricResult(goal).state === 'restricted' ? 'Sem acesso à fonte' : 'Dados indisponíveis' : `${progress}% concluído`}</span><div>{(!goal.metric || goal.metric === 'manual') && <><button type="button" disabled={saving} aria-label={`Reduzir resultado de ${goal.name}`} onClick={() => updateProgress(goal, -1)}><ArrowDown size={13} /></button><button type="button" disabled={saving} aria-label={`Aumentar resultado de ${goal.name}`} onClick={() => updateProgress(goal, 1)}><ArrowUp size={13} /></button></>}</div></div>
       </article>;
