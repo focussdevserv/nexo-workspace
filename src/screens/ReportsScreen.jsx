@@ -5,6 +5,7 @@ import { fetchAllRecords } from '../lib/workspace-api.js';
 import { buildChartBuckets, buildProjectReportRows, dateOf, formatReportHours, hasReportChartFailures, hasReportSourceFailures, inPeriod, paidReportRevenues, parseReportAmount, reportDateLabel, reportHours, reportSourceState, reportSourcesForTab } from '../lib/reports.js';
 import { downloadCsvFile, rowsToCsv } from '../lib/csv.js';
 import { reportTabForKey } from '../lib/report-tab-navigation.js';
+import { isReportProjectActive, isReportProjectCompleted } from '../lib/report-project-status.js';
 
 const periods = [{ id: 'month', label: 'Este mês', months: 1 }, { id: 'quarter', label: 'Últimos 90 dias', months: 3 }, { id: 'year', label: 'Este ano', months: 12 }];
 const tabs = ['Visão geral', 'Comercial', 'Projetos', 'Financeiro'];
@@ -65,8 +66,8 @@ export default function ReportsScreen({ notify }) {
   const leads = data.leads.filter((item) => inPeriod(item, periodId, now, 'created'));
   const projects = data.projects.filter((item) => inPeriod(item, periodId, now));
   const won = leads.filter((item) => [item.stage, item.status].some((value) => ['fechado','ganho','won','closed'].includes(statusKey(value))));
-  const activeProjects = data.projects.filter((item) => !['concluido','concluida','completed'].includes(statusKey(item.status)));
-  const completedProjects = data.projects.filter((item) => ['concluido','concluida','completed'].includes(statusKey(item.status)) && inPeriod(item, periodId, now, 'completed'));
+  const activeProjects = data.projects.filter(isReportProjectActive);
+  const completedProjects = data.projects.filter((item) => isReportProjectCompleted(item) && inPeriod(item, periodId, now, 'completed'));
   const paidOrders = data.orders.filter((item) => ['paid','processed','approved','paga','pago','recebida'].includes(statusKey(item.status)) && inPeriod(item, periodId, now, 'paid'));
   const periodRevenues = data.revenues.filter((item) => inPeriod(item, periodId, now, 'expense'));
   const paidRevenues = paidReportRevenues(data.revenues, periodId, now);

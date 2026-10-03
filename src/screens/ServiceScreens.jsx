@@ -924,6 +924,8 @@ function Integrations({ notify }) {
   const [testHistory, setTestHistory] = useState([]);
   const [testHistoryLoading, setTestHistoryLoading] = useState(false);
   const [testHistoryError, setTestHistoryError] = useState('');
+  const testHistoryRequests = useRef(null);
+  if (!testHistoryRequests.current) testHistoryRequests.current = createLatestRequestGuard();
   const [hostingerEmail, setHostingerEmail] = useState('');
   const [hostingerPassword, setHostingerPassword] = useState('');
   const [githubOwner, setGithubOwner] = useState('');
@@ -978,12 +980,21 @@ function Integrations({ notify }) {
     Sentry: { provider: 'sentry', vars: ['SENTRY_DSN', 'VITE_SENTRY_DSN'], note: 'Configure o DSN no servidor (API) e no build web. Captura erros sem dados pessoais; o teste não cria um incidente artificial.' },
   };
   const loadTestHistory = async (provider) => {
-    if (!provider) { setTestHistory([]); setTestHistoryError(''); return; }
+    const request = testHistoryRequests.current.begin();
+    if (!provider) { setTestHistory([]); setTestHistoryError(''); setTestHistoryLoading(false); return; }
     setTestHistoryLoading(true);
     setTestHistoryError('');
-    try { const result = await apiRequest(`/api/integrations/test-history?provider=${encodeURIComponent(provider)}&limit=10`); setTestHistory(Array.isArray(result.data) ? result.data : []); }
-    catch (error) { setTestHistory([]); setTestHistoryError(error.message || 'Não foi possível carregar o histórico.'); }
-    finally { setTestHistoryLoading(false); }
+    try {
+      const result = await apiRequest('/api/integrations/test-history?provider=' + encodeURIComponent(provider) + '&limit=10');
+      if (testHistoryRequests.current.isCurrent(request)) setTestHistory(Array.isArray(result.data) ? result.data : []);
+    }
+    catch (error) {
+      if (testHistoryRequests.current.isCurrent(request)) {
+        setTestHistory([]);
+        setTestHistoryError(error.message || 'Não foi possível carregar o histórico.');
+      }
+    }
+    finally { if (testHistoryRequests.current.isCurrent(request)) setTestHistoryLoading(false); }
   };
   useEffect(() => {
     const provider = configuring ? setup[configuring.name]?.provider : '';

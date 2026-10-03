@@ -12,7 +12,7 @@ import { apiRequest, fetchAllRecords } from '../lib/workspace-api.js';
 import { useWorkspacePreferences } from '../lib/workspace-preferences.js';
 import { completeTaskOccurrence } from '../lib/task-recurrence.js';
 import { taskIsCompleted, taskMatchesStatus, taskStatusForEdit, withTaskStatus } from '../lib/task-status.js';
-import { taskDependencyBlocker, taskDependencyBlockMessage, taskDependencyWouldCreateCycle } from '../lib/task-dependency.js';
+import { taskDependencyBlocker, taskDependencyBlockMessage, taskDependencyWouldCreateCycle, tasksDependingOn } from '../lib/task-dependency.js';
 import { parseAgendaAttendees, validateAgendaAttendees, validateAgendaEvent } from '../lib/agenda-event-validation.js';
 import { agendaEventDurationMinutes, agendaEventEndDate } from '../lib/agenda-event-interval.js';
 import { isAgendaAllDayEvent } from '../lib/agenda-event-presentation.js';
@@ -544,6 +544,13 @@ function WorkScreen({ page, navigationContext = null, onNavigationContextConsume
     return result;
   };
   const deleteTask = async (task) => {
+    const dependents = tasksDependingOn(tasks, task.id);
+    if (dependents.length) {
+      const names = dependents.slice(0, 3).map((item) => item.title || 'Tarefa sem título').join(', ');
+      const remainder = dependents.length > 3 ? ` e mais ${dependents.length - 3}` : '';
+      notify(`Não é possível excluir esta tarefa: ${names}${remainder} depende${dependents.length === 1 ? '' : 'm'} dela. Edite essas tarefas e remova ou troque a dependência primeiro.`);
+      return false;
+    }
     if (preferences.confirmDelete && !window.confirm(`Excluir a tarefa “${task.title}”? Esta ação não pode ser desfeita.`)) return false;
     const result = await setTasks((current) => current.filter((item) => String(item.id) !== String(task.id)));
     if (!result.ok) { notify(result.error?.message || 'Não foi possível excluir a tarefa.'); return false; }

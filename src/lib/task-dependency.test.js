@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { taskDependencyBlocker, taskDependencyBlockMessage, taskDependencyWouldCreateCycle } from './task-dependency.js';
+import { taskDependencyBlocker, taskDependencyBlockMessage, taskDependencyWouldCreateCycle, tasksDependingOn } from './task-dependency.js';
 
 const tasks = [
   { id: 'prep', title: 'Aprovar briefing', status: 'Em andamento' },
@@ -27,6 +27,12 @@ test('does not block tasks with no dependency, a removed dependency, or a self r
   assert.equal(taskDependencyBlocker(tasks, { id: 'independent' }), null);
   assert.equal(taskDependencyBlocker(tasks, { id: 'later', dependency: 'removed' }), null);
   assert.equal(taskDependencyBlocker(tasks, { id: 'same', dependency: 'same' }), null);
+});
+
+test('finds open tasks that depend on a prerequisite before it is deleted', () => {
+  assert.deepEqual(tasksDependingOn(tasks, 'prep'), [tasks[1]]);
+  assert.deepEqual(tasksDependingOn(tasks, 'publish'), []);
+  assert.deepEqual(tasksDependingOn(tasks, ''), []);
 });
 
 test('detects direct and transitive dependency cycles before saving', () => {

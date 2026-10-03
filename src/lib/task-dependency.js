@@ -13,6 +13,14 @@ export function taskDependencyBlocker(tasks, task) {
   return completed ? null : dependency;
 }
 
+export function tasksDependingOn(tasks, taskId) {
+  const dependencyId = String(taskId || '').trim();
+  if (!dependencyId) return [];
+  return (Array.isArray(tasks) ? tasks : []).filter((task) =>
+    String(task?.dependency || '').trim() === dependencyId && String(task?.id) !== dependencyId,
+  );
+}
+
 export function taskDependencyWouldCreateCycle(tasks, taskId, dependencyId) {
   const currentId = String(taskId || '').trim();
   let nextId = String(dependencyId || '').trim();
