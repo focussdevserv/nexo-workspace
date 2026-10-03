@@ -37,6 +37,7 @@ import { canCreateWorkRecord } from '../lib/work-screen-actions.js';
 import { nextAgendaEventTime, upcomingAgendaEvents } from '../lib/agenda-upcoming.js';
 import { googleCalendarErrorAction } from '../lib/google-calendar-error.js';
 import { matchesWorkSearch } from '../lib/work-search.js';
+import { recoverWorkspaceRecordsAfterFailure } from '../lib/workspace-mutation-recovery.js';
 
 function projectIsCompleted(project) {
   const status = String(project?.status || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
@@ -105,7 +106,20 @@ function useLocalState(key, fallback) {
       }),
       ...next.filter((item) => oldById.has(String(item.id)) && JSON.stringify(recordData(item)) !== JSON.stringify(recordData(oldById.get(String(item.id))))).map((item) => apiRequest(`/api/workspace/${resource}/${item.id}`, { method: 'PATCH', body: JSON.stringify({ data: recordData(item) }) })),
       ...previous.filter((item) => !newById.has(String(item.id))).map((item) => apiRequest(`/api/workspace/${resource}/${item.id}`, { method: 'DELETE' })),
-    ]).then(() => { setSyncError(''); return { ok: true, records: valueRef.current }; }).catch((error) => { if (valueRef.current === next) { valueRef.current = previous; setValue(previous); } setSyncError(error.message || 'Falha ao salvar.'); window.dispatchEvent(new CustomEvent('nexo:workspace-error', { detail: error.message })); return { ok: false, error }; });
+    ]).then(() => { setSyncError(''); return { ok: true, records: valueRef.current }; }).catch(async (error) => {
+      const recovery = await recoverWorkspaceRecordsAfterFailure(fetchAllRecords, resource, previous);
+      if (recovery.recovered) {
+        valueRef.current = recovery.records;
+        setValue(recovery.records);
+      } else if (valueRef.current === next) {
+        valueRef.current = previous;
+        setValue(previous);
+      }
+      const message = error.message || 'Falha ao salvar.';
+      setSyncError(recovery.recovered ? message : `${message} N\u00e3o foi poss\u00edvel confirmar o estado salvo; atualize a tela.`);
+      window.dispatchEvent(new CustomEvent('nexo:workspace-error', { detail: message }));
+      return { ok: false, error, recovered: recovery.recovered, records: recovery.records };
+    });
   };
   return [value, persist, syncError, loaded, refresh];
 }

@@ -33,6 +33,7 @@ import { buildClientRelationshipHistory, clientRelationshipHistoryDateLabel } fr
 import { buildCommercialRecordEditorPatch, companyContactCount, commercialRecordEditorDraft, commercialRecordEditorFields, commercialRecordEditorIsDirty } from "../lib/commercial-record-editor.js";
 import { filterCommercialRecords } from "../lib/commercial-record-filter.js";
 import { averageProposalApprovalDays, countLeadsWithoutNextAction, formatElapsedDays } from "../lib/commercial-cycle-metrics.js";
+import { buildLeadFollowUpTaskData, findOpenLeadFollowUpTask, isTerminalLeadStage } from "../lib/lead-follow-up-task.js";
 import { isCommercialDateWithinNextDays } from "../lib/commercial-date.js";
 const datasets = {
   leads: [],
@@ -981,7 +982,7 @@ export default function CommercialScreen({
         projects: [project, ...(records.projects || [])],
         tasks: [...tasks, ...(records.tasks || [])]
       });
-    }} onAction={notify} onUpdate={updateServiceRecord} onDelete={deleteServiceRecord} onImportCatalog={importCatalog} catalogImporting={catalogSeedState === "loading" || servicesLoading} catalogSeedState={catalogSeedState} search={search} setSearch={setSearch} /> : <ListView page={key} items={visible} relatedProjects={records.projects || []} relatedSubscriptions={relatedSubscriptions} relatedContracts={records.contracts || []} onArchive={archiveClient} openClientId={key === "clientes" ? navigationContext?.clientId : ""} onClientOpened={onNavigationContextConsumed} search={search} setSearch={setSearch} filter={filter} setFilter={setFilter} extraFilterFields={extraFilterFields} extraFilters={extraFilters} setExtraFilters={setExtraFilters} onAction={notify} onAccept={acceptProposal} onSendProposal={sendProposal} localDemo={localDemo} onRefreshRecords={refreshRecords} onUpdate={updateCommercialRecord} onDelete={deleteCommercialRecord} clients={records.clients || []} companies={records.companies || []} contacts={records.contacts || []} services={records.services || []} totalItems={data.length} />}{composer && <div className="com-modal-backdrop" onMouseDown={event => {
+    }} onAction={notify} onUpdate={updateServiceRecord} onDelete={deleteServiceRecord} onImportCatalog={importCatalog} catalogImporting={catalogSeedState === "loading" || servicesLoading} catalogSeedState={catalogSeedState} search={search} setSearch={setSearch} /> : <ListView page={key} items={visible} relatedProjects={records.projects || []} relatedSubscriptions={relatedSubscriptions} relatedContracts={records.contracts || []} onArchive={archiveClient} openClientId={key === "clientes" ? navigationContext?.clientId : ""} onClientOpened={onNavigationContextConsumed} search={search} setSearch={setSearch} filter={filter} setFilter={setFilter} extraFilterFields={extraFilterFields} extraFilters={extraFilters} setExtraFilters={setExtraFilters} onAction={notify} onAccept={acceptProposal} onSendProposal={sendProposal} localDemo={localDemo} onRefreshRecords={refreshRecords} onUpdate={updateCommercialRecord} onDelete={deleteCommercialRecord} clients={records.clients || []} companies={records.companies || []} contacts={records.contacts || []} services={records.services || []} tasks={records.tasks || []} totalItems={data.length} />}{composer && <div className="com-modal-backdrop" onMouseDown={event => {
       if (event.target === event.currentTarget) setComposer(false);
     }}><form className="com-create-modal" onSubmit={createRecord}><header><div><small>{current.eyebrow}</small><h2>{createLabel}</h2></div><button type="button" aria-label="Fechar" onClick={() => setComposer(false)}><X size={15} /></button></header>{key === "clientes" && <label>Tipo de cadastro<select value={draft.clientType} onChange={e => setDraft({
             ...draft,
@@ -2262,6 +2263,7 @@ function ListView({
   companies = [],
   contacts = [],
   services = [],
+  tasks = [],
   totalItems = 0,
   openClientId = "",
   onClientOpened = () => {}
@@ -2487,6 +2489,35 @@ function ListView({
     style: "currency",
     currency: "BRL"
   }).format(contractMonthlyRevenue), "somente termos recorrentes", CircleDollarSign, "green"], ["Renovam em breve", String(items.filter(item => isCommercialDateWithinNextDays(item.renewal || item.renewalDate) && !["Cancelado", "Concluído", "Concluido"].includes(String(item.status || ""))).length), "nos próximos 30 dias", CalendarDays, "amber"], ["Valor contratado", amountLabel, "soma dos valores informados", Wallet, "purple"]] : null;
+  const scheduleLeadFollowUp = async (lead, patch, due) => {
+    const saved = await onUpdate?.(lead, patch);
+    if (saved === false) return false;
+    const updatedLead = { ...lead, ...patch };
+    try {
+      // Resolve the relation against fresh workspace data before inserting. If
+      // the last response was lost, retrying updates its existing task.
+      const currentTasks = await fetchAllRecords("/api/workspace/tasks");
+      const existingTask = findOpenLeadFollowUpTask(currentTasks, lead.id);
+      const taskData = buildLeadFollowUpTaskData(updatedLead, { action: patch.nextAction, due, existingTask });
+      if (existingTask?.id) {
+        await apiRequest(`/api/workspace/tasks/${encodeURIComponent(existingTask.id)}`, {
+          method: "PATCH",
+          body: JSON.stringify({ data: taskData })
+        });
+      } else {
+        await apiRequest("/api/workspace/tasks", {
+          method: "POST",
+          body: JSON.stringify({ data: taskData })
+        });
+      }
+      await onRefreshRecords?.();
+      onAction?.(existingTask ? "Tarefa vinculada ao lead atualizada." : "Próxima ação salva e agendada em Tarefas.");
+      return true;
+    } catch (error) {
+      onAction?.(`Lead salvo, mas a tarefa não foi agendada. Tente novamente. ${error.message || ""}`.trim());
+      return false;
+    }
+  };
   return <Fragment>{stats && <div className="com-metrics">{stats.map(([label2, value, detail, Icon, tone]) => <Metric key={label2} {...{
         label: label2,
         value,
@@ -2522,7 +2553,11 @@ function ListView({
     }} onDelete={async () => {
       const deleted = await onDelete?.(selectedItem);
       if (deleted !== false) setSelectedItem(null);
-    }} /> : page === "clientes" ? <ClientProfileModal client={selectedItem} onClose={() => setSelectedItem(null)} onArchive={onArchive} onUpdate={updated => onUpdate?.(selectedItem, updated)} onAction={onAction} /> : <div className="com-modal-backdrop" onMouseDown={event => {
+    }} onSaveAndSchedule={async (patch, due) => {
+      const saved = await scheduleLeadFollowUp(selectedItem, patch, due);
+      if (saved) setSelectedItem(null);
+      return saved;
+    }} tasks={tasks} /> : page === "clientes" ? <ClientProfileModal client={selectedItem} onClose={() => setSelectedItem(null)} onArchive={onArchive} onUpdate={updated => onUpdate?.(selectedItem, updated)} onAction={onAction} /> : <div className="com-modal-backdrop" onMouseDown={event => {
       if (event.target === event.currentTarget) closeRecordEditor();
     }}><section className="com-create-modal com-edit-modal" data-commercial-editor-dirty={recordDirty ? "true" : "false"}><header><div><small>{page.toUpperCase()} · REGISTRO</small><h2>{selectedItem.name || selectedItem.title}</h2></div><button type="button" aria-label="Fechar" onClick={closeRecordEditor} disabled={recordSaving}><X size={15} /></button></header>{editableFields.length === 0 && <div className="com-record-details"><span>Cliente / empresa<b>{selectedItem.client || selectedItem.company || selectedItem.name || "?"}</b></span><span>Valor<b>{selectedItem.value || selectedItem.price || "A definir"}</b></span><span>Contato<b>{selectedItem.email || selectedItem.person || selectedItem.role || "?"}</b></span><span>Detalhes<b>{selectedItem.service || selectedItem.segment || selectedItem.description || selectedItem.code || "?"}</b></span></div>}{editableFields.length > 0 && <form className="com-commercial-editor" onSubmit={event => event.preventDefault()}><div className="com-commercial-editor-heading"><strong>Dados comerciais</strong><span>As alterações só serão aplicadas ao salvar.</span></div><div className="com-commercial-editor-grid">{editableFields.map(field => {
           const locked = (page === "propostas" && selectedItem.status === "Aprovada") || (page === "contratos" && Boolean(selectedItem.clicksign?.envelopeId || isLockedContractStatus(selectedItem.status)) && !["renewal", "progress"].includes(field.key));
@@ -2574,8 +2609,10 @@ function ListView({
 }
 function LeadRecordModal({
   lead,
+  tasks = [],
   onClose,
   onSave,
+  onSaveAndSchedule,
   onDelete
 }) {
   const [draft, setDraft] = useState(() => ({
@@ -2593,6 +2630,9 @@ function LeadRecordModal({
     stage: lead.stage || "Novo lead"
   }));
   const [saving, setSaving] = useState(false);
+  const [followUpDue, setFollowUpDue] = useState(() => dateAfterDays(1));
+  const existingFollowUp = findOpenLeadFollowUpTask(tasks, lead.id);
+  const canSchedule = Boolean(String(draft.nextAction || "").trim()) && !isTerminalLeadStage(draft.stage);
   const update = (field, value) => setDraft(current => ({
     ...current,
     [field]: value
@@ -2623,9 +2663,26 @@ function LeadRecordModal({
       setSaving(false);
     }
   };
+  const saveAndSchedule = async () => {
+    if (!canSchedule || !followUpDue || saving) return;
+    setSaving(true);
+    try {
+      const cleanAmount = draft.amount.trim().replace(/^R\$\s*/i, "");
+      await onSaveAndSchedule?.({
+        name: draft.name.trim(), title: draft.name.trim(),
+        initials: draft.name.trim().split(/\s+/).slice(0, 2).map(part => part[0]).join("").toUpperCase(),
+        company: draft.company.trim(), email: draft.email.trim().toLowerCase(), phone: draft.phone.trim(),
+        source: draft.source, service: draft.service.trim(),
+        value: cleanAmount ? "R$ " + cleanAmount : "A definir", owner: draft.owner.trim(),
+        nextAction: draft.nextAction.trim(), closeDate: draft.closeDate, notes: draft.notes.trim(), stage: draft.stage
+      }, followUpDue);
+    } finally {
+      setSaving(false);
+    }
+  };
   return <div className="com-modal-backdrop" onMouseDown={event => {
     if (event.target === event.currentTarget && !saving) onClose();
-  }}><form className="com-create-modal com-lead-record-modal" role="dialog" aria-modal="true" aria-labelledby="lead-record-title" onSubmit={save}><header><div><small>LEAD · EDIÇÃO</small><h2 id="lead-record-title">Editar lead</h2></div><button type="button" aria-label="Fechar" onClick={onClose} disabled={saving}><X size={15} /></button></header><div className="com-lead-edit-fields"><label>Nome<input required={true} maxLength={160} value={draft.name} onChange={event => update("name", event.target.value)} /></label><label>Cliente / empresa<input maxLength={200} value={draft.company} onChange={event => update("company", event.target.value)} /></label><label>E-mail<input type="email" maxLength={254} value={draft.email} onChange={event => update("email", event.target.value)} /></label><label>Telefone<input type="tel" maxLength={40} value={draft.phone} onChange={event => update("phone", event.target.value)} /></label><label>Origem<select value={draft.source} onChange={event => update("source", event.target.value)}>{["Manual", "Indicação", "Site", "WhatsApp", "E-mail", "Instagram", "Campanha", "Outro"].map(value => <option>{value}</option>)}</select></label><label>Etapa<select value={draft.stage} onChange={event => update("stage", event.target.value)}>{["Novo lead", "Contato realizado", "Reunião agendada", "Diagnóstico", "Proposta enviada", "Negociação", "Fechado", "Perdido"].map(value => <option>{value}</option>)}</select></label><label>Serviço / oportunidade<input maxLength={240} value={draft.service} onChange={event => update("service", event.target.value)} /></label><label>Valor estimado<input inputMode="decimal" maxLength={32} value={draft.amount} onChange={event => update("amount", event.target.value)} placeholder="Ex.: 2500,00" /></label><label>Responsável<input maxLength={160} value={draft.owner} onChange={event => update("owner", event.target.value)} /></label><label>Fechamento previsto<input type="date" value={draft.closeDate} onChange={event => update("closeDate", event.target.value)} /></label><label className="wide">Próxima ação<input maxLength={240} value={draft.nextAction} onChange={event => update("nextAction", event.target.value)} /></label><label className="wide">Observações<textarea rows={3} maxLength={5e3} value={draft.notes} onChange={event => update("notes", event.target.value)} /></label></div><footer><button type="button" className="com-secondary" onClick={onClose} disabled={saving}>Cancelar</button><button type="button" className="com-secondary com-delete-action" onClick={onDelete} disabled={saving}>Excluir</button><span /><button type="submit" className="com-primary" disabled={saving}>{saving ? "Salvando?" : "Salvar alterações"}</button></footer></form></div>;
+  }}><form className="com-create-modal com-lead-record-modal" role="dialog" aria-modal="true" aria-labelledby="lead-record-title" onSubmit={save}><header><div><small>LEAD · EDIÇÃO</small><h2 id="lead-record-title">Editar lead</h2></div><button type="button" aria-label="Fechar" onClick={onClose} disabled={saving}><X size={15} /></button></header><div className="com-lead-edit-fields"><label>Nome<input required={true} maxLength={160} value={draft.name} onChange={event => update("name", event.target.value)} /></label><label>Cliente / empresa<input maxLength={200} value={draft.company} onChange={event => update("company", event.target.value)} /></label><label>E-mail<input type="email" maxLength={254} value={draft.email} onChange={event => update("email", event.target.value)} /></label><label>Telefone<input type="tel" maxLength={40} value={draft.phone} onChange={event => update("phone", event.target.value)} /></label><label>Origem<select value={draft.source} onChange={event => update("source", event.target.value)}>{["Manual", "Indicação", "Site", "WhatsApp", "E-mail", "Instagram", "Campanha", "Outro"].map(value => <option key={value}>{value}</option>)}</select></label><label>Etapa<select value={draft.stage} onChange={event => update("stage", event.target.value)}>{["Novo lead", "Contato realizado", "Reunião agendada", "Diagnóstico", "Proposta enviada", "Negociação", "Fechado", "Perdido"].map(value => <option key={value}>{value}</option>)}</select></label><label>Serviço / oportunidade<input maxLength={240} value={draft.service} onChange={event => update("service", event.target.value)} /></label><label>Valor estimado<input inputMode="decimal" maxLength={32} value={draft.amount} onChange={event => update("amount", event.target.value)} placeholder="Ex.: 2500,00" /></label><label>Responsável<input maxLength={160} value={draft.owner} onChange={event => update("owner", event.target.value)} /></label><label>Fechamento previsto<input type="date" value={draft.closeDate} onChange={event => update("closeDate", event.target.value)} /></label><label className="wide">Próxima ação<input maxLength={240} value={draft.nextAction} onChange={event => update("nextAction", event.target.value)} /></label>{canSchedule && <><label className="wide">Prazo da tarefa<input type="date" min={dateAfterDays(0)} value={followUpDue} onChange={event => setFollowUpDue(event.target.value)} /></label><p className="com-muted wide" role="status">{existingFollowUp ? "Uma tarefa aberta ja esta vinculada a este lead; ela sera atualizada." : "A acao sera adicionada a lista Tarefas e vinculada a este lead."}</p></> }<label className="wide">Observações<textarea rows={3} maxLength={5e3} value={draft.notes} onChange={event => update("notes", event.target.value)} /></label></div><footer><button type="button" className="com-secondary" onClick={onClose} disabled={saving}>Cancelar</button><button type="button" className="com-secondary com-delete-action" onClick={onDelete} disabled={saving}>Excluir</button><span />{canSchedule && <button type="button" className="com-secondary" onClick={saveAndSchedule} disabled={saving || !followUpDue}>{saving ? "Agendando..." : existingFollowUp ? "Salvar e atualizar tarefa" : "Salvar e agendar tarefa"}</button>}<button type="submit" className="com-primary" disabled={saving}>{saving ? "Salvando?" : "Salvar alterações"}</button></footer></form></div>;
 }
 function Identity({
   name,

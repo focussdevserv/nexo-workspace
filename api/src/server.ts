@@ -72,6 +72,7 @@ import { googleCalendarAttendeesPayload, mapGoogleCalendarEvents } from './integ
 import { isValidCalendarTimeZone, localDateTimeToIso, nextCalendarDate, normalizeCalendarTimeZone } from './integrations/calendar-time-zone.js';
 import { buildGoogleAuthorizationUrl, googleOAuthStateRecordIsActive } from './integrations/google-oauth.js';
 import { buildMercadoPagoAuthorizationUrl, createPkcePair, mercadoPagoOAuthStateIsActive, parseMercadoPagoTokenSet, type MercadoPagoTokenSet } from './integrations/mercadopago-oauth.js';
+import { integrationControlAllowsUse } from './integrations/integration-control.js';
 import { canApplyClicksignWebhookStatus, clicksignContractStatus, clicksignWebhookEnvelopeStatus, clicksignWebhookIsReady, parseClicksignWebhookEvent, verifyClicksignWebhook } from './integrations/clicksign-webhook.js';
 
 const env = z.object({
@@ -470,7 +471,7 @@ async function recordIntegrationTest(organizationId: string, userId: string, pro
 
 async function isIntegrationEnabled(organizationId: string, provider: IntegrationProvider) {
   const control = await findIntegrationControl(organizationId, provider);
-  return control?.data.enabled !== false;
+  return integrationControlAllowsUse(control?.data);
 }
 
 function paymentDetailsFromOrder(order: Record<string, any>) {
@@ -741,6 +742,7 @@ app.get('/api/integrations/google/authorize', { preHandler: app.authenticate, co
 
 app.get('/api/integrations/mercadopago/authorize', { preHandler: app.authenticate, config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
   if (!env.MERCADOPAGO_CLIENT_ID || !env.MERCADOPAGO_CLIENT_SECRET) return reply.code(503).send({ error: 'mercadopago_oauth_not_configured', message: 'Configure MERCADOPAGO_CLIENT_ID e MERCADOPAGO_CLIENT_SECRET na API do Coolify.' });
+  if (!await isIntegrationEnabled(request.user.organizationId, 'mercadopago')) return reply.code(409).send({ error: 'integration_disconnected', message: 'Reative Mercado Pago no Focusshub antes de autorizar a conta.' });
   const [owner] = await db.select({ id: users.id }).from(users).where(and(eq(users.id, request.user.sub), eq(users.organizationId, request.user.organizationId), eq(users.active, true), eq(users.role, 'owner'), eq(users.email, env.OWNER_EMAIL))).limit(1);
   if (!owner) return reply.code(403).send({ error: 'owner_required', message: 'Somente a pessoa proprietária do workspace pode autorizar o Mercado Pago.' });
   const { verifier, challenge } = createPkcePair();
