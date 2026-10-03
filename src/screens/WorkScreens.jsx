@@ -20,6 +20,7 @@ import { deleteAgendaEvent } from '../lib/agenda-event-delete.js';
 import { agendaEventDurationMinutes, agendaEventEndDate } from '../lib/agenda-event-interval.js';
 import { isAgendaAllDayEvent } from '../lib/agenda-event-presentation.js';
 import { agendaNavigationEventDate, resolveAgendaNavigationEvent } from '../lib/agenda-navigation.js';
+import { agendaEventDeletionIds, confirmAgendaEventDeletion, deleteAgendaEventSeries } from '../lib/agenda-event-series.js';
 import { findProjectClient } from '../lib/project-client-link.js';
 import { findProjectForTask, taskBelongsToProject } from '../lib/project-task-link.js';
 import { summarizeProjectTasks } from '../lib/project-task-progress.js';
@@ -994,8 +995,27 @@ function WorkScreen({ page, navigationContext = null, onNavigationContextConsume
     }
     setSelectedEvent(null);
   };
-  const deleteSelectedEvent = async () => {
-    if (preferences.confirmDelete && !window.confirm('Excluir este evento da agenda?')) return;
+  const deleteSelectedEvent = async (scope = 'occurrence') => {
+    const recurringSeries = scope === 'series' && selectedEvent?.recurrenceId;
+    if (!confirmAgendaEventDeletion(selectedEvent, scope, (message) => window.confirm(message), preferences.confirmDelete)) return;
+    if (recurringSeries) {
+      const ids = new Set(agendaEventDeletionIds(selectedEvent, events, 'series'));
+      const seriesEvents = events.filter((item) => ids.has(String(item.id)));
+      const result = await deleteAgendaEventSeries({
+        events: seriesEvents,
+        removeLocal: async (eventId) => setEvents((current) => current.filter((item) => String(item.id) !== eventId)),
+        deleteGoogle: (eventId) => apiRequest(`/api/integrations/google/calendar/events/${encodeURIComponent(eventId)}`, { method: 'DELETE' }),
+      });
+      for (const outcome of result.results) {
+        if (outcome.googleEventId && !outcome.remotePending) setGoogleCalendarEvents((current) => current.filter((item) => String(item.googleEventId) !== outcome.googleEventId));
+      }
+      if (result.failed) { notify('A serie foi parcialmente removida. Atualize a agenda e tente novamente para os compromissos restantes.'); return; }
+      setSelectedEvent(null);
+      notify(result.remotePending
+        ? `${result.removed} compromissos removidos; o Google Calendar ainda precisa confirmar ${result.remotePending} exclusao(oes).`
+        : `${result.removed} compromissos removidos da serie.`);
+      return;
+    }
     const result = await deleteAgendaEvent({
       event: selectedEvent,
       removeLocal: async (eventId) => setEvents((current) => current.filter((item) => String(item.id) !== eventId)),
@@ -1093,7 +1113,7 @@ function Metric({ label, value, note, icon: Icon, tone }) { return <article clas
 function StatusPill({ status }) { const label = String(status || 'Pendente'); const slug = label.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s/g, '-'); return <span className={`status-pill status-${slug}`}><i />{label}</span>; }
 function EventDetail({ event, onClose, onSave, onDelete }) {
   const [draft, setDraft] = useState({ title: event.title || '', date: event.date || new Date().toISOString().slice(0, 10), time: event.time || '09:00', end: event.end || '09:30', detail: event.detail || '', people: event.people || '', allDay: Boolean(event.allDay) });
-  return <div className="work-modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}><form className="work-compose-modal" role="dialog" aria-modal="true" aria-label={`Compromisso ${event.title}`} onSubmit={(e) => { e.preventDefault(); onSave(draft); }}><header><div><span className="eyebrow">AGENDA ? COMPROMISSO</span><h2>{event.title}</h2></div><button type="button" aria-label="Fechar" onClick={onClose}><X size={18}/></button></header><label>Titulo<input required value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })}/></label><div className="work-compose-grid"><label>Data<input required type="date" value={draft.date} onChange={(e) => setDraft({ ...draft, date: e.target.value })}/></label><label className="work-sync-option"><input type="checkbox" checked={draft.allDay} onChange={(e) => setDraft({ ...draft, allDay: e.target.checked })}/>Evento de dia inteiro</label>{!draft.allDay && <><label>Inicio<input required type="time" value={draft.time} onChange={(e) => setDraft({ ...draft, time: e.target.value })}/></label><label>Termino<input required type="time" value={draft.end} onChange={(e) => setDraft({ ...draft, end: e.target.value })}/></label></>}<label>Participantes<input value={draft.people} onChange={(e) => setDraft({ ...draft, people: e.target.value })}/></label></div><label>Detalhes<input value={draft.detail} onChange={(e) => setDraft({ ...draft, detail: e.target.value })}/></label>{event.calendarSyncStatus === 'connected' ? <p className="work-modal-note">Evento sincronizado com Google Calendar.</p> : <p className="work-modal-note">{event.calendarSyncError || (event.calendarSyncStatus === 'pending' ? 'Sincronizacao com Google Calendar em andamento.' : event.calendarSyncStatus === 'not_connected' ? 'Evento salvo no Focusshub, mas sem sincronizacao com Google Calendar.' : 'Evento salvo na agenda do Focusshub.')}</p>}{event.googleMeetUrl && <a className="work-meet-link" href={event.googleMeetUrl} target="_blank" rel="noreferrer">Entrar no Google Meet</a>}{event.googleHtmlLink && <a className="work-meet-link" href={event.googleHtmlLink} target="_blank" rel="noreferrer">Abrir no Google Calendar</a>}<footer><button type="button" className="work-button work-button-quiet file-remove" onClick={onDelete}>Excluir evento</button><span/><button type="button" className="work-button work-button-quiet" onClick={onClose}>Cancelar</button><button className="work-button work-button-primary"><Check size={14}/>Salvar evento</button></footer></form></div>;
+  return <div className="work-modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}><form className="work-compose-modal" role="dialog" aria-modal="true" aria-label={`Compromisso ${event.title}`} onSubmit={(e) => { e.preventDefault(); onSave(draft); }}><header><div><span className="eyebrow">AGENDA ? COMPROMISSO</span><h2>{event.title}</h2></div><button type="button" aria-label="Fechar" onClick={onClose}><X size={18}/></button></header><label>Titulo<input required value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })}/></label><div className="work-compose-grid"><label>Data<input required type="date" value={draft.date} onChange={(e) => setDraft({ ...draft, date: e.target.value })}/></label><label className="work-sync-option"><input type="checkbox" checked={draft.allDay} onChange={(e) => setDraft({ ...draft, allDay: e.target.checked })}/>Evento de dia inteiro</label>{!draft.allDay && <><label>Inicio<input required type="time" value={draft.time} onChange={(e) => setDraft({ ...draft, time: e.target.value })}/></label><label>Termino<input required type="time" value={draft.end} onChange={(e) => setDraft({ ...draft, end: e.target.value })}/></label></>}<label>Participantes<input value={draft.people} onChange={(e) => setDraft({ ...draft, people: e.target.value })}/></label></div><label>Detalhes<input value={draft.detail} onChange={(e) => setDraft({ ...draft, detail: e.target.value })}/></label>{event.calendarSyncStatus === 'connected' ? <p className="work-modal-note">Evento sincronizado com Google Calendar.</p> : <p className="work-modal-note">{event.calendarSyncError || (event.calendarSyncStatus === 'pending' ? 'Sincronizacao com Google Calendar em andamento.' : event.calendarSyncStatus === 'not_connected' ? 'Evento salvo no Focusshub, mas sem sincronizacao com Google Calendar.' : 'Evento salvo na agenda do Focusshub.')}</p>}{event.googleMeetUrl && <a className="work-meet-link" href={event.googleMeetUrl} target="_blank" rel="noreferrer">Entrar no Google Meet</a>}{event.googleHtmlLink && <a className="work-meet-link" href={event.googleHtmlLink} target="_blank" rel="noreferrer">Abrir no Google Calendar</a>}<footer><button type="button" className="work-button work-button-quiet file-remove" onClick={() => onDelete('occurrence')}>{'Excluir ocorr\u00eancia'}</button>{event.recurrenceId && <button type="button" className="work-button work-button-quiet file-remove" onClick={() => onDelete('series')}>{'Excluir s\u00e9rie'}</button>}<span/><button type="button" className="work-button work-button-quiet" onClick={onClose}>Cancelar</button><button className="work-button work-button-primary"><Check size={14}/>Salvar evento</button></footer></form></div>;
 }
 
 function ApprovalDetail({ approval, onClose, onRevokeShare, onWithdraw, onComment, onDecision, onRequestChanges, onOpenPortal }) {

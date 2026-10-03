@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { advanceClientInstallmentProgress, buildClientFinanceHistory, clientBillingRecordState, clientFinanceDateKey, clientFinanceDueDateLabel, clientFinanceEditPatch, clientFinanceFailedResources, clientFinanceFilterCounts, clientFinanceFilterForPage, clientFinanceLegacyClientValue, clientFinanceOpenBillingCount, isClientFinanceCancelled, isClientFinanceSettled, manualFinanceSettlementPatch, normalizeClientSubscriptionTerms, prepareClientContractTrackingPatch, prepareClientServiceChargeUpdate, resolveClientInstallmentRequest, safeClientFinanceExternalHref } from './client-finance.js';
+import { advanceClientInstallmentProgress, buildClientFinanceHistory, clientBillingRecordState, clientFinanceDateKey, clientFinanceDueDateLabel, clientFinanceEditPatch, clientFinanceFailedResources, clientFinanceFilterCounts, clientFinanceFilterForPage, clientFinanceLegacyClientValue, clientFinanceOpenBillingCount, clientFinanceScheduleForCreate, isClientFinanceCancelled, isClientFinanceSettled, manualFinanceSettlementPatch, normalizeClientSubscriptionTerms, prepareClientContractTrackingPatch, prepareClientServiceChargeUpdate, resolveClientInstallmentRequest, safeClientFinanceExternalHref } from './client-finance.js';
 import { belongsToClient } from '../data/client-link.js';
 
 test('client finance shortcuts map to an in-profile filter', () => {
@@ -11,6 +11,23 @@ test('client finance shortcuts map to an in-profile filter', () => {
   assert.equal(clientFinanceFilterForPage('Receitas'), 'revenues');
   assert.equal(clientFinanceFilterForPage('Despesas'), 'expenses');
   assert.equal(clientFinanceFilterForPage('Financeiro'), 'all');
+});
+
+test('a new client subscription does not inherit the prior subscription schedule', () => {
+  assert.deepEqual(clientFinanceScheduleForCreate({}, '2026-10-04'), {
+    startAt: '2026-10-04', endAt: '',
+  });
+  assert.deepEqual(clientFinanceScheduleForCreate({ startAt: '2026-11-10', endAt: '2027-01-10' }, '2026-10-04'), {
+    startAt: '2026-11-10', endAt: '2027-01-10',
+  });
+});
+
+test('every new client finance action starts with a fresh recurring schedule', async () => {
+  const source = await readFile(new URL('../screens/CommercialScreens.jsx', import.meta.url), 'utf8');
+  const openTab = source.slice(source.indexOf('const openTab ='), source.indexOf('const saveClientFinance ='));
+  assert.match(openTab, /const recurringSchedule = clientFinanceScheduleForCreate\(context, dateAfterDays\(1\)\)/);
+  assert.match(openTab, /startAt: recurringSchedule\.startAt/);
+  assert.match(openTab, /endAt: recurringSchedule\.endAt/);
 });
 
 test('client profile shows billing deadlines in the workspace timezone', () => {

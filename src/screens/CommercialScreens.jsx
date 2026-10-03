@@ -28,7 +28,7 @@ import { splitInstallmentAmounts } from "../lib/installment-plan.js";
 import { clientMonthlyRevenue, clientMonthlyRevenueLabel, parseDisplayAmount, recurringMonthlyAmount } from "../lib/client-billing-summary.js";
 import { downloadCsvFile, recordsToCsv } from "../lib/csv.js";
 import { isLocalDemoActive } from "../lib/local-demo.js";
-import { advanceClientInstallmentProgress, buildClientFinanceHistory, clientBillingRecordState, clientFinanceDateKey, clientFinanceDueDateLabel, clientFinanceEditPatch, clientFinanceFailedResources, clientFinanceFilterCounts, clientFinanceFilterForPage, clientFinanceLegacyClientValue, clientFinanceOpenBillingCount, isClientFinanceCancelled, isClientFinanceSettled, manualFinanceSettlementPatch, normalizeClientSubscriptionTerms, prepareClientContractTrackingPatch, prepareClientServiceChargeUpdate, resolveClientInstallmentRequest, safeClientFinanceExternalHref } from "../lib/client-finance.js";
+import { advanceClientInstallmentProgress, buildClientFinanceHistory, clientBillingRecordState, clientFinanceDateKey, clientFinanceDueDateLabel, clientFinanceEditPatch, clientFinanceFailedResources, clientFinanceFilterCounts, clientFinanceFilterForPage, clientFinanceLegacyClientValue, clientFinanceOpenBillingCount, clientFinanceScheduleForCreate, isClientFinanceCancelled, isClientFinanceSettled, manualFinanceSettlementPatch, normalizeClientSubscriptionTerms, prepareClientContractTrackingPatch, prepareClientServiceChargeUpdate, resolveClientInstallmentRequest, safeClientFinanceExternalHref } from "../lib/client-finance.js";
 import { clientContactActions } from "../lib/client-contact-actions.js";
 import { removeClientContact } from "../lib/client-contact-records.js";
 import { presentClientContact } from "../lib/client-contact-presentation.js";
@@ -1600,6 +1600,7 @@ function ClientProfileModal({
       setFinanceFilter(clientFinanceFilterForPage(page));
       if (context?.action === "create") {
         const kind = page === "Assinaturas" ? "recurring" : page === "Receitas" ? "revenue" : page === "Despesas" ? "expense" : "single";
+        const recurringSchedule = clientFinanceScheduleForCreate(context, dateAfterDays(1));
         setFinanceDraft(current => ({
           ...current,
           kind,
@@ -1609,8 +1610,8 @@ function ClientProfileModal({
           frequency: context.frequency || current.frequency,
           frequencyInterval: String(context.frequencyInterval || current.frequencyInterval),
           payerEmail: context.clientEmail || client.email || current.payerEmail,
-          startAt: context.startAt || current.startAt || dateAfterDays(1),
-          endAt: context.endAt || current.endAt,
+          startAt: recurringSchedule.startAt,
+          endAt: recurringSchedule.endAt,
           installmentServiceId: context.installmentServiceId || "",
           installmentIndex: Number.isInteger(context.installmentIndex) ? context.installmentIndex : null
         }));

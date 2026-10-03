@@ -31,8 +31,8 @@ test('normalizes imported select values to supported workspace choices', () => {
 });
 
 test('rejects invalid settings export envelopes', () => {
-  assert.throws(() => normalizeImportedSettings({ version: 2, settings: {} }, defaults));
-  assert.throws(() => normalizeImportedSettings({ version: 1, settings: [] }, defaults));
+  assert.throws(() => normalizeImportedSettings({ version: 2, settings: {} }, defaults), /exportação válida das configurações/);
+  assert.throws(() => normalizeImportedSettings({ version: 1, settings: [] }, defaults), /exportação válida das configurações/);
 });
 
 test('normalizes imported billing due dates to options shown in the settings select', () => {

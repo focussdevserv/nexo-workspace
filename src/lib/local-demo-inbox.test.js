@@ -91,3 +91,48 @@ test('local demo reply rejects a resolved conversation and non-demo WAHA session
     else globalThis.localStorage = originalStorage;
   }
 });
+
+test('local demo can add, inspect, use and remove multiple simulated WAHA sessions without making a provider call', () => {
+  const originalWindow = globalThis.window;
+  const originalStorage = globalThis.localStorage;
+  const values = new Map([['focusshub.local-demo.v1', JSON.stringify({ inbox: [
+    { id: 'demo-inbox-a', name: 'Ana Costa', status: 'open', history: [] },
+  ] })]]);
+  globalThis.localStorage = { getItem: (key) => values.get(key) ?? null, setItem: (key, value) => values.set(key, value) };
+  globalThis.window = { location: { origin: 'http://localhost' }, dispatchEvent: () => {} };
+
+  try {
+    const created = handleLocalDemoRequest('/api/integrations/waha/sessions', {
+      method: 'POST', body: JSON.stringify({ label: 'WhatsApp Vendas' }),
+    });
+    assert.match(created.data.id, /^demo-waha-/);
+    assert.equal(created.data.demo, true);
+    assert.equal(created.data.status, 'SCAN_QR_CODE');
+    assert.equal(handleLocalDemoRequest('/api/integrations/waha/sessions').data.length, 2);
+
+    const qr = handleLocalDemoRequest(`/api/integrations/waha/sessions/${created.data.id}/qr`);
+    assert.equal(qr.data.demo, true);
+    assert.equal(qr.data.image, '');
+    assert.match(qr.data.message, /QR Code real indisponível/);
+
+    handleLocalDemoRequest(`/api/integrations/waha/sessions/${created.data.id}/start`, { method: 'POST', body: '{}' });
+    const sent = handleLocalDemoRequest('/api/integrations/waha/send', {
+      method: 'POST',
+      body: JSON.stringify({ sessionId: created.data.id, conversationId: 'demo-inbox-a', clientMessageId: 'simulated-two', text: 'Mensagem de teste local.' }),
+    });
+    assert.equal(sent.data.simulated, true);
+    assert.equal(handleLocalDemoRequest('/api/workspace/inbox?limit=200&offset=0').data[0].history[0].text, 'Mensagem de teste local.');
+
+    const deleted = handleLocalDemoRequest(`/api/integrations/waha/sessions/${created.data.id}`, { method: 'DELETE' });
+    assert.equal(deleted.data.simulated, true);
+    assert.equal(handleLocalDemoRequest('/api/integrations/waha/sessions').data.length, 1);
+    assert.throws(() => handleLocalDemoRequest('/api/integrations/waha/sessions', {
+      method: 'POST', body: JSON.stringify({ label: 'x' }),
+    }), /2 e 80/);
+  } finally {
+    if (originalWindow === undefined) delete globalThis.window;
+    else globalThis.window = originalWindow;
+    if (originalStorage === undefined) delete globalThis.localStorage;
+    else globalThis.localStorage = originalStorage;
+  }
+});

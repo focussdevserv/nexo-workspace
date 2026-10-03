@@ -95,6 +95,14 @@ export function clientFinanceFilterForPage(page) {
   return 'all';
 }
 
+/** A new recurring subscription must not inherit dates from an earlier draft. */
+export function clientFinanceScheduleForCreate(context, defaultStartAt) {
+  return {
+    startAt: context?.startAt || defaultStartAt,
+    endAt: context?.endAt || '',
+  };
+}
+
 export function clientFinanceLegacyClientValue(resource, record) {
   // Expense counterparties are usually vendors, so only use an explicit
   // client field for legacy records that predate clientId linking.

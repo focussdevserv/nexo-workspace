@@ -7,6 +7,11 @@ const demoSession = {
   demo: true,
 };
 
+function demoSessions(store) {
+  if (Array.isArray(store.wahaSessions)) return store.wahaSessions;
+  return [{ ...demoSession, ...(store.wahaSession || {}) }];
+}
+
 export function handleLocalDemoInboxRequest(store, pathname, method, body = {}, now = new Date()) {
   if (pathname === '/api/integrations/status' && method === 'GET') {
     const providers = [
@@ -24,28 +29,48 @@ export function handleLocalDemoInboxRequest(store, pathname, method, body = {}, 
   }
 
   if (pathname === '/api/integrations/waha/sessions' && method === 'GET') {
-    return { changed: false, response: { data: [{ ...demoSession, ...(store.wahaSession || {}) }] } };
+    return { changed: false, response: { data: demoSessions(store) } };
+  }
+
+  if (pathname === '/api/integrations/waha/sessions' && method === 'POST') {
+    const label = String(body.label || '').trim();
+    if (label.length < 2 || label.length > 80) throw new Error('Informe um nome entre 2 e 80 caracteres.');
+    const id = `demo-waha-${globalThis.crypto?.randomUUID?.() || Date.now()}`;
+    const session = { ...demoSession, id, label, status: 'SCAN_QR_CODE', demo: true };
+    store.wahaSessions = [...demoSessions(store), session];
+    return { changed: true, response: { data: session } };
+  }
+
+  const sessionQr = pathname.match(/^\/api\/integrations\/waha\/sessions\/([^/]+)\/qr$/);
+  if (sessionQr && method === 'GET') {
+    const id = decodeURIComponent(sessionQr[1]);
+    if (!demoSessions(store).some((item) => item.id === id)) throw new Error('Sessão não encontrada na demonstração local.');
+    return { changed: false, response: { data: { demo: true, image: '', message: 'QR Code real indisponível na demonstração local.' }, status: 'demo_only' } };
   }
 
   const sessionAction = pathname.match(/^\/api\/integrations\/waha\/sessions\/([^/]+)\/(stop|start|restart|logout)$/);
   if (sessionAction && method === 'POST') {
-    const [, sessionId, action] = sessionAction;
-    if (decodeURIComponent(sessionId) !== demoSession.id) throw new Error('Sessão não encontrada na demonstração local.');
+    const [, encodedSessionId, action] = sessionAction;
+    const sessionId = decodeURIComponent(encodedSessionId);
+    const sessions = demoSessions(store);
+    if (!sessions.some((item) => item.id === sessionId)) throw new Error('Sessao de demonstracao nao encontrada.');
     const status = action === 'stop' ? 'STOPPED' : action === 'logout' ? 'SCAN_QR_CODE' : 'WORKING';
-    store.wahaSession = { ...(store.wahaSession || {}), status };
-    return { changed: true, response: { data: { ...demoSession, ...store.wahaSession } } };
+    store.wahaSessions = sessions.map((item) => item.id === sessionId ? { ...item, status } : item);
+    return { changed: true, response: { data: store.wahaSessions.find((item) => item.id === sessionId) } };
   }
 
   const sessionDelete = pathname.match(/^\/api\/integrations\/waha\/sessions\/([^/]+)$/);
   if (sessionDelete && method === 'DELETE') {
-    if (decodeURIComponent(sessionDelete[1]) !== demoSession.id) throw new Error('Sessão não encontrada na demonstração local.');
-    store.wahaSession = { ...(store.wahaSession || {}), status: 'NOT_FOUND' };
+    const id = decodeURIComponent(sessionDelete[1]);
+    const sessions = demoSessions(store);
+    if (!sessions.some((item) => item.id === id)) throw new Error('Sessao de demonstracao nao encontrada.');
+    store.wahaSessions = sessions.filter((item) => item.id !== id);
     return { changed: true, response: { data: { deleted: true, simulated: true } } };
   }
 
   if (pathname !== '/api/integrations/waha/send' || method !== 'POST') return null;
-  if (body.sessionId !== demoSession.id) throw new Error('Selecione a sessão WhatsApp simulada. Nenhuma mensagem foi enviada.');
-
+  const session = demoSessions(store).find((item) => item.id === body.sessionId);
+  if (!session?.demo || session.status !== 'WORKING') throw new Error('Selecione uma sessão WhatsApp simulada ativa. Nenhuma mensagem foi enviada.');
   const conversationId = String(body.conversationId || '');
   const text = String(body.text || '').trim();
   const attachment = body.attachment && typeof body.attachment.filename === 'string' ? body.attachment.filename : '';

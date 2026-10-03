@@ -14,7 +14,7 @@ export function confirmSettingsImport({ dirty, confirmReplace }) {
 
 export function normalizeImportedSettings(payload, defaults) {
   if (payload?.version !== 1 || !payload.settings || typeof payload.settings !== 'object' || Array.isArray(payload.settings)) {
-    throw new Error('invalid settings export');
+    throw new Error('O arquivo não contém uma exportação válida das configurações do Focusshub.');
   }
 
   return Object.fromEntries(Object.entries(defaults).map(([group, fallback]) => {

@@ -162,7 +162,12 @@ export default function SettingsScreen({ notify, navigationContext = null, onNav
       setSaveError('');
       setDirty(settingsDraftHasChanges(imported, settingsBaseline(defaults, savedSettings?.settings)));
       notify('Configurações importadas. Salve para aplicar.');
-    } catch { notify('Esse arquivo não contém uma exportação válida do Focusshub.'); }
+    } catch (error) {
+      const message = error instanceof SyntaxError
+        ? 'O arquivo não é um JSON válido.'
+        : error.message || 'Não foi possível importar as configurações.';
+      notify(message);
+    }
     finally { event.target.value = ''; }
   };
   const uploadBrandLogo = async (event) => {
