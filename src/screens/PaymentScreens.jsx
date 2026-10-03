@@ -19,6 +19,7 @@ import { createBillingRequestUuid, reuseBillingRequestKey } from '../lib/billing
 import { paymentCancellationError } from '../lib/payment-cancellation.js';
 import { paymentFrequencyLabel } from '../lib/payment-frequency.js';
 import { recurringBillingEnabled } from '../lib/billing-preferences.js';
+import { matchesPaymentSearch } from '../lib/payment-search.js';
 
 const money = (value) => Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const labels = { pending: 'Aguardando pagamento', creating: 'Criando', processing: 'Em processamento', paid: 'Paga', authorized: 'Autorizada', paused: 'Pausada', canceled: 'Cancelada', cancelled: 'Cancelada', overdue: 'Vencida', failed: 'Falhou', refunded: 'Estornada', rejected: 'Recusada', expired: 'Expirada' };
@@ -261,7 +262,7 @@ export function PaymentConsole({ kind = 'orders', notify = () => {}, navigationC
   };
   const copy = async (value) => { if (await copyPaymentText(value)) notify('Copiado para a área de transferência.'); else notify('Não foi possível acessar a área de transferência.'); };
   const scopedItems = clientScope ? filterRecordsForClient(items, clientScope) : items;
-  const filtered = filterPayments(scopedItems, { status: statusFilter, due: dueFilter }).filter((item) => `${item.clientName} ${item.description} ${item.status}`.toLocaleLowerCase('pt-BR').includes(search.toLocaleLowerCase('pt-BR')));
+  const filtered = filterPayments(scopedItems, { status: statusFilter, due: dueFilter }).filter((item) => matchesPaymentSearch(item, search));
   const resetForm = () => { billingRequestAttempt.current = null; setInstallmentContext(null); setForm({ clientId: '', clientName: '', payerEmail: '', description: '', amount: '', method: methodChoices[0]?.value || 'pix', billingType: 'single', dueDate: dateAfterDays(defaultDueDays), startDate: dateAfterDays(1), endDate: '', identificationType: 'CPF', identificationNumber: '', frequency: 'months', frequencyInterval: 1, address: { zipCode: '', streetName: '', streetNumber: '', neighborhood: '', city: '', state: '' } }); };
   if (!token) return <PaymentAccess onConnected={setToken} />;
   if (result) {

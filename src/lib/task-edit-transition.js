@@ -31,3 +31,13 @@ export function prepareTaskDetailsUpdate(tasks, taskId, patch, now = new Date())
 
   return { ok: true, tasks: candidate, occurrence: null };
 }
+
+export function saveTaskDetailsOnce({ locks, tasks, taskId, patch, save, now = new Date() }) {
+  if (typeof save !== 'function' || !locks?.run) return Promise.resolve({ ok: false, invalid: true });
+  return locks.run(taskId, async () => {
+    const transition = prepareTaskDetailsUpdate(tasks, taskId, patch, now);
+    if (!transition.ok) return transition;
+    const result = await save(transition.tasks);
+    return result?.ok ? { ...result, transition } : result;
+  });
+}

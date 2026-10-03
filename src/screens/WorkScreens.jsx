@@ -11,7 +11,7 @@ import './drive-scope.css';
 import { apiRequest, fetchAllRecords } from '../lib/workspace-api.js';
 import { useWorkspacePreferences } from '../lib/workspace-preferences.js';
 import { completeTaskOccurrence } from '../lib/task-recurrence.js';
-import { prepareTaskDetailsUpdate } from '../lib/task-edit-transition.js';
+import { saveTaskDetailsOnce } from '../lib/task-edit-transition.js';
 import { taskIsCompleted, taskMatchesStatus, taskStatusForEdit, withTaskStatus } from '../lib/task-status.js';
 import { taskDependencyBlocker, taskDependencyBlockMessage, tasksDependingOn } from '../lib/task-dependency.js';
 import { parseAgendaAttendees, validateAgendaAttendees, validateAgendaEvent } from '../lib/agenda-event-validation.js';
@@ -291,6 +291,8 @@ function WorkScreen({ page, navigationContext = null, onNavigationContextConsume
   if (!approvalActionLocks.current) approvalActionLocks.current = createKeyedActionLock();
   const taskCompletionLocks = useRef(null);
   if (!taskCompletionLocks.current) taskCompletionLocks.current = createKeyedActionLock();
+  const taskDetailSaveLocks = useRef(null);
+  if (!taskDetailSaveLocks.current) taskDetailSaveLocks.current = createKeyedActionLock();
   const [workspaceClients, setWorkspaceClients] = useState([]);
   const [files, setFiles, filesError, filesLoaded, refreshFiles] = useLocalState('nexo.work.files.v1', filesSeed);
   const [hours, setHours, hoursError, hoursLoaded, refreshHours] = useLocalState('nexo.work.hours.v1', []);
@@ -350,6 +352,8 @@ function WorkScreen({ page, navigationContext = null, onNavigationContextConsume
   }, []);
   const [composer, setComposer] = useState('');
   const [savingAgenda, setSavingAgenda] = useState(false);
+  const agendaCreateLockRef = useRef(null);
+  if (!agendaCreateLockRef.current) agendaCreateLockRef.current = createAsyncActionLock();
   const [savingProject, setSavingProject] = useState(false);
   const projectCreateLockRef = useRef(false);
   const [savingTask, setSavingTask] = useState(false);
@@ -565,9 +569,7 @@ function WorkScreen({ page, navigationContext = null, onNavigationContextConsume
     notify(`Tarefa concluída. Próxima ocorrência criada para ${new Date(`${result.occurrence.due}T12:00:00`).toLocaleDateString('pt-BR')}.`);
   });
   const saveTaskDetails = async (patch) => {
-    const transition = prepareTaskDetailsUpdate(tasks, selectedTask.id, patch);
-    if (!transition.ok) return transition;
-    const result = await setTasks(transition.tasks);
+    const result = await saveTaskDetailsOnce({ locks: taskDetailSaveLocks.current, tasks, taskId: selectedTask.id, patch, save: setTasks });
     if (result?.ok) setSelectedTask((current) => current ? { ...current, ...patch } : current);
     return result;
   };
@@ -701,12 +703,12 @@ function WorkScreen({ page, navigationContext = null, onNavigationContextConsume
     if (composer === 'projetos') { if (savingProject) return; if (await saveProjectComposer()) setComposer(''); return; }
     if (composer === 'tarefas') { if (savingTask) return; if (await saveTaskComposer()) setComposer(''); return; }
     if (composer === 'agenda') {
-      if (savingAgenda) return;
+      if (savingAgenda || agendaCreateLockRef.current.locked) return;
       const attendeeError = validateAgendaAttendees(draft.attendees);
       if (attendeeError) { notify(attendeeError); return; }
       const validationError = validateAgendaEvent({ date: draft.due, time: draft.time, end: draft.endTime, allDay: draft.allDay });
       if (validationError) { notify(validationError); return; }
-      await saveAgendaEvent(); return;
+      await agendaCreateLockRef.current.run(saveAgendaEvent); return;
     }
     const id = globalThis.crypto?.randomUUID?.() || `record-${Date.now()}`;
     if (composer === 'aprovacoes') {
@@ -1097,7 +1099,7 @@ function TaskDetail({ task, tasks, localDemo, onClose, onDelete, onSave, onFileU
   const [uploadingAttachment, setUploadingAttachment] = useState(false);
   const [saving, setSaving] = useState(false);
   const checklist = draft.checklist.map((item) => typeof item === 'string' ? { title: item, done: false } : item);
-  const save = async (event) => { event?.preventDefault(); if (saving) return; setSaving(true); try { const result = await onSave({ ...draft, checklist, updatedAt: new Date().toISOString() }); if (result?.ok === false) { onAction(result.error?.message || 'Não foi possível salvar. Suas alterações continuam abertas.'); return; } onAction('Tarefa atualizada e salva.'); onClose(); } finally { setSaving(false); } };
+  const save = async (event) => { event?.preventDefault(); if (saving) return; setSaving(true); try { const result = await onSave({ ...draft, checklist, updatedAt: new Date().toISOString() }); if (result?.skipped) return; if (result?.ok === false) { onAction(result.error?.message || 'Não foi possível salvar. Suas alterações continuam abertas.'); return; } onAction('Tarefa atualizada e salva.'); onClose(); } finally { setSaving(false); } };
   const uploadAttachment = async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;

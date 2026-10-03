@@ -26,6 +26,19 @@ test('keeps local demo delivery marked as simulated for truthful feedback', asyn
   assert.deepEqual(result, { sent: true, refreshed: true, simulated: true });
 });
 
+test('keeps the composer intact when WAHA reports the idempotent send is still pending', async () => {
+  let clears = 0;
+  let refreshes = 0;
+  const result = await sendInboxMessage({
+    deliver: async () => ({ data: { status: 'sending', duplicated: true } }),
+    onSent: () => { clears += 1; },
+    refresh: async () => { refreshes += 1; },
+  });
+  assert.deepEqual(result, { sent: false, refreshed: false, simulated: false, pending: true });
+  assert.equal(clears, 0);
+  assert.equal(refreshes, 1);
+});
+
 test('a delivery failure preserves the composer and never starts a refresh', async () => {
   let clears = 0;
   let refreshes = 0;

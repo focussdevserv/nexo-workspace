@@ -37,6 +37,25 @@ test('rapid timer clicks persist only one running session', async () => {
   assert.equal(lock.locked, false);
 });
 
+test('rapid agenda submissions persist a recurring series once and allow a later submission', async () => {
+  const lock = createAsyncActionLock();
+  let releaseSave;
+  let persistedSeriesCount = 0;
+  const submitAgenda = () => lock.run(async () => {
+    persistedSeriesCount += 1;
+    if (persistedSeriesCount === 1) await new Promise((resolve) => { releaseSave = resolve; });
+    return { ok: true };
+  });
+
+  const firstSubmit = submitAgenda();
+  assert.deepEqual(await submitAgenda(), { ok: false, skipped: true });
+  assert.equal(persistedSeriesCount, 1);
+  releaseSave();
+  assert.deepEqual(await firstSubmit, { ok: true });
+  assert.deepEqual(await submitAgenda(), { ok: true });
+  assert.equal(persistedSeriesCount, 2);
+});
+
 test('skips an automatic status poll while a manual refresh is still in flight', async () => {
   const lock = createAsyncActionLock();
   let finishRefresh;

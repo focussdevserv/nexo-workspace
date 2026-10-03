@@ -23,11 +23,13 @@ import { parseDisplayAmount } from '../lib/client-billing-summary.js';
 import { filterInboxConversations } from '../lib/inbox-filter.js';
 import { normalizeInboxChannel, resolveInboxConversationNavigation } from '../lib/inbox-navigation.js';
 import { markInboxConversationRead } from '../lib/inbox-read-state.js';
+import { buildInboxConversationPatch } from '../lib/inbox-conversation-patch.js';
 import { preferredInboxSessionId } from '../lib/inbox-session.js';
 import { gmailThreadMetadataRecord, hostingerThreadMetadataRecord, mergeGmailThreadMetadata, mergeHostingerThreadMetadata } from '../lib/gmail-thread-metadata.js';
 import { matchConversationClient } from '../lib/conversation-client-match.js';
 import { canReplyToInboxConversation, isResolvedInboxConversation, nextInboxConversationStatus } from '../lib/inbox-reply.js';
 import { sendInboxMessage } from '../lib/inbox-send.js';
+import { clearInboxSendAttempt, inboxSendAttemptId } from '../lib/inbox-send-attempt.js';
 import { buildInboxFollowUpTask, nextInboxFollowUpDate } from '../lib/inbox-follow-up.js';
 import { normalizeWhatsAppChatId } from '../lib/whatsapp-phone.js';
 import { canManageWahaSessions, canOfferWahaConnectAction, canShowWahaQr, wahaQrSessionMessage } from '../lib/waha-session-access.js';
@@ -41,6 +43,7 @@ import { findTicketByActionKey } from '../lib/ticket-record-selection.js';
 import { availableInboxEmailProviders } from '../lib/inbox-email-providers.js';
 import { ticketAssigneeFromOption, ticketAssigneeOptionValue } from '../lib/ticket-assignee.js';
 import { filterSupportTickets, ticketQueueFilters } from '../lib/ticket-filter.js';
+import { ticketActivityAuthor } from '../lib/ticket-activity-author.js';
 import { downloadCsvFile, rowsToCsv } from '../lib/csv.js';
 import { canAuthorizeOAuthIntegrations, googleReauthorizationButtonState, integrationOAuthRedirectUri, integrationStatusLabel, integrationStatusTone, mercadoPagoAuthorizationButtonState, navigateToOAuthConsent } from '../lib/integration-auth-state.js';
 import { googleEmailErrorAction } from '../lib/google-email-error.js';
@@ -484,6 +487,7 @@ function Inbox({ notify, forceWhatsapp = false, navigationContext = null, onNavi
   const [emailProviders, setEmailProviders] = useState([]);
   const emailLoadRequests = useRef(null);
   if (!emailLoadRequests.current) emailLoadRequests.current = createLatestRequestGuard();
+  const whatsappSendAttempt = useRef({ fingerprint: '', id: '' });
   const handledInboxNavigation = useRef('');
   const inboxRole = (() => { try { return JSON.parse(sessionStorage.getItem('nexo.api.user') || 'null')?.role || ''; } catch { return ''; } })();
   const canAuthorizeInboxGoogle = canAuthorizeOAuthIntegrations(inboxRole);
@@ -688,11 +692,17 @@ function Inbox({ notify, forceWhatsapp = false, navigationContext = null, onNavi
     setSending(true);
     try {
       const file = attachment ? { attachment: { filename: attachment.name, mimeType: attachment.type || 'application/octet-stream', contentBase64: await encodeAttachmentFile(attachment) } } : {};
+      const message = { sessionId, conversationId: current.id, chatId, text, ...file };
+      const clientMessageId = inboxSendAttemptId(whatsappSendAttempt.current, JSON.stringify(message), () => globalThis.crypto.randomUUID());
       const result = await sendInboxMessage({
-        deliver: () => apiRequest('/api/integrations/waha/send', { method: 'POST', body: JSON.stringify({ sessionId, conversationId: current.id, clientMessageId: globalThis.crypto.randomUUID(), chatId, text, ...file }) }),
-        onSent: () => { setDraft(''); setAttachment(null); },
+        deliver: () => apiRequest('/api/integrations/waha/send', { method: 'POST', body: JSON.stringify({ ...message, clientMessageId }) }),
+        onSent: () => { clearInboxSendAttempt(whatsappSendAttempt.current); setDraft(''); setAttachment(null); },
         refresh: refreshMessages,
       });
+      if (result.pending) {
+        notify('O envio anterior ainda está sendo processado. Aguarde um momento antes de tentar novamente.');
+        return;
+      }
       const deliveryMessage = result.simulated
         ? (attachment ? 'Anexo simulado localmente; nada foi enviado ao WhatsApp.' : 'Mensagem simulada localmente; nada foi enviado ao WhatsApp.')
         : attachment ? 'Arquivo enviado pelo WhatsApp.' : 'Mensagem enviada pelo WhatsApp.';
@@ -764,7 +774,7 @@ function Inbox({ notify, forceWhatsapp = false, navigationContext = null, onNavi
       setEmailThreads((rows) => rows.map((thread) => String(thread.id) === String(current.id) ? { ...thread, ...patch, emailMetadataId: saved.data.id } : thread));
       return;
     }
-    const data = Object.fromEntries(Object.entries({ ...current, ...patch }).filter(([field]) => !['id', 'createdAt', 'updatedAt'].includes(field)));
+    const data = buildInboxConversationPatch(patch);
     await apiRequest(`/api/workspace/inbox/${encodeURIComponent(current.id)}`, { method: 'PATCH', body: JSON.stringify({ data }) });
     await refreshMessages();
   };
@@ -808,6 +818,8 @@ function Inbox({ notify, forceWhatsapp = false, navigationContext = null, onNavi
 
 function Tickets({ notify, navigationContext = null, onNavigationContextConsumed = () => {} }) {
   const preferences = useWorkspacePreferences();
+  const currentUser = (() => { try { return JSON.parse(sessionStorage.getItem('nexo.api.user') || 'null'); } catch { return null; } })();
+  const activityAuthor = ticketActivityAuthor(currentUser);
   const { records: rows, loading, error, refresh, create, update, remove } = useWorkspaceRecords('tickets');
   const [form, setForm] = useState(false);
   const [selected, setSelected] = useState(null);
@@ -834,7 +846,7 @@ function Tickets({ notify, navigationContext = null, onNavigationContextConsumed
   const [draft, setDraft] = useState({ title: '', client: '', clientId: '', priority: 'Media', ownerId: '', detail: '', slaHours: '24' });
   useEffect(() => { if (!navigationContext?.clientId) return; setDraft((current) => ({ ...current, clientId: navigationContext.clientId, client: navigationContext.clientName || '' })); if (navigationContext.action === 'create') setForm(true); onNavigationContextConsumed(); }, [navigationContext?.intentId]);
   const [edit, setEdit] = useState({ status: '', owner: '', ownerId: '', priority: '', detail: '', note: '' });
-  const addTicket = async (event) => { event.preventDefault(); const client = clientsStore.records.find((item) => String(item.id) === String(draft.clientId)); if (!draft.title.trim() || !client) { setTicketActionError('Informe a solicitação e selecione um cliente cadastrado.'); return; } const assignee = teamMembers.find((member) => String(member.id) === String(draft.ownerId)); setTicketBusy('create'); setTicketActionError(''); try { const now = new Date().toISOString(); await create({ code: `NX-${globalThis.crypto.randomUUID().slice(0, 8).toUpperCase()}`, title: draft.title.trim(), client: client.name, clientId: client.id, priority: draft.priority, status: 'Aberto', updatedAt: now, slaDueAt: ticketSlaDeadline(draft.slaHours), detail: draft.detail.trim(), owner: assignee?.name || '', ownerId: assignee?.id || '', activity: [{ id: globalThis.crypto.randomUUID(), type: 'created', message: 'Ticket criado', author: assignee?.name || 'Equipe', at: now }] }); setDraft({ title: '', client: '', clientId: '', priority: 'Media', ownerId: '', detail: '', slaHours: '24' }); setForm(false); notify('Ticket salvo e vinculado ao cliente.'); } catch (saveError) { setTicketActionError(saveError.message || 'Não foi possível salvar o ticket. Seus dados continuam no formulário.'); } finally { setTicketBusy(''); } };
+  const addTicket = async (event) => { event.preventDefault(); const client = clientsStore.records.find((item) => String(item.id) === String(draft.clientId)); if (!draft.title.trim() || !client) { setTicketActionError('Informe a solicitação e selecione um cliente cadastrado.'); return; } const assignee = teamMembers.find((member) => String(member.id) === String(draft.ownerId)); setTicketBusy('create'); setTicketActionError(''); try { const now = new Date().toISOString(); await create({ code: `NX-${globalThis.crypto.randomUUID().slice(0, 8).toUpperCase()}`, title: draft.title.trim(), client: client.name, clientId: client.id, priority: draft.priority, status: 'Aberto', updatedAt: now, slaDueAt: ticketSlaDeadline(draft.slaHours), detail: draft.detail.trim(), owner: assignee?.name || '', ownerId: assignee?.id || '', activity: [{ id: globalThis.crypto.randomUUID(), type: 'created', message: 'Ticket criado', author: activityAuthor, at: now }] }); setDraft({ title: '', client: '', clientId: '', priority: 'Media', ownerId: '', detail: '', slaHours: '24' }); setForm(false); notify('Ticket salvo e vinculado ao cliente.'); } catch (saveError) { setTicketActionError(saveError.message || 'Não foi possível salvar o ticket. Seus dados continuam no formulário.'); } finally { setTicketBusy(''); } };
   const openTicket = (key) => { const row = findTicketByActionKey(rows, key); if (!row) return notify('Este ticket nÃ£o estÃ¡ mais disponÃ­vel. Atualize a lista.'); setSelected(row); setEdit({ status: normalizeTicketStatus(row.status) || 'Aberto', owner: row.owner || '', ownerId: ticketAssigneeOptionValue(row, teamMembers), priority: normalizeTicketPriority(row.priority), detail: row.detail || '', note: '' }); };
   const saveTicket = async (event) => {
     event.preventDefault();
@@ -846,7 +858,7 @@ function Tickets({ notify, navigationContext = null, onNavigationContextConsumed
     const note = edit.note.trim();
     if (!changes.length && !note) { notify('Nenhuma alteração para salvar.'); return; }
     const now = new Date().toISOString();
-    const activity = [...(Array.isArray(selected.activity) ? selected.activity : []), ...changes.map((message) => ({ id: globalThis.crypto.randomUUID(), type: 'change', message, author: edit.owner.trim() || 'Equipe', at: now })), ...(note ? [{ id: globalThis.crypto.randomUUID(), type: 'note', message: note, author: edit.owner.trim() || 'Equipe', at: now }] : [])].slice(-100);
+    const activity = [...(Array.isArray(selected.activity) ? selected.activity : []), ...changes.map((message) => ({ id: globalThis.crypto.randomUUID(), type: 'change', message, author: activityAuthor, at: now })), ...(note ? [{ id: globalThis.crypto.randomUUID(), type: 'note', message: note, author: activityAuthor, at: now }] : [])].slice(-100);
     setTicketBusy('save'); setTicketActionError('');
     try { await update(selected.id, { priority: edit.priority, status: edit.status, updatedAt: now, detail: edit.detail.trim(), owner: edit.owner.trim(), ownerId: ticketAssigneeOptionValue(edit, teamMembers) === '__legacy__' ? '' : ticketAssigneeOptionValue(edit, teamMembers), activity }); setSelected(null); notify(note ? 'Ticket atualizado e nota interna registrada.' : 'Ticket atualizado no workspace.'); }
     catch (saveError) { setTicketActionError(saveError.message || 'Não foi possível atualizar o ticket. Suas alterações continuam abertas.'); }
