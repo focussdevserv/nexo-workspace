@@ -204,7 +204,7 @@ function TeamAccessPanel({ notify, onAccountCountChange }) {
     editPermissions(account);
   };
   const changeModulePermission = (account, moduleKey, permission, value) => {
-    if (permissionDraft?.[moduleKey] === null && !window.confirm('Esta permissÃ£o Ã© herdada e pode variar entre telas do mÃ³dulo. Personalizar vai substituir o padrÃ£o por permissÃµes uniformes neste mÃ³dulo. Continuar?')) {
+    if (permissionDraft?.[moduleKey] === null && !window.confirm('Esta permissão é herdada e pode variar entre telas do módulo. Personalizar vai substituir o padrão por permissões uniformes neste módulo. Continuar?')) {
       setPermissionDraft({ ...permissionDraft });
       return;
     }

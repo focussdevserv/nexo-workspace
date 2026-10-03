@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { canCreateTaskFromHours, createdHoursTaskId } from './hours-task-selection.js';
+import { canCreateTaskFromHours, canWriteTaskFromHours, createdHoursTaskId } from './hours-task-selection.js';
 
 test('offers task creation from Hours only after load and when the user can write', () => {
   const ready = { tasksLoaded: true, tasksError: '', timerRunning: false, hasActiveTask: false, canWriteTask: true };
@@ -10,6 +10,16 @@ test('offers task creation from Hours only after load and when the user can writ
   assert.equal(canCreateTaskFromHours({ ...ready, timerRunning: true }), false);
   assert.equal(canCreateTaskFromHours({ ...ready, hasActiveTask: true }), false);
   assert.equal(canCreateTaskFromHours({ ...ready, canWriteTask: false }), false);
+});
+
+test('matches task creation UI access to the API delivery permission policy', () => {
+  assert.equal(canWriteTaskFromHours('member', undefined), true); // baseline POST /tasks grant
+  assert.equal(canWriteTaskFromHours('member', {}), true);
+  assert.equal(canWriteTaskFromHours('member', { delivery: { read: true } }), false);
+  assert.equal(canWriteTaskFromHours('member', { delivery: { write: false } }), false);
+  assert.equal(canWriteTaskFromHours('member', { delivery: { read: true, write: true } }), true);
+  assert.equal(canWriteTaskFromHours('owner', { delivery: { write: false } }), true);
+  assert.equal(canWriteTaskFromHours('admin', { delivery: { write: false } }), true);
 });
 
 test('uses the persisted workspace ID for a task created from Hours', () => {

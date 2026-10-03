@@ -7,7 +7,7 @@ test('Meu Dia summary shortcuts open their matching workspace modules', () => {
   assert.deepEqual(dashboardMetricNavigation('projects'), { page: 'Projetos' });
   assert.deepEqual(dashboardMetricNavigation('tasks'), { page: 'Tarefas' });
   assert.deepEqual(dashboardMetricNavigation('events'), { page: 'Agenda' });
-  assert.deepEqual(dashboardMetricNavigation('receivables'), { page: 'Cobranças' });
+  assert.deepEqual(dashboardMetricNavigation('receivables'), { page: 'Cobranças', context: { filter: 'upcoming' } });
 });
 
 test('the overdue shortcut preserves the finance filter and unknown metrics stay inert', () => {

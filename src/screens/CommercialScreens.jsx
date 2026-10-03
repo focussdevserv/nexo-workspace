@@ -36,7 +36,7 @@ import { archiveClientRecord, isArchivedClient, restoreClientRecord } from "../l
 import { clientFileRecordForUpload } from "../lib/client-file-link.js";
 import { clientFileDeleteConfirmation, clientFileMetadataPatch, safeClientFileHref } from "../lib/client-file-actions.js";
 import { buildClientRelationshipHistory, clientRelationshipHistoryDateLabel } from "../lib/client-relationship-history.js";
-import { buildCommercialRecordEditorPatch, companyContactCount, commercialContactCompanySelection, commercialRecordEditorDraft, commercialRecordEditorFields, commercialRecordEditorIsDirty, synchronizeCompanyContactNames, unlinkCompanyContacts } from "../lib/commercial-record-editor.js";
+import { buildCommercialRecordEditorPatch, companyContactCount, commercialContactCompanySelection, commercialRecordEditorDraft, commercialRecordEditorFields, commercialRecordEditorIsDirty, resolveCommercialClient, synchronizeCompanyContactNames, unlinkCompanyContacts } from "../lib/commercial-record-editor.js";
 import { filterCommercialRecords } from "../lib/commercial-record-filter.js";
 import { commercialStageTone } from "../lib/commercial-stage-tone.js";
 import { averageProposalApprovalDays, countLeadsWithoutNextAction, formatElapsedDays } from "../lib/commercial-cycle-metrics.js";
@@ -751,7 +751,7 @@ export default function CommercialScreen({
         tone
       });
     }else if (key === "propostas") {
-      const linkedClient = (records.clients || []).find(client => String(client.id) === String(draft.clientId)) || (records.clients || []).find(client => client.name?.trim().toLocaleLowerCase("pt-BR") === draft.client.trim().toLocaleLowerCase("pt-BR"));
+      const linkedClient = resolveCommercialClient(records.clients || [], draft.clientId, draft.client);
       if (!linkedClient) {
         notify("Vincule a proposta a um cliente cadastrado antes de salvar.");
         return;
@@ -1102,7 +1102,7 @@ export default function CommercialScreen({
               ...draft,
               notes: e.target.value
             })} /></label></Fragment>}{["propostas", "contratos"].includes(key) && <label>Vincular cliente cadastrado<select required={["contratos", "propostas"].includes(key)} value={draft.clientId} onChange={e => {
-            const client = (records.clients || []).find(item => item.id === e.target.value);
+            const client = resolveCommercialClient(records.clients || [], e.target.value);
             setDraft({
               ...draft,
               clientId: client?.id || "",
@@ -2554,7 +2554,7 @@ function ListView({
       setSelectedItem(resolution.lead);
       setStatusDraft(resolution.lead.stage || resolution.lead.status || "Novo lead");
     } else {
-      onAction?.("NÃ£o encontrei este lead na carteira disponÃ­vel para sua conta.");
+      onAction?.("Não encontrei este lead na carteira disponível para sua conta.");
     }
     onLeadOpened();
   }, [page, openLeadId, leadRecords, leadRecordsLoading, leadRecordsLoadError, onAction, onLeadOpened]);

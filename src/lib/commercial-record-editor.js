@@ -48,6 +48,16 @@ export function commercialRecordEditorFields(page) {
 
 const normalizeName = (value) => String(value || '').trim().toLocaleLowerCase('pt-BR');
 
+export function resolveCommercialClient(clients = [], clientId = '', clientName = '') {
+  const normalizedId = String(clientId ?? '').trim();
+  if (normalizedId) return clients.find((client) => String(client?.id ?? '') === normalizedId) || null;
+
+  const normalizedClientName = normalizeName(clientName);
+  if (!normalizedClientName) return null;
+  const matches = clients.filter((client) => normalizeName(client?.name) === normalizedClientName);
+  return matches.length === 1 ? matches[0] : null;
+}
+
 export function companyContactCount(company, contacts = [], companies = []) {
   const companyId = String(company?.id ?? '');
   const normalizedName = normalizeName(company?.name);

@@ -3,7 +3,7 @@ const destinations = Object.freeze({
   tasks: { page: 'Tarefas' },
   events: { page: 'Agenda' },
   leads: { page: 'Leads' },
-  receivables: { page: 'Cobranças' },
+  receivables: { page: 'Cobranças', context: { filter: 'upcoming' } },
   overdue: { page: 'Cobranças', context: { filter: 'overdue' } },
 });
 

@@ -36,6 +36,19 @@ test('filters payments by exact provider status and upcoming or missing due date
   assert.deepEqual(filterPayments(items, { due: 'Sem vencimento', now }).map((item) => item.id), ['undated']);
 });
 
+test('the Meu Dia receivables shortcut can show pending charges due within 30 days', () => {
+  const now = Date.parse('2026-10-01T00:00:00.000Z');
+  const items = [
+    { id: 'tomorrow', status: 'pending', dueDate: '2026-10-02' },
+    { id: 'within-window', status: 'pending', dueDate: '2026-10-25' },
+    { id: 'outside-window', status: 'pending', dueDate: '2026-11-15' },
+    { id: 'paid', status: 'paid', dueDate: '2026-10-10' },
+    { id: 'overdue', status: 'overdue', dueDate: '2026-09-28' },
+  ];
+
+  assert.deepEqual(filterPayments(items, { due: 'Pr\u00f3ximos 30 dias', now }).map((item) => item.id), ['tomorrow', 'within-window']);
+});
+
 test('matches status filters regardless of case or Portuguese provider labels', () => {
   const items = [
     { id: 'upper', status: 'PENDING' },

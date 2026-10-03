@@ -8,6 +8,7 @@ import {
   commercialRecordEditorDraft,
   commercialRecordEditorFields,
   commercialRecordEditorIsDirty,
+  resolveCommercialClient,
   synchronizeCompanyContactNames,
   unlinkCompanyContacts,
 } from './commercial-record-editor.js';
@@ -148,6 +149,23 @@ test('validates and links proposal client fields before saving', () => {
   assert.equal(result.patch.name, 'Auditoria');
   assert.equal(result.patch.email, 'financeiro@nexo.test');
   assert.equal(result.patch.scope, 'Revisão geral');
+});
+
+test('resolves proposal clients by stringified ID and never substitutes a stale explicit ID by name', () => {
+  const records = [
+    { id: 12, name: 'Nexo Ltda', email: 'financeiro@nexo.test' },
+    { id: '13', name: 'Nexo Ltda', email: 'outra@nexo.test' },
+  ];
+  assert.equal(resolveCommercialClient(records, '12')?.id, 12);
+  assert.equal(resolveCommercialClient(records, '', 'Nexo Ltda'), null, 'ambiguous duplicate names must not be guessed');
+  assert.equal(resolveCommercialClient(records, 'deleted-id', 'Nexo Ltda'), null, 'a stale explicit ID must not fall back to the display name');
+  assert.equal(resolveCommercialClient(clients, '', ' Nexo Ltda ')?.id, 12, 'unique legacy name fallback remains supported');
+});
+
+test('proposal creation and client select use the safe shared client resolver', async () => {
+  const source = await readFile(new URL('../screens/CommercialScreens.jsx', import.meta.url), 'utf8');
+  assert.match(source, /const linkedClient = resolveCommercialClient\(records\.clients \|\| \[\], draft\.clientId, draft\.client\);/);
+  assert.match(source, /const client = resolveCommercialClient\(records\.clients \|\| \[\], e\.target\.value\);/);
 });
 
 test('rejects missing client, malformed email and out-of-range contract progress', () => {
