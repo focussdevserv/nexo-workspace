@@ -25,7 +25,7 @@ import { findDuplicateLead, findLeadDuplicateMatch } from './crm/lead-identity.j
 import { buildClientFromLead, mergeLeadServiceIntoClient } from './crm/lead-conversion.js';
 import { detachCatalogServiceReference } from './crm/service-reference.js';
 import { canChangeProjectArchiveState, isWorkspaceRequestAllowed, type WorkspaceRecordScope } from './security/authorization.js';
-import { billingClientIdsForWorkspaceScope, clientLinkedWorkspaceResources, recordMatchesWorkspaceScope } from './security/record-scope.js';
+import { billingClientIdsForWorkspaceScope, clientLinkedWorkspaceResources, recordMatchesWorkspaceScope, workspaceClientReferenceFields, workspaceProjectReferenceFields } from './security/record-scope.js';
 import { renderProposalEmail } from './email/proposal.js';
 import { buildGoogleRawMessage, decodeGoogleDriveUpload, decodeGoogleMailAttachments, googleMailAddresses, googleThreadBelongsToAllowedContacts, mapGoogleMailMessage } from './integrations/google-mail.js';
 import { classifyGoogleDriveListFailure, googleDriveFileMetadataUrl, googleDriveFilesListUrl, mapGoogleDriveFile, type GoogleDriveFile } from './integrations/google-drive.js';
@@ -3143,13 +3143,25 @@ function workspaceRecordScopeWhere(resource: string, scope?: WorkspaceRecordScop
   if (!scope || scope.mode !== 'selected') return undefined;
   const clientIds = scope.clientIds.map(String);
   const projectIds = scope.projectIds.map(String);
-  const clientFields = ['clientId', 'workspaceClientId', 'clientRecordId'];
-  const projectFields = ['projectId', 'sourceProjectId'];
+  const clientFields = [...workspaceClientReferenceFields];
+  const projectFields = [...workspaceProjectReferenceFields];
   const clientConditions = clientIds.flatMap((id) => clientFields.map((field) => sql`${workspaceRecords.data}->>${field} = ${id}`));
   const projectConditions = projectIds.flatMap((id) => projectFields.map((field) => sql`${workspaceRecords.data}->>${field} = ${id}`));
+  const scopedReferenceConditions = (fields: string[], ids: string[]) => fields.map((field) => {
+    const reference = sql`${workspaceRecords.data}->>${field}`;
+    return or(isNull(reference), eq(reference, ''), ...(ids.length ? [inArray(reference, ids)] : []));
+  });
   if (resource === 'clients') return clientIds.length ? inArray(workspaceRecords.id, clientIds) : sql`false`;
-  if (resource === 'projects') return or(...(projectIds.length ? [inArray(workspaceRecords.id, projectIds)] : []), ...clientConditions) || sql`false`;
-  if (clientLinkedWorkspaceResources.includes(resource as typeof clientLinkedWorkspaceResources[number])) return or(...clientConditions, ...projectConditions) || sql`false`;
+  if (resource === 'projects') return and(
+    or(...(projectIds.length ? [inArray(workspaceRecords.id, projectIds)] : []), ...clientConditions) || sql`false`,
+    ...scopedReferenceConditions(clientFields, clientIds),
+    ...scopedReferenceConditions(projectFields, projectIds),
+  );
+  if (clientLinkedWorkspaceResources.includes(resource as typeof clientLinkedWorkspaceResources[number])) return and(
+    or(...clientConditions, ...projectConditions) || sql`false`,
+    ...scopedReferenceConditions(clientFields, clientIds),
+    ...scopedReferenceConditions(projectFields, projectIds),
+  );
   return undefined;
 }
 
@@ -3890,7 +3902,12 @@ app.post('/api/workspace/:resource', { preHandler: app.authenticate }, async (re
   if (params.success && params.data.resource === 'monitors' && !monitorAssetId?.success) return reply.code(400).send({ error: 'monitor_site_asset_required', message: 'Vincule o agendamento a um ativo valido.' });
   const recordScope = request.user.permissions?.scope;
    if (params.data.resource === 'finance-accounts' && Object.hasOwn(body.data, 'balance') && !isCurrencyBalance(body.data.balance)) return reply.code(400).send({ error: 'finance_account_balance_invalid', message: 'O saldo deve ter no máximo duas casas decimais.' });
-  if (recordScope?.mode === 'selected' && (params.data.resource === 'clients' || (clientLinkedWorkspaceResources.includes(params.data.resource as typeof clientLinkedWorkspaceResources[number]) && !recordMatchesWorkspaceScope(params.data.resource, '', body.data, recordScope)))) return reply.code(403).send({ error: 'record_scope_denied', message: 'Este registro nao pertence ao escopo atribuido.' });
+  const scopedProjectClientLinks = workspaceClientReferenceFields.map((field) => body.data[field]).filter((value): value is string => typeof value === 'string' && value.length > 0);
+  const scopedProjectCreationAllowed = scopedProjectClientLinks.length > 0
+    && scopedProjectClientLinks.every((id) => recordScope?.mode === 'selected' && recordScope.clientIds.map(String).includes(id));
+  if (recordScope?.mode === 'selected' && (params.data.resource === 'clients'
+    || (params.data.resource === 'projects' && !scopedProjectCreationAllowed)
+    || (clientLinkedWorkspaceResources.includes(params.data.resource as typeof clientLinkedWorkspaceResources[number]) && !recordMatchesWorkspaceScope(params.data.resource, '', body.data, recordScope)))) return reply.code(403).send({ error: 'record_scope_denied', message: 'Este registro nao pertence ao escopo atribuido.' });
   if (params.data.resource === 'clients') { const validationError = validateClientServiceCharges(body.data.serviceCharges); if (validationError) return reply.code(400).send({ error: 'client_billing_invalid', message: validationError }); }
   if (params.data.resource === 'approvals') {
     const clientId = z.string().uuid().safeParse(body.data.clientId);

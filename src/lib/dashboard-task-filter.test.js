@@ -9,11 +9,11 @@ const tasks = [
   { id: 'done', state: 'Concluída' },
 ];
 
-test('Meu Dia “Todas” includes open and completed tasks', () => {
+test('Meu Dia Todas includes open and completed tasks', () => {
   assert.deepEqual(filterDashboardTasks(tasks, 'Todas').map((task) => task.id), ['doing', 'pending', 'todo', 'done']);
 });
 
-test('Meu Dia task tabs filter each status, including accented completed labels', () => {
+test('Meu Dia task tabs filter each status using the visible accented completed label', () => {
   assert.deepEqual(filterDashboardTasks(tasks, 'Em andamento').map((task) => task.id), ['doing']);
   assert.deepEqual(filterDashboardTasks(tasks, 'Pendente').map((task) => task.id), ['pending', 'todo']);
   assert.deepEqual(filterDashboardTasks(tasks, 'Concluída').map((task) => task.id), ['done']);

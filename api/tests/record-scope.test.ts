@@ -12,8 +12,40 @@ test('selected client and project scopes include only linked records', () => {
   assert.equal(recordMatchesWorkspaceScope('tasks', 'task-a', { projectId: 'project-b' }, scope), true);
   assert.equal(recordMatchesWorkspaceScope('tasks', 'task-x', { projectId: 'project-x' }, scope), false);
   assert.equal(recordMatchesWorkspaceScope('tasks', 'task-unlinked', {}, scope), false);
+  assert.equal(recordMatchesWorkspaceScope('tasks', 'task-conflicting-client', { projectId: 'project-b', clientId: 'client-x' }, scope), false);
+  assert.equal(recordMatchesWorkspaceScope('tasks', 'task-conflicting-alias', { clientId: 'client-a', workspaceClientId: 'client-x' }, scope), false);
+  assert.equal(recordMatchesWorkspaceScope('tasks', 'task-conflicting-project-alias', { clientId: 'client-a', projectId: 'project-b', sourceProjectId: 'project-x' }, scope), false);
+  assert.equal(recordMatchesWorkspaceScope('tasks', 'task-numeric-project', { clientId: 'client-a', projectId: 42 }, scope), false);
+  assert.equal(recordMatchesWorkspaceScope('tasks', 'task-object-client', { clientId: { id: 'client-a' }, projectId: 'project-b' }, scope), false);
   assert.equal(recordMatchesWorkspaceScope('tickets', 'ticket-a', { workspaceClientId: 'client-a' }, scope), true);
   assert.equal(recordMatchesWorkspaceScope('tickets', 'ticket-x', { client: 'Same visible name' }, scope), false);
+});
+
+test('selected client scope leaves resources without client links untouched', () => {
+  assert.equal(recordMatchesWorkspaceScope('settings', 'setting-a', { companyId: 'client-outside' }, scope), true);
+  assert.equal(recordMatchesWorkspaceScope('notifications', 'notice-a', { project_id: 'project-outside' }, scope), true);
+});
+
+test('alternate tenant relationship aliases cannot bypass selected scope', () => {
+  const clientAliases = [
+    'client_id', 'workspace_client_id', 'client_record_id', 'companyId', 'workspaceCompanyId',
+    'companyRecordId', 'company_id', 'workspace_company_id', 'company_record_id', 'customerId',
+    'workspaceCustomerId', 'customerRecordId', 'customer_id', 'workspace_customer_id', 'customer_record_id',
+  ];
+  for (const field of clientAliases) {
+    assert.equal(recordMatchesWorkspaceScope('tickets', `linked-${field}`, { [field]: 'client-a' }, scope), true, field);
+    assert.equal(recordMatchesWorkspaceScope('tickets', `foreign-${field}`, { [field]: 'client-x' }, scope), false, field);
+    assert.equal(recordMatchesWorkspaceScope('tickets', `conflict-${field}`, { clientId: 'client-a', [field]: 'client-x' }, scope), false, field);
+  }
+
+  const projectAliases = ['workspaceProjectId', 'projectRecordId', 'project_id', 'source_project_id', 'workspace_project_id', 'project_record_id'];
+  for (const field of projectAliases) {
+    assert.equal(recordMatchesWorkspaceScope('tickets', `linked-${field}`, { [field]: 'project-b' }, scope), true, field);
+    assert.equal(recordMatchesWorkspaceScope('tickets', `foreign-${field}`, { [field]: 'project-x' }, scope), false, field);
+    assert.equal(recordMatchesWorkspaceScope('tickets', `conflict-${field}`, { projectId: 'project-b', [field]: 'project-x' }, scope), false, field);
+  }
+  assert.equal(recordMatchesWorkspaceScope('projects', 'project-b', { company_id: 'client-x' }, scope), false);
+  assert.equal(recordMatchesWorkspaceScope('projects', 'project-x', { customer_id: 'client-a' }, scope), true);
 });
 
 test('unrelated workspace configuration stays shared while all scope preserves legacy access', () => {
@@ -24,7 +56,7 @@ test('unrelated workspace configuration stays shared while all scope preserves l
 
 test('billing scope includes assigned clients and clients attached to assigned projects only', () => {
   assert.deepEqual(billingClientIdsForWorkspaceScope(scope, [
-    { id: 'project-b', data: { clientId: 'client-from-project' } },
+    { id: 'project-b', data: { company_id: 'client-from-project' } },
     { id: 'project-x', data: { clientId: 'unassigned-client' } },
   ]), ['client-a', 'client-from-project']);
   assert.deepEqual(billingClientIdsForWorkspaceScope({ ...scope, clientIds: [], projectIds: [] }, []), []);
