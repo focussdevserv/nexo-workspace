@@ -10,7 +10,7 @@ const defaults = {
 
 test('settings import replaces dirty edits only after explicit confirmation', () => {
   let prompted = 0;
-  const confirmReplace = (message) => { prompted += 1; assert.match(message, /substituÃ­-las/); return false; };
+  const confirmReplace = (message) => { prompted += 1; assert.match(message, /substituí-las/); return false; };
 
   assert.equal(confirmSettingsImport({ dirty: false, confirmReplace }), true);
   assert.equal(confirmSettingsImport({ dirty: true, confirmReplace }), false);

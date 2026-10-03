@@ -1,6 +1,29 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { appendSentPortalMessage, canSendPortalMessage, canSubmitPortalApprovalDecision, copyPortalLink, portalLinkActionLabel, shouldConfirmPortalLinkRotation, splitClientPortalApprovals } from './client-portal-actions.js';
+import { acquireClientPortalActionAfterConfirmation, appendSentPortalMessage, canSendPortalMessage, canSubmitPortalApprovalDecision, copyPortalLink, createClientPortalActionLock, portalLinkActionLabel, safeClientPortalHref, shouldConfirmPortalLinkRotation, splitClientPortalApprovals } from './client-portal-actions.js';
+
+test('client portal prevents duplicate UI actions until the active request settles', () => {
+  const lock = createClientPortalActionLock();
+  assert.equal(lock.acquire(), true);
+  assert.equal(lock.acquire(), false);
+  lock.release();
+  assert.equal(lock.acquire(), true);
+});
+
+test('canceling link rotation leaves the portal action lock available for the next attempt', () => {
+  const lock = createClientPortalActionLock();
+  assert.equal(acquireClientPortalActionAfterConfirmation(lock, true, () => false), false);
+  assert.equal(acquireClientPortalActionAfterConfirmation(lock, true, () => true), true);
+  lock.release();
+});
+
+test('client portal links allow web and root-relative URLs while rejecting executable or ambiguous destinations', () => {
+  assert.equal(safeClientPortalHref('https://files.example.test/invoice'), 'https://files.example.test/invoice');
+  assert.equal(safeClientPortalHref('/files/invoice.pdf'), '/files/invoice.pdf');
+  for (const value of ['javascript:alert(1)', 'data:text/html,unsafe', '//attacker.example/path', '/\\\\attacker.example', 'https://user:pass@example.test/path']) {
+    assert.equal(safeClientPortalHref(value), '', value);
+  }
+});
 
 test('an active portal link is clearly labeled as a replacement and requires confirmation', () => {
   assert.equal(portalLinkActionLabel(true), 'Substituir link atual');

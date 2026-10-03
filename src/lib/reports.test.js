@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildChartBuckets, buildProjectReportRows, dateOf, formatReportHours, hasReportChartFailures, hasReportSourceFailures, inPeriod, paidReportRevenues, parseReportAmount, periodStart, reportDateLabel, reportHours, reportSourceState, reportSourcesForTab } from './reports.js';
+import { buildChartBuckets, buildProjectReportRows, dateOf, formatReportHours, hasReportChartFailures, hasReportSourceFailures, inPeriod, paidReportRevenues, parseReportAmount, periodStart, reportDateLabel, reportHours, reportRevenueDate, reportSourceState, reportSourcesForTab, revenueRecordsForReport } from './reports.js';
 
 test('report amounts parse Brazilian and US mixed thousands and decimal separators', () => {
   assert.equal(parseReportAmount('R$ 1.234,56'), 1234.56);
@@ -74,6 +74,36 @@ test('paid manual revenues are reported in their settlement period, not creation
 
   assert.deepEqual(paidReportRevenues(revenues, 'month', now).map(({ id }) => id), ['settled-this-month']);
   assert.equal(dateOf(revenues[0], 'paid').toISOString(), '2026-10-01T10:00:00.000Z');
+});
+
+test('report revenue rows and chart dates follow settlement for paid entries', () => {
+  const now = new Date('2026-10-02T15:00:00.000Z');
+  const records = [
+    { id: 'settled-now', status: 'Recebida', date: '2026-09-30', settledAt: '2026-10-01T10:00:00Z', amount: 250 },
+    { id: 'settled-before', status: 'Recebida', date: '2026-10-01', settledAt: '2026-09-30T10:00:00Z', amount: 500 },
+    { id: 'pending-now', status: 'Pendente', date: '2026-10-01', createdAt: '2026-09-30T10:00:00Z', amount: 700 },
+  ];
+
+  const current = revenueRecordsForReport(records, 'month', now);
+  assert.deepEqual(current.map(({ id }) => id), ['settled-now', 'pending-now']);
+  assert.equal(reportRevenueDate(current[0]).toISOString(), '2026-10-01T10:00:00.000Z');
+  assert.equal(reportRevenueDate(current[1]).getDate(), 1);
+  const chart = buildChartBuckets('month', now, current.filter(({ status }) => status === 'Recebida'), (row) => row.amount, 'paid');
+  assert.equal(chart.reduce((sum, bucket) => sum + bucket.value, 0), 250);
+});
+
+test('paid manual revenue falls back to its accounting date when no settlement timestamp exists', () => {
+  const record = { status: 'Recebida', date: '2026-10-01', amount: 250 };
+  assert.equal(reportRevenueDate(record).getDate(), 1);
+  assert.deepEqual(paidReportRevenues([record], 'month', new Date('2026-10-02T12:00:00')), [record]);
+  const chartRows = [{ ...record, paidAt: reportRevenueDate(record) }];
+  const chart = buildChartBuckets('month', new Date('2026-10-02T12:00:00'), chartRows, (item) => item.amount, 'paid');
+  assert.equal(chart.reduce((sum, bucket) => sum + bucket.value, 0), 250);
+});
+
+test('paid billing orders keep the original updatedAt fallback when date may be the due date', () => {
+  const order = { status: 'paid', date: '2026-09-20', updatedAt: '2026-10-01T12:00:00Z' };
+  assert.equal(dateOf(order, 'paid').toISOString(), '2026-10-01T12:00:00.000Z');
 });
 
 test('records with no date are excluded instead of being treated as epoch dated', () => {

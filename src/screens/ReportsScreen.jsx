@@ -2,7 +2,7 @@
 import { BriefcaseBusiness, CheckCircle2, CircleDollarSign, Clock3, Download, RefreshCw, Target, TrendingUp, Users } from 'lucide-react';
 import './reports.css';
 import { fetchAllRecords } from '../lib/workspace-api.js';
-import { buildChartBuckets, buildProjectReportRows, dateOf, formatReportHours, hasReportChartFailures, hasReportSourceFailures, inPeriod, paidReportRevenues, parseReportAmount, reportDateLabel, reportHours, reportSourceState, reportSourcesForTab } from '../lib/reports.js';
+import { buildChartBuckets, buildProjectReportRows, dateOf, formatReportHours, hasReportChartFailures, hasReportSourceFailures, inPeriod, paidReportRevenues, parseReportAmount, reportDateLabel, reportHours, reportRevenueDate, reportSourceState, reportSourcesForTab, revenueRecordsForReport } from '../lib/reports.js';
 import { downloadCsvFile, rowsToCsv } from '../lib/csv.js';
 import { reportTabForKey } from '../lib/report-tab-navigation.js';
 import { isReportProjectActive, isReportProjectCompleted } from '../lib/report-project-status.js';
@@ -77,7 +77,7 @@ export default function ReportsScreen({ notify }) {
   const activeProjects = data.projects.filter(isReportProjectActive);
   const completedProjects = data.projects.filter((item) => isReportProjectCompleted(item) && inPeriod(item, periodId, now, 'completed'));
   const paidOrders = data.orders.filter((item) => ['paid','processed','approved','paga','pago','recebida'].includes(statusKey(item.status)) && inPeriod(item, periodId, now, 'paid'));
-  const periodRevenues = data.revenues.filter((item) => inPeriod(item, periodId, now, 'expense'));
+  const periodRevenues = revenueRecordsForReport(data.revenues, periodId, now);
   const paidRevenues = paidReportRevenues(data.revenues, periodId, now);
   const revenue = [...paidOrders, ...paidRevenues].reduce((sum, item) => sum + parseReportAmount(item.amount ?? item.value), 0);
   const periodExpenses = data.expenses.filter((item) => inPeriod(item, periodId, now, 'expense'));
@@ -101,12 +101,12 @@ export default function ReportsScreen({ notify }) {
     ...leads.map((item) => [item.name || item.title || 'Lead', `Lead · ${item.source || 'Origem não informada'}`, item.stage || item.status || 'Em acompanhamento', item.createdAt || item.created_at || '']),
     ...projects.map((item) => [item.name || item.title || 'Projeto', `Projeto · ${item.client || 'Cliente não informado'}`, item.status || 'Em andamento', item.createdAt || item.created_at || '']),
     ...paidOrders.map((item) => [item.description || 'Pagamento', `Cobrança · ${item.clientName || 'Cliente'}`, currency(item.amount ?? item.value), dateOf(item, 'paid')]),
-    ...periodRevenues.map((item) => [item.description || item.name || 'Receita', `Receita · ${item.counterparty || item.client || 'Cliente'}`, `${item.status || 'Registrada'} · ${currency(item.amount ?? item.value)}`, item.date || item.createdAt || '']),
+    ...periodRevenues.map((item) => [item.description || item.name || 'Receita', `Receita · ${item.counterparty || item.client || 'Cliente'}`, `${item.status || 'Registrada'} · ${currency(item.amount ?? item.value)}`, reportRevenueDate(item)]),
     ...periodExpenses.map((item) => [item.description || item.name || 'Despesa', `Despesa · ${item.category || item.supplier || 'Sem categoria'}`, `− ${currency(item.amount ?? item.value)}`, item.date || item.createdAt || '']),
   ].sort((a, b) => new Date(b[3] || 0).getTime() - new Date(a[3] || 0).getTime()).map(([name, category, status, date]) => [name, category, status, reportDateLabel(date)]);
-  const rows = tab === 'Comercial' ? leads.map((item) => [item.name || item.title || 'Lead', item.source || '—', item.stage || item.status || '—', reportDateLabel(item.createdAt || item.created_at || item.date)]) : tab === 'Projetos' ? buildProjectReportRows(projects, data.tasks, data.hours, periodId, now) : tab === 'Financeiro' ? [...periodRevenues.map((item) => [item.description || item.name || 'Receita', item.counterparty || item.client || 'Cliente', `${item.status || 'Registrada'} · ${currency(item.amount ?? item.value)}`, reportDateLabel(item.date || item.createdAt || item.created_at)]), ...paidOrders.map((item) => [item.description || 'Pagamento', item.clientName || item.client || 'Cliente', `Pago · ${currency(item.amount ?? item.value)}`, reportDateLabel(dateOf(item, 'paid'))]), ...periodExpenses.map((item) => [item.description || item.name || 'Despesa', item.category || item.supplier || 'Despesa', `− ${currency(item.amount ?? item.value)}`, reportDateLabel(item.date || item.createdAt || item.created_at)])] : overviewRows;
+  const rows = tab === 'Comercial' ? leads.map((item) => [item.name || item.title || 'Lead', item.source || '—', item.stage || item.status || '—', reportDateLabel(item.createdAt || item.created_at || item.date)]) : tab === 'Projetos' ? buildProjectReportRows(projects, data.tasks, data.hours, periodId, now) : tab === 'Financeiro' ? [...periodRevenues.map((item) => [item.description || item.name || 'Receita', item.counterparty || item.client || 'Cliente', `${item.status || 'Registrada'} · ${currency(item.amount ?? item.value)}`, reportDateLabel(reportRevenueDate(item))]), ...paidOrders.map((item) => [item.description || 'Pagamento', item.clientName || item.client || 'Cliente', `Pago · ${currency(item.amount ?? item.value)}`, reportDateLabel(dateOf(item, 'paid'))]), ...periodExpenses.map((item) => [item.description || item.name || 'Despesa', item.category || item.supplier || 'Despesa', `− ${currency(item.amount ?? item.value)}`, reportDateLabel(item.date || item.createdAt || item.created_at)])] : overviewRows;
   const exportCsv = () => { const csv = rowsToCsv([['Registro','Categoria / cliente','Status / valor','Data'], ...rows]); downloadCsvFile(`relatorio-${periodId}-${tab.toLowerCase().replaceAll(' ','-')}.csv`, csv); notify('CSV exportado com os registros permitidos pelo seu perfil.'); };
-  const chartRows = tab === 'Projetos' ? completedProjects : tab === 'Comercial' ? leads : [...paidOrders, ...paidRevenues.map((item) => ({ ...item, paidAt: item.date || item.createdAt }))];
+  const chartRows = tab === 'Projetos' ? completedProjects : tab === 'Comercial' ? leads : [...paidOrders, ...paidRevenues.map((item) => ({ ...item, paidAt: reportRevenueDate(item) }))];
   const chartField = tab === 'Projetos' ? 'completed' : tab === 'Comercial' ? 'created' : 'paid';
   const chartSource = tab === 'Projetos' ? 'projects' : tab === 'Comercial' ? 'leads' : 'orders';
   const chartUnavailable = restricted(chartSource) || failed(chartSource) || ((tab === 'Financeiro' || tab === 'Visão geral') && (restricted('revenues') || failed('revenues')));

@@ -5,3 +5,6 @@
 .goal-form-error{color:#b24442;background:#fff0ef;border-radius:6px;padding:8px 9px;margin:10px 0 0;font-size:12px}
 
 .goals-note{align-items:center;flex-wrap:wrap}.goals-note span{flex:1;min-width:min(100%,360px)}.goals-note .admin-secondary{margin-left:auto;white-space:nowrap}.goal-form-help{font-size:12px;line-height:1.5;color:#758198;margin:8px 0 0}.goal-modal input[readonly]{background:#f5f7fa;color:#5c6b7f}.goal-item-footer>div:empty{display:none}@media(max-width:720px){.goals-note .admin-secondary{margin-left:23px}.goals-summary{grid-template-columns:1fr}.goal-modal-fields{grid-template-columns:1fr}}
+.goal-modal{max-height:calc(100dvh - 32px);overflow-y:auto;overscroll-behavior:contain}
+@media(max-height:620px){.goal-modal-backdrop{place-items:start center;overflow-y:auto}.goal-modal{margin:auto 0}}
+@media(max-width:420px){.goal-modal-backdrop{padding:10px}.goals-summary-foot{flex-direction:column;gap:4px}.goals-list-head{align-items:flex-start}.goals-period button{padding-inline:9px}.goals-actions>.admin-primary,.goals-actions>.admin-secondary{flex:1;justify-content:center}}

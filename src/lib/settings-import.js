@@ -9,7 +9,7 @@ const allowedValues = {
 
 export function confirmSettingsImport({ dirty, confirmReplace }) {
   if (!dirty) return true;
-  return confirmReplace('HÃ¡ alteraÃ§Ãµes nÃ£o salvas em ConfiguraÃ§Ãµes. Importar este arquivo e substituÃ­-las?');
+  return confirmReplace('Há alterações não salvas em Configurações. Importar este arquivo e substituí-las?');
 }
 
 export function normalizeImportedSettings(payload, defaults) {

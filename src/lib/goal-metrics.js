@@ -65,3 +65,28 @@ export function calculateGoalMetric(metric, data = {}, states = {}, period = 'mo
   }
   return { state: 'failed', value: null };
 }
+
+export function calculateGoalsSummary(goals = [], data = {}, states = {}, period = 'month', now = new Date(), preferences = {}) {
+  const visible = goals.filter((goal) => goal.period === period);
+  const measurable = visible.flatMap((goal) => {
+    const target = Number(goal.target);
+    if (!Number.isFinite(target) || target <= 0) return [];
+    const current = !goal.metric || goal.metric === 'manual'
+      ? (Number.isFinite(Number(goal.current)) ? Math.max(0, Number(goal.current)) : 0)
+      : calculateGoalMetric(goal.metric, data, states, goal.period || period, now, preferences).value;
+    if (current === null || !Number.isFinite(current)) return [];
+    return [{ current, target }];
+  });
+  const achieved = measurable.filter(({ current, target }) => current >= target).length;
+  const averageProgress = measurable.length
+    ? Math.round(measurable.reduce((sum, { current, target }) => sum + Math.max(0, Math.min(100, Math.round(current / target * 100))), 0) / measurable.length)
+    : null;
+
+  return {
+    visibleCount: visible.length,
+    measurableCount: measurable.length,
+    achieved,
+    averageProgress,
+    revenue: calculateGoalMetric('paid_revenue', data, states, period, now, preferences),
+  };
+}

@@ -2,6 +2,7 @@ export const dateOf = (item, field = 'default') => {
   const candidates = field === 'created' ? [item.createdAt, item.created_at, item.date, item.updatedAt, item.updated_at]
     : field === 'expense' ? [item.date, item.createdAt, item.created_at, item.updatedAt, item.updated_at]
     : field === 'paid' ? [item.settledAt, item.settled_at, item.paymentDetails?.settledAt, item.paymentDetails?.settled_at, item.paidAt, item.paid_at, item.paymentDetails?.paidAt, item.paymentDetails?.paid_at, item.updatedAt, item.updated_at, item.createdAt, item.created_at]
+      : field === 'revenue-paid' ? [item.settledAt, item.settled_at, item.paymentDetails?.settledAt, item.paymentDetails?.settled_at, item.paidAt, item.paid_at, item.paymentDetails?.paidAt, item.paymentDetails?.paid_at, item.date, item.updatedAt, item.updated_at, item.createdAt, item.created_at]
       : field === 'completed' ? [item.completedAt, item.completed_at, item.updatedAt, item.updated_at, item.createdAt, item.created_at]
           : field === 'work' ? [item.startedAt, item.started_at, item.endedAt, item.ended_at, item.createdAt, item.created_at, item.date]
             : field === 'task' ? [item.due, item.dueAt, item.due_at, item.createdAt, item.created_at, item.date, item.updatedAt, item.updated_at]
@@ -29,7 +30,21 @@ const normalizedStatus = (value) => String(value || '').normalize('NFD').replace
 // Manual receipts belong to the period in which they were settled, not the
 // period when the revenue row was first created or its original due date.
 export function paidReportRevenues(records = [], periodId, now = new Date()) {
-  return records.filter((item) => paidReportStatuses.has(normalizedStatus(item.status)) && inPeriod(item, periodId, now, 'paid'));
+  return records.filter((item) => paidReportStatuses.has(normalizedStatus(item.status)) && inPeriod(item, periodId, now, 'revenue-paid'));
+}
+
+// A received revenue belongs to the period in which it was settled. Open and
+// other non-paid entries remain grouped by their accounting date.
+export function revenueRecordsForReport(records = [], periodId, now = new Date()) {
+  return records.filter((item) => paidReportStatuses.has(normalizedStatus(item.status))
+    ? inPeriod(item, periodId, now, 'revenue-paid')
+    : inPeriod(item, periodId, now, 'expense'));
+}
+
+export function reportRevenueDate(item = {}) {
+  return paidReportStatuses.has(normalizedStatus(item.status))
+    ? dateOf(item, 'revenue-paid')
+    : dateOf(item, 'expense');
 }
 
 export const reportSourceState = (source, restrictedSources = [], failedSources = []) =>

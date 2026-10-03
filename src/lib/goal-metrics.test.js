@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateGoalMetric, isGoalDateInPeriod } from './goal-metrics.js';
+import { calculateGoalMetric, calculateGoalsSummary, isGoalDateInPeriod } from './goal-metrics.js';
 
 const now = new Date('2026-10-02T15:00:00.000Z');
 const prefs = { timeZone: 'America/Sao_Paulo', weekStart: 'monday' };
@@ -51,6 +51,29 @@ test('paid revenue goals prioritize settlement timestamps on billing orders', ()
 test('linked goals distinguish access/load errors from a real zero', () => {
   assert.deepEqual(calculateGoalMetric('won_leads', {}, { leads: 'restricted' }, 'month', now, prefs), { state: 'restricted', value: null });
   assert.deepEqual(calculateGoalMetric('won_leads', { leads: [] }, { leads: 'ready' }, 'month', now, prefs), { state: 'ready', value: 0 });
+});
+
+test('goals summary reports actual paid revenue, not manual BRL goal progress', () => {
+  const result = calculateGoalsSummary([
+    { period: 'month', metric: 'manual', unit: 'BRL', current: 9000, target: 10000 },
+    { period: 'month', metric: 'paid_revenue', unit: 'BRL', current: 0, target: 5000 },
+    { period: 'week', metric: 'manual', unit: 'BRL', current: 4000, target: 5000 },
+  ], {
+    orders: [{ status: 'paid', paidAt: '2026-10-01T12:00:00-03:00', amount: 'R$ 1.234,50' }],
+    revenues: [],
+  }, { orders: 'ready', revenues: 'ready' }, 'month', now, prefs);
+
+  assert.equal(result.visibleCount, 2);
+  assert.equal(result.measurableCount, 2);
+  assert.equal(result.achieved, 0);
+  assert.equal(result.averageProgress, 58);
+  assert.deepEqual(result.revenue, { state: 'ready', value: 1234.5 });
+});
+
+test('goals summary retains metric loading or access errors for revenue without a revenue goal', () => {
+  const result = calculateGoalsSummary([{ period: 'month', metric: 'manual', current: 1, target: 5 }], {}, { orders: 'restricted', revenues: 'ready' }, 'month', now, prefs);
+
+  assert.deepEqual(result.revenue, { state: 'restricted', value: null });
 });
 
 test('won-lead goals use the conversion update date instead of the original lead creation date', () => {

@@ -27,6 +27,41 @@ export function canSendPortalMessage(message, busy = false) {
   return !busy && String(message || '').trim().length > 0;
 }
 
+/** A synchronous guard for UI actions whose React disabled state updates on the next render. */
+export function createClientPortalActionLock() {
+  let locked = false;
+  return {
+    acquire() {
+      if (locked) return false;
+      locked = true;
+      return true;
+    },
+    release() {
+      locked = false;
+    },
+  };
+}
+
+export function acquireClientPortalActionAfterConfirmation(lock, needsConfirmation, confirmAction) {
+  if (needsConfirmation && !confirmAction()) return false;
+  return lock.acquire();
+}
+
+/** Only expose web URLs or same-origin root-relative paths as public links. */
+export function safeClientPortalHref(value) {
+  if (typeof value !== 'string') return '';
+  const candidate = value.trim();
+  if (!candidate || /[\\\u0000-\u001f]/.test(candidate) || candidate.startsWith('//')) return '';
+  if (candidate.startsWith('/') && !candidate.startsWith('/\\')) return candidate;
+  try {
+    const url = new URL(candidate);
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return '';
+    return url.toString();
+  } catch {
+    return '';
+  }
+}
+
 export async function copyPortalLink(text, { clipboard = globalThis.navigator?.clipboard, documentRef = globalThis.document } = {}) {
   const value = String(text || '');
   if (!value.trim()) throw new Error('O link do portal está vazio.');
