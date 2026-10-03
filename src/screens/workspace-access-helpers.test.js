@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeAuthEmail, prefillRecoveryEmail, readPasswordResetToken, readWorkspaceAccessMode, workspaceAccessModeUrl } from './workspace-access-helpers.js';
+import { normalizeAuthEmail, passwordConfirmationMatches, prefillRecoveryEmail, readPasswordResetToken, readWorkspaceAccessMode, workspaceAccessModeUrl } from './workspace-access-helpers.js';
 
 test('recovery pre-fills the email already entered on the login form', () => {
   assert.equal(prefillRecoveryEmail('  User@Example.com  '), 'User@Example.com');
@@ -11,6 +11,13 @@ test('recovery pre-fills the email already entered on the login form', () => {
 test('auth requests normalize e-mail case and surrounding whitespace', () => {
   assert.equal(normalizeAuthEmail('  User@Example.com  '), 'user@example.com');
   assert.equal(normalizeAuthEmail(undefined), '');
+});
+
+test('password confirmation requires two matching strings without coercing missing values', () => {
+  assert.equal(passwordConfirmationMatches('a-long-password', 'a-long-password'), true);
+  assert.equal(passwordConfirmationMatches('a-long-password', 'different-password'), false);
+  assert.equal(passwordConfirmationMatches('', ''), true);
+  assert.equal(passwordConfirmationMatches('a-long-password', undefined), false);
 });
 
 test('reads a reset token from the email link fragment so it can survive a page refresh', () => {

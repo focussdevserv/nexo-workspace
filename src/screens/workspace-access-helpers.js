@@ -6,6 +6,10 @@ export function normalizeAuthEmail(email) {
   return typeof email === 'string' ? email.trim().toLowerCase() : '';
 }
 
+export function passwordConfirmationMatches(password, confirmation) {
+  return typeof password === 'string' && typeof confirmation === 'string' && password === confirmation;
+}
+
 export function readPasswordResetToken(hash) {
   if (typeof hash !== 'string') return '';
   return new URLSearchParams(hash.replace(/^#/, '')).get('reset') || '';

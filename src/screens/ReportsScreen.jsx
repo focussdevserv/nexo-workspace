@@ -6,6 +6,7 @@ import { buildChartBuckets, buildProjectReportRows, dateOf, formatReportHours, h
 import { downloadCsvFile, rowsToCsv } from '../lib/csv.js';
 import { reportTabForKey } from '../lib/report-tab-navigation.js';
 import { isReportProjectActive, isReportProjectCompleted } from '../lib/report-project-status.js';
+import { createLatestRequestGuard } from '../lib/latest-request.js';
 
 const periods = [{ id: 'month', label: 'Este mês', months: 1 }, { id: 'quarter', label: 'Últimos 90 dias', months: 3 }, { id: 'year', label: 'Este ano', months: 12 }];
 const tabs = ['Visão geral', 'Comercial', 'Projetos', 'Financeiro'];
@@ -41,14 +42,18 @@ export default function ReportsScreen({ notify }) {
   const [failedSources, setFailedSources] = useState([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const loadRequests = React.useRef(null);
+  if (!loadRequests.current) loadRequests.current = createLatestRequestGuard();
   const period = periods.find((item) => item.id === periodId);
   const load = useCallback(async () => {
+    const requestId = loadRequests.current.begin();
     setLoading(true);
     const results = await Promise.all(reportSources.map(async (source) => {
       try { return { source, records: await fetchAllRecords(source.path) }; }
       catch (reason) { return { source, reason }; }
     }));
     const failures = results.filter((result) => result.reason);
+    if (!loadRequests.current.isCurrent(requestId)) return;
     const permissionFailures = failures.filter((result) => result.reason.code === 'forbidden' || result.reason.details?.status === 403);
     const otherFailures = failures.filter((result) => !permissionFailures.includes(result));
     if (otherFailures.length) {
@@ -61,7 +66,10 @@ export default function ReportsScreen({ notify }) {
     setData(Object.fromEntries(reportSources.map(({ key }) => [key, results.find((result) => result.source.key === key)?.records || []])));
     setLoading(false);
   }, []);
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+    return () => loadRequests.current.invalidate();
+  }, [load]);
   const now = new Date();
   const leads = data.leads.filter((item) => inPeriod(item, periodId, now, 'created'));
   const projects = data.projects.filter((item) => inPeriod(item, periodId, now));

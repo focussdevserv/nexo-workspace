@@ -57,6 +57,8 @@ import { withStableBillingPaidAt } from './billing/paid-at.js';
 import { subscriptionDateTimeSchema, validateSubscriptionDates } from './billing/subscription-dates.js';
 import { billingMethodPreferenceAllows } from './billing/method-preferences.js';
 import { isBillingOrderCancelable } from './billing/order-cancellation.js';
+import { billingProviderIdempotencyKey } from './billing/provider-idempotency.js';
+import { billingRequestFingerprint, billingRequestIdempotencyKey, decideBillingIdempotencyReplay } from './billing/request-idempotency.js';
 import { canTransitionBillingSubscription, normalizeBillingSubscriptionStatus } from './billing/subscription-transitions.js';
 import { buildFinanceRecurrenceDates } from './integrations/finance-recurrence.js';
 import { buildWahaSendFilePayload, classifyWahaQrResponse, classifyWahaSessionReadiness } from './integrations/waha.js';
@@ -2549,6 +2551,8 @@ app.get('/api/billing/orders', { preHandler: app.authenticate }, async (request,
 
 app.post('/api/billing/orders', { preHandler: app.authenticate, config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {
   const body = parseBody(paymentOrderSchema, request.body, reply); if (!body) return;
+  const parsedIdempotencyKey = billingRequestIdempotencyKey(request.headers['idempotency-key']);
+  if (!parsedIdempotencyKey.valid) return reply.code(400).send({ error: 'invalid_idempotency_key', message: 'Envie uma chave Idempotency-Key no formato UUID.' });
   const scopedClientIds = await billingClientIdsForScope(request.user.organizationId, request.user.permissions?.scope);
   if (scopedClientIds && (!body.workspaceClientId || !scopedClientIds.includes(body.workspaceClientId))) return reply.code(403).send({ error: 'record_scope_denied', message: 'Selecione um cliente atribuido ao seu escopo antes de criar a cobranca.' });
   const [preferenceRecord] = await db.select({ data: workspaceRecords.data }).from(workspaceRecords).where(and(
@@ -2571,12 +2575,36 @@ app.post('/api/billing/orders', { preHandler: app.authenticate, config: { rateLi
     const [client] = await db.select({ id: workspaceRecords.id }).from(workspaceRecords).where(and(eq(workspaceRecords.id, body.workspaceClientId), eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'clients'), isNull(workspaceRecords.archivedAt))).limit(1);
     if (!client) return reply.code(404).send({ error: 'workspace_client_not_found', message: 'O cliente selecionado não existe nesta agência.' });
   }
-  const [invoice] = await db.insert(billingOrders).values({
-    organizationId: request.user.organizationId, clientId: body.clientId, workspaceClientId: body.workspaceClientId, createdBy: request.user.sub,
-    mercadoPagoAccountId: sellerTokens?.accountId ?? null,
-    clientName: body.clientName, payerEmail: body.payerEmail, description: body.description,
-    amount: body.amount, method: body.method, status: 'creating',
-  }).returning();
+  const requestKey = parsedIdempotencyKey.key ?? randomUUID();
+  const requestHash = billingRequestFingerprint(body);
+  reply.header('Idempotency-Key', requestKey);
+  const reservation = await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${request.user.organizationId}:billing-order:${requestKey}`}, 0))`);
+    const [existing] = await tx.select().from(billingOrders).where(and(
+      eq(billingOrders.organizationId, request.user.organizationId), eq(billingOrders.requestIdempotencyKey, requestKey),
+    )).limit(1);
+    if (existing) {
+      const decision = decideBillingIdempotencyReplay(existing.requestHash || '', requestHash, existing.status === 'failed' ? 'failed' : existing.status === 'creating' ? 'creating' : 'completed');
+      if (decision === 'retry') {
+        const [retry] = await tx.update(billingOrders).set({ status: 'creating', updatedAt: new Date() }).where(and(
+          eq(billingOrders.id, existing.id), eq(billingOrders.organizationId, request.user.organizationId), eq(billingOrders.status, 'failed'),
+        )).returning();
+        return retry ? { decision, invoice: retry } : { decision: 'in_progress' as const, invoice: existing };
+      }
+      return { decision, invoice: existing };
+    }
+    const [created] = await tx.insert(billingOrders).values({
+      organizationId: request.user.organizationId, clientId: body.clientId, workspaceClientId: body.workspaceClientId, createdBy: request.user.sub,
+      mercadoPagoAccountId: sellerTokens?.accountId ?? null,
+      clientName: body.clientName, payerEmail: body.payerEmail, description: body.description,
+      amount: body.amount, method: body.method, requestIdempotencyKey: requestKey, requestHash, status: 'creating',
+    }).returning();
+    return { decision: 'new' as const, invoice: created! };
+  });
+  if (reservation.decision === 'conflict') return reply.code(409).send({ error: 'idempotency_key_reused', message: 'Esta chave Idempotency-Key já foi usada com outros dados. Gere uma nova chave para uma cobrança diferente.' });
+  if (reservation.decision === 'in_progress') return reply.code(409).send({ error: 'billing_request_in_progress', message: 'Esta cobrança já está sendo processada. Aguarde e atualize o status.' });
+  if (reservation.decision === 'replay') return reply.code(200).send({ data: reservation.invoice, replayed: true });
+  const invoice = reservation.invoice;
   const paymentType = body.method === 'pix' ? 'bank_transfer' : body.method === 'boleto' ? 'ticket' : body.method;
   const requestedDue = body.dueDate ? paymentDueDateDuration(body.dueDate) : null;
   const paymentMethod: Record<string, unknown> = body.method === 'pix'
@@ -2589,9 +2617,9 @@ app.post('/api/billing/orders', { preHandler: app.authenticate, config: { rateLi
   if (body.address) payer.address = { zip_code: body.address.zipCode, street_name: body.address.streetName, street_number: body.address.streetNumber, neighborhood: body.address.neighborhood, city: body.address.city, state: body.address.state.toUpperCase() };
   try {
     const order = await mercadoPago<Record<string, any>>(request.user.organizationId, '/v1/orders', {
-      method: 'POST', headers: { 'X-Idempotency-Key': randomUUID() },
+      method: 'POST', headers: { 'X-Idempotency-Key': billingProviderIdempotencyKey('order-create', invoice.id) },
       body: JSON.stringify({
-        type: 'online', external_reference: invoice!.id, processing_mode: 'automatic',
+        type: 'online', external_reference: invoice.id, processing_mode: 'automatic',
         total_amount: body.amount.toFixed(2), description: body.description, payer,
         transactions: { payments: [{ amount: body.amount.toFixed(2), payment_method: paymentMethod, ...(body.method === 'pix' ? { expiration_time: requestedDue?.duration || 'PT24H' } : {}), ...(body.method === 'boleto' ? { expiration_time: requestedDue?.duration || 'P5D' } : {}) }] },
       }),
@@ -2599,15 +2627,15 @@ app.post('/api/billing/orders', { preHandler: app.authenticate, config: { rateLi
     const details = paymentDetailsFromOrder(order);
     const status = providerStatus(details.status);
     const updatedAt = new Date();
-    const paymentDetails = withStableBillingPaidAt('creating', status, {}, details, invoice!.updatedAt, updatedAt);
+    const paymentDetails = withStableBillingPaidAt('creating', status, {}, details, invoice.updatedAt, updatedAt);
     const [saved] = await db.update(billingOrders).set({
       mpOrderId: details.orderId, mpPaymentId: details.paymentId, status, statusDetail: details.statusDetail,
       paymentDetails, dueAt: details.expirationAt ? new Date(details.expirationAt) : body.dueDate ? paymentDueDateAtEndOfDay(body.dueDate) : null, updatedAt,
-    }).where(eq(billingOrders.id, invoice!.id)).returning();
-    await db.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'billing_order', entityId: invoice!.id, action: 'created', payload: { method: body.method, amount: body.amount } });
+    }).where(eq(billingOrders.id, invoice.id)).returning();
+    await db.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'billing_order', entityId: invoice.id, action: 'created', payload: { method: body.method, amount: body.amount } });
     return reply.code(201).send({ data: saved });
   } catch (error) {
-    await db.update(billingOrders).set({ status: 'failed', updatedAt: new Date() }).where(eq(billingOrders.id, invoice!.id));
+    await db.update(billingOrders).set({ status: 'failed', updatedAt: new Date() }).where(eq(billingOrders.id, invoice.id));
     if (error instanceof Error && error.message === 'mercadopago_not_configured') return reply.code(503).send({ error: 'payment_provider_unavailable', message: 'Mercado Pago ainda não está configurado no servidor.' });
     return reply.code(502).send({ error: 'payment_creation_failed', message: 'O Mercado Pago não conseguiu criar esta cobrança. Confira os dados e tente novamente.' });
   }
@@ -2628,7 +2656,7 @@ app.post('/api/billing/orders/:id/cancel', { preHandler: app.authenticate, confi
   if (!order.mpOrderId || !await mercadoPagoRecordBelongsToCurrentAccount(request.user.organizationId, order.mercadoPagoAccountId) || !await isIntegrationEnabled(request.user.organizationId, 'mercadopago')) return reply.code(409).send({ error: 'payment_provider_unavailable', message: 'A cobrança pertence a outra conta vendedora ou a conta atual não está conectada. A cobrança não foi alterada.' });
   try {
     const canceledOrder = await mercadoPago<Record<string, any>>(request.user.organizationId, `/v1/orders/${encodeURIComponent(order.mpOrderId)}/cancel`, {
-      method: 'POST', headers: { 'X-Idempotency-Key': randomUUID() },
+      method: 'POST', headers: { 'X-Idempotency-Key': billingProviderIdempotencyKey('order-cancel', order.id) },
     });
     const details = paymentDetailsFromOrder(canceledOrder);
     const [saved] = await db.update(billingOrders).set({
@@ -2690,6 +2718,8 @@ app.get('/api/billing/subscriptions', { preHandler: app.authenticate }, async (r
 
 app.post('/api/billing/subscriptions', { preHandler: app.authenticate, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
   const body = parseBody(subscriptionSchema, request.body, reply); if (!body) return;
+  const parsedIdempotencyKey = billingRequestIdempotencyKey(request.headers['idempotency-key']);
+  if (!parsedIdempotencyKey.valid) return reply.code(400).send({ error: 'invalid_idempotency_key', message: 'Envie uma chave Idempotency-Key no formato UUID.' });
   const scopedClientIds = await billingClientIdsForScope(request.user.organizationId, request.user.permissions?.scope);
   if (scopedClientIds && (!body.workspaceClientId || !scopedClientIds.includes(body.workspaceClientId))) return reply.code(403).send({ error: 'record_scope_denied', message: 'Selecione um cliente atribuido ao seu escopo antes de criar a assinatura.' });
   if (!await isIntegrationEnabled(request.user.organizationId, 'mercadopago')) return reply.code(409).send({ error: 'integration_disconnected', message: 'Mercado Pago está desconectado no Focusshub. Reative em Integrações para usar assinaturas.' });
@@ -2703,17 +2733,42 @@ app.post('/api/billing/subscriptions', { preHandler: app.authenticate, config: {
     const [client] = await db.select({ id: workspaceRecords.id }).from(workspaceRecords).where(and(eq(workspaceRecords.id, body.workspaceClientId), eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'clients'), isNull(workspaceRecords.archivedAt))).limit(1);
     if (!client) return reply.code(404).send({ error: 'workspace_client_not_found', message: 'O cliente selecionado não existe nesta agência.' });
   }
-  const [subscription] = await db.insert(billingSubscriptions).values({
-    organizationId: request.user.organizationId, clientId: body.clientId, workspaceClientId: body.workspaceClientId, createdBy: request.user.sub,
-    mercadoPagoAccountId: sellerTokens?.accountId ?? null,
-    clientName: body.clientName, payerEmail: body.payerEmail, description: body.description,
-    amount: body.amount, frequency: body.frequency, frequencyInterval: body.frequencyInterval, status: 'creating',
-  }).returning();
+  const requestKey = parsedIdempotencyKey.key ?? randomUUID();
+  const requestHash = billingRequestFingerprint(body);
+  reply.header('Idempotency-Key', requestKey);
+  const reservation = await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${request.user.organizationId}:billing-subscription:${requestKey}`}, 0))`);
+    const [existing] = await tx.select().from(billingSubscriptions).where(and(
+      eq(billingSubscriptions.organizationId, request.user.organizationId), eq(billingSubscriptions.requestIdempotencyKey, requestKey),
+    )).limit(1);
+    if (existing) {
+      const decision = decideBillingIdempotencyReplay(existing.requestHash || '', requestHash, existing.status === 'failed' ? 'failed' : existing.status === 'creating' ? 'creating' : 'completed');
+      if (decision === 'retry') {
+        const [retry] = await tx.update(billingSubscriptions).set({ status: 'creating', updatedAt: new Date() }).where(and(
+          eq(billingSubscriptions.id, existing.id), eq(billingSubscriptions.organizationId, request.user.organizationId), eq(billingSubscriptions.status, 'failed'),
+        )).returning();
+        return retry ? { decision, subscription: retry } : { decision: 'in_progress' as const, subscription: existing };
+      }
+      return { decision, subscription: existing };
+    }
+    const [created] = await tx.insert(billingSubscriptions).values({
+      organizationId: request.user.organizationId, clientId: body.clientId, workspaceClientId: body.workspaceClientId, createdBy: request.user.sub,
+      mercadoPagoAccountId: sellerTokens?.accountId ?? null,
+      clientName: body.clientName, payerEmail: body.payerEmail, description: body.description,
+      amount: body.amount, frequency: body.frequency, frequencyInterval: body.frequencyInterval,
+      requestIdempotencyKey: requestKey, requestHash, status: 'creating',
+    }).returning();
+    return { decision: 'new' as const, subscription: created! };
+  });
+  if (reservation.decision === 'conflict') return reply.code(409).send({ error: 'idempotency_key_reused', message: 'Esta chave Idempotency-Key já foi usada com outros dados. Gere uma nova chave para outra assinatura.' });
+  if (reservation.decision === 'in_progress') return reply.code(409).send({ error: 'billing_request_in_progress', message: 'Esta assinatura já está sendo processada. Aguarde e atualize o status.' });
+  if (reservation.decision === 'replay') return reply.code(200).send({ data: reservation.subscription, replayed: true });
+  const subscription = reservation.subscription;
   try {
     const result = await mercadoPago<Record<string, any>>(request.user.organizationId, '/preapproval', {
-      method: 'POST', headers: { 'X-Idempotency-Key': randomUUID() },
+      method: 'POST', headers: { 'X-Idempotency-Key': billingProviderIdempotencyKey('subscription-create', subscription.id) },
       body: JSON.stringify({
-        reason: body.description, external_reference: subscription!.id, payer_email: body.payerEmail,
+        reason: body.description, external_reference: subscription.id, payer_email: body.payerEmail,
         auto_recurring: {
           frequency: body.frequencyInterval, frequency_type: body.frequency,
           transaction_amount: body.amount, currency_id: 'BRL',
@@ -2726,11 +2781,11 @@ app.post('/api/billing/subscriptions', { preHandler: app.authenticate, config: {
       mpSubscriptionId: String(result.id), checkoutUrl: result.init_point ? String(result.init_point) : null,
       status: String(result.status ?? 'pending'), nextPaymentAt: result.next_payment_date ? new Date(String(result.next_payment_date)) : body.startAt ? new Date(body.startAt) : null,
       updatedAt: new Date(),
-    }).where(eq(billingSubscriptions.id, subscription!.id)).returning();
-    await db.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'billing_subscription', entityId: subscription!.id, action: 'created', payload: { frequency: body.frequency, frequencyInterval: body.frequencyInterval, amount: body.amount } });
+    }).where(eq(billingSubscriptions.id, subscription.id)).returning();
+    await db.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'billing_subscription', entityId: subscription.id, action: 'created', payload: { frequency: body.frequency, frequencyInterval: body.frequencyInterval, amount: body.amount } });
     return reply.code(201).send({ data: saved });
   } catch {
-    await db.update(billingSubscriptions).set({ status: 'failed', updatedAt: new Date() }).where(eq(billingSubscriptions.id, subscription!.id));
+    await db.update(billingSubscriptions).set({ status: 'failed', updatedAt: new Date() }).where(eq(billingSubscriptions.id, subscription.id));
     return reply.code(502).send({ error: 'subscription_creation_failed', message: 'Não foi possível iniciar a assinatura no Mercado Pago.' });
   }
 });

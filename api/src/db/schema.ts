@@ -72,6 +72,8 @@ export const billingOrders = pgTable('billing_orders', {
   description: text('description').notNull(),
   amount: numeric('amount', { precision: 12, scale: 2, mode: 'number' }).notNull(),
   method: text('method').notNull(),
+  requestIdempotencyKey: text('request_idempotency_key'),
+  requestHash: text('request_hash'),
   status: text('status').default('pending').notNull(),
   statusDetail: text('status_detail'),
   mpOrderId: text('mp_order_id'),
@@ -84,6 +86,7 @@ export const billingOrders = pgTable('billing_orders', {
 }, (table) => [
   index('billing_orders_org_created_idx').on(table.organizationId, table.createdAt),
   index('billing_orders_pending_due_idx').on(table.status, table.dueAt),
+  uniqueIndex('billing_orders_org_request_key_unique').on(table.organizationId, table.requestIdempotencyKey),
   uniqueIndex('billing_orders_mp_order_unique').on(table.mpOrderId),
 ]);
 
@@ -136,6 +139,8 @@ export const billingSubscriptions = pgTable('billing_subscriptions', {
   amount: numeric('amount', { precision: 12, scale: 2, mode: 'number' }).notNull(),
   frequency: text('frequency').notNull(),
   frequencyInterval: numeric('frequency_interval', { precision: 6, scale: 0, mode: 'number' }).notNull(),
+  requestIdempotencyKey: text('request_idempotency_key'),
+  requestHash: text('request_hash'),
   status: text('status').default('pending').notNull(),
   mpSubscriptionId: text('mp_subscription_id'),
   mercadoPagoAccountId: text('mercado_pago_account_id'),
@@ -145,6 +150,7 @@ export const billingSubscriptions = pgTable('billing_subscriptions', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
   index('billing_subscriptions_org_created_idx').on(table.organizationId, table.createdAt),
+  uniqueIndex('billing_subscriptions_org_request_key_unique').on(table.organizationId, table.requestIdempotencyKey),
   uniqueIndex('billing_subscriptions_mp_id_unique').on(table.mpSubscriptionId),
 ]);
 

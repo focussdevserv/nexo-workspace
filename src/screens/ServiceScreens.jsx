@@ -454,6 +454,8 @@ function Inbox({ notify, forceWhatsapp = false, navigationContext = null, onNavi
   const [emailError, setEmailError] = useState(null);
   const [emailProvider, setEmailProvider] = useState('google');
   const [emailProviders, setEmailProviders] = useState([]);
+  const emailLoadRequests = useRef(null);
+  if (!emailLoadRequests.current) emailLoadRequests.current = createLatestRequestGuard();
   const inboxRole = (() => { try { return JSON.parse(sessionStorage.getItem('nexo.api.user') || 'null')?.role || ''; } catch { return ''; } })();
   const canAuthorizeInboxGoogle = canAuthorizeOAuthIntegrations(inboxRole);
   const [selectedSessionId, setSelectedSessionId] = useState('');
@@ -484,20 +486,26 @@ function Inbox({ notify, forceWhatsapp = false, navigationContext = null, onNavi
   }, [current?.id, current?.whatsappSessionId, activeSessions.map((session) => session.id).join('|')]);
   const loadGmail = useCallback(async () => {
     if (document.visibilityState === 'hidden') return;
+    const requestId = emailLoadRequests.current.begin();
     setEmailLoading(true); setEmailError(null);
     try {
       const status = await apiRequest('/api/integrations/status').catch(() => ({ data: [] }));
+      if (!emailLoadRequests.current.isCurrent(requestId)) return;
       const ready = (status.data || []).filter((item) => ['Google Workspace', 'Hostinger E-mail'].includes(item.name) && item.accountEmail && item.enabled);
       setEmailProviders(ready);
       const provider = ready.some((item) => item.name === (emailProvider === 'hostinger' ? 'Hostinger E-mail' : 'Google Workspace')) ? emailProvider : ready.some((item) => item.name === 'Google Workspace') ? 'google' : 'hostinger';
       if (provider !== emailProvider) setEmailProvider(provider);
       if (!ready.length) { setEmailThreads([]); setEmailError({ code: 'integration_not_configured', message: 'Conecte Gmail ou Hostinger em Integra\u00e7\u00f5es para usar a caixa de entrada.' }); return; }
       const result = await apiRequest(provider === 'hostinger' ? '/api/integrations/hostinger/inbox' : '/api/integrations/google/gmail');
-      if (provider === 'hostinger') { const metadata = await fetchAllRecords('/api/workspace/inbox').catch(() => []); setEmailThreads(mergeHostingerThreadMetadata(result.data || [], metadata)); }
-      else { const metadata = await fetchAllRecords('/api/workspace/inbox').catch(() => []); setEmailThreads(mergeGmailThreadMetadata(result.data || [], metadata)); }
+      if (!emailLoadRequests.current.isCurrent(requestId)) return;
+      const metadata = await fetchAllRecords('/api/workspace/inbox').catch(() => []);
+      if (!emailLoadRequests.current.isCurrent(requestId)) return;
+      setEmailThreads(provider === 'hostinger'
+        ? mergeHostingerThreadMetadata(result.data || [], metadata)
+        : mergeGmailThreadMetadata(result.data || [], metadata));
     }
-    catch (error) { setEmailError({ code: error.code || '', message: error.message || 'N\u00e3o foi poss\u00edvel carregar a caixa de e-mail.' }); }
-    finally { setEmailLoading(false); }
+    catch (error) { if (emailLoadRequests.current.isCurrent(requestId)) setEmailError({ code: error.code || '', message: error.message || 'N\u00e3o foi poss\u00edvel carregar a caixa de e-mail.' }); }
+    finally { if (emailLoadRequests.current.isCurrent(requestId)) setEmailLoading(false); }
   }, [emailProvider]);
   const selectConversation = async (item) => {
     setSelectedId(String(item.id));
@@ -567,7 +575,15 @@ function Inbox({ notify, forceWhatsapp = false, navigationContext = null, onNavi
     }
     onNavigationContextConsumed();
   }, [navigationContext?.intentId, navigationContext?.clientId, messagesLoading, clientsStore.loading, clientsStore.records, contactsStore.loading, contactsStore.records, whatsappMessages, onNavigationContextConsumed, notify]);
-  useEffect(() => { if (channel === 'E-mail') loadGmail(); }, [channel, loadGmail]);
+  useEffect(() => {
+    if (channel !== 'E-mail') {
+      emailLoadRequests.current.invalidate();
+      setEmailLoading(false);
+      return undefined;
+    }
+    loadGmail();
+    return () => emailLoadRequests.current.invalidate();
+  }, [channel, loadGmail]);
   useEffect(() => {
     if (channel !== 'E-mail') return undefined;
     const timer = window.setInterval(loadGmail, 30000);

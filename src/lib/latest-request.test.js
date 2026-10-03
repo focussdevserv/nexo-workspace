@@ -37,3 +37,12 @@ test('latest request guard ignores an overlapping stale refresh', () => {
   assert.equal(guard.isCurrent(olderRequest), false);
   assert.equal(guard.isCurrent(newerRequest), true);
 });
+
+test('latest request guard ignores inbox email results after leaving the email channel', () => {
+  const guard = createLatestRequestGuard();
+  const emailRequest = guard.begin();
+
+  guard.invalidate();
+
+  assert.equal(guard.isCurrent(emailRequest), false);
+});

@@ -14,6 +14,7 @@ import { buildSubscriptionSchedule, minimumSubscriptionEndDate } from '../lib/su
 import { formatPaymentDate } from '../lib/payment-date-display.js';
 import { canCancelPaymentOrder, canCancelSubscription, normalizePaymentStatus } from '../lib/payment-status.js';
 import { copyPaymentText } from '../lib/copy-payment-text.js';
+import { createBillingRequestUuid, reuseBillingRequestKey } from '../lib/billing-request-idempotency.js';
 
 const money = (value) => Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const labels = { pending: 'Aguardando pagamento', creating: 'Criando', processing: 'Em processamento', paid: 'Paga', authorized: 'Autorizada', paused: 'Pausada', canceled: 'Cancelada', cancelled: 'Cancelada', overdue: 'Vencida', failed: 'Falhou', refunded: 'Estornada', rejected: 'Recusada', expired: 'Expirada' };
@@ -94,8 +95,13 @@ export function PaymentConsole({ kind = 'orders', notify = () => {}, navigationC
   const [enabledMethods, setEnabledMethods] = useState({ pix: true, boleto: true, card: true });
   const [form, setForm] = useState({ clientId: '', clientName: '', payerEmail: '', description: '', amount: '', method: 'pix', billingType: 'single', dueDate: dateAfterDays(7), startDate: dateAfterDays(1), endDate: '', identificationType: 'CPF', identificationNumber: '', frequency: 'months', frequencyInterval: 1, address: { zipCode: '', streetName: '', streetNumber: '', neighborhood: '', city: '', state: '' } });
   const [installmentContext, setInstallmentContext] = useState(null);
+  const billingRequestAttempt = useRef(null);
   const endpoint = subscriptionMode ? '/api/billing/subscriptions' : '/api/billing/orders';
   const creatingSubscription = subscriptionMode || form.billingType === 'recurring';
+  const billingRequestKey = useCallback((operation, payload) => {
+    billingRequestAttempt.current = reuseBillingRequestKey(billingRequestAttempt.current, operation, payload, createBillingRequestUuid);
+    return billingRequestAttempt.current.key;
+  }, []);
   const methodChoices = [
     { value: 'pix', label: 'Pix · QR Code' },
     { value: 'boleto', label: 'Boleto bancário' },
@@ -176,7 +182,9 @@ export function PaymentConsole({ kind = 'orders', notify = () => {}, navigationC
       const payload = creatingSubscription
         ? { clientName: form.clientName, payerEmail: form.payerEmail, description: form.description, amount: Number(form.amount), ...(form.clientId ? { workspaceClientId: form.clientId } : {}), frequency: form.frequency, frequencyInterval: Number(form.frequencyInterval), ...buildSubscriptionSchedule(form.startDate, form.endDate) }
         : { clientName: form.clientName, payerEmail: form.payerEmail, description: form.description, amount: Number(form.amount), ...(form.clientId ? { workspaceClientId: form.clientId } : {}), method: form.method, ...(['pix', 'boleto'].includes(form.method) ? { dueDate: form.dueDate } : {}), ...(form.method === 'boleto' ? { identificationType: form.identificationType, identificationNumber: form.identificationNumber, address: { zipCode: form.address.zipCode, streetName: form.address.streetName, streetNumber: form.address.streetNumber, neighborhood: form.address.neighborhood, city: form.address.city, state: form.address.state } } : {}) };
-      const response = await request(creatingSubscription ? '/api/billing/subscriptions' : endpoint, { method: 'POST', body: JSON.stringify(payload) });
+      const operation = creatingSubscription ? 'subscriptions' : 'orders';
+      const response = await request(creatingSubscription ? '/api/billing/subscriptions' : endpoint, { method: 'POST', headers: { 'Idempotency-Key': billingRequestKey(operation, payload) }, body: JSON.stringify(payload) });
+      billingRequestAttempt.current = null;
       const followupWarning = await persistInstallmentProgress();
       setResult({ ...response.data, followupWarning, isSubscription: creatingSubscription }); setModal(false); await refresh(); notify(demoMode ? 'Cobrança fictícia criada neste navegador. Nenhum pagamento foi enviado.' : creatingSubscription ? 'Assinatura criada. Envie o link para o cliente autorizar.' : 'Cobrança enviada ao Mercado Pago.');
     } catch (err) { setError(err.message); }
@@ -186,12 +194,14 @@ export function PaymentConsole({ kind = 'orders', notify = () => {}, navigationC
     setBusy(true); setError('');
     try {
       const payer = cardData.payer || {};
-      const response = await request(endpoint, { method: 'POST', body: JSON.stringify({
+      const payload = {
         clientName: form.clientName, payerEmail: payer.email || form.payerEmail, description: form.description, amount: Number(form.amount), ...(form.clientId ? { workspaceClientId: form.clientId } : {}),
         method: additionalData?.paymentTypeId === 'debit_card' ? 'debit_card' : 'credit_card', cardToken: cardData.token,
         paymentMethodId: cardData.payment_method_id, installments: Number(cardData.installments || 1),
         identificationType: payer.identification?.type || form.identificationType, identificationNumber: payer.identification?.number || form.identificationNumber,
-      }) });
+      };
+      const response = await request(endpoint, { method: 'POST', headers: { 'Idempotency-Key': billingRequestKey('orders', payload) }, body: JSON.stringify(payload) });
+      billingRequestAttempt.current = null;
       const followupWarning = await persistInstallmentProgress();
       setResult({ ...response.data, followupWarning, isSubscription: false }); setModal(false); await refresh(); notify(demoMode ? 'Pagamento fictício registrado neste navegador.' : 'Pagamento enviado ao Mercado Pago.');
     } finally { setBusy(false); }
@@ -232,7 +242,7 @@ export function PaymentConsole({ kind = 'orders', notify = () => {}, navigationC
   const copy = async (value) => { if (await copyPaymentText(value)) notify('Copiado para a área de transferência.'); else notify('Não foi possível acessar a área de transferência.'); };
   const scopedItems = clientScope ? filterRecordsForClient(items, clientScope) : items;
   const filtered = filterPayments(scopedItems, { status: statusFilter, due: dueFilter }).filter((item) => `${item.clientName} ${item.description} ${item.status}`.toLocaleLowerCase('pt-BR').includes(search.toLocaleLowerCase('pt-BR')));
-  const resetForm = () => { setInstallmentContext(null); setForm({ clientId: '', clientName: '', payerEmail: '', description: '', amount: '', method: methodChoices[0]?.value || 'pix', billingType: 'single', dueDate: dateAfterDays(defaultDueDays), startDate: dateAfterDays(1), endDate: '', identificationType: 'CPF', identificationNumber: '', frequency: 'months', frequencyInterval: 1, address: { zipCode: '', streetName: '', streetNumber: '', neighborhood: '', city: '', state: '' } }); };
+  const resetForm = () => { billingRequestAttempt.current = null; setInstallmentContext(null); setForm({ clientId: '', clientName: '', payerEmail: '', description: '', amount: '', method: methodChoices[0]?.value || 'pix', billingType: 'single', dueDate: dateAfterDays(defaultDueDays), startDate: dateAfterDays(1), endDate: '', identificationType: 'CPF', identificationNumber: '', frequency: 'months', frequencyInterval: 1, address: { zipCode: '', streetName: '', streetNumber: '', neighborhood: '', city: '', state: '' } }); };
   if (!token) return <PaymentAccess onConnected={setToken} />;
   if (result) {
     const details = result.paymentDetails || {};

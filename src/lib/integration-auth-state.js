@@ -32,10 +32,15 @@ export function googleReauthorizationButtonState(state, loading = false, statusE
 }
 
 export function integrationStatusTone(state, { loading = false, error = false } = {}) {
-  if (!state && (loading || error)) return 'pending';
+  // A cached result must not look authoritative while the latest status request
+  // is still running or has failed. In particular, never keep a green badge
+  // after the API could not confirm that the provider is still connected.
+  if (loading || error) return 'pending';
   return state?.configured && state?.enabled && state.lastTestStatus === 'connected'
     ? 'connected'
-    : !state?.configured || state?.enabled === false ? 'disconnected' : 'pending';
+    : state?.lastTestStatus === 'error' ? 'error'
+      : !state?.configured || state?.enabled === false || state?.lastTestStatus === 'disconnected' ? 'disconnected'
+        : 'pending';
 }
 
 /** OAuth consent routes are restricted by the API to the workspace owner. */

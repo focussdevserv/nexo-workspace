@@ -11,8 +11,9 @@ import './drive-scope.css';
 import { apiRequest, fetchAllRecords } from '../lib/workspace-api.js';
 import { useWorkspacePreferences } from '../lib/workspace-preferences.js';
 import { completeTaskOccurrence } from '../lib/task-recurrence.js';
+import { prepareTaskDetailsUpdate } from '../lib/task-edit-transition.js';
 import { taskIsCompleted, taskMatchesStatus, taskStatusForEdit, withTaskStatus } from '../lib/task-status.js';
-import { taskDependencyBlocker, taskDependencyBlockMessage, taskDependencyWouldCreateCycle, tasksDependingOn } from '../lib/task-dependency.js';
+import { taskDependencyBlocker, taskDependencyBlockMessage, tasksDependingOn } from '../lib/task-dependency.js';
 import { parseAgendaAttendees, validateAgendaAttendees, validateAgendaEvent } from '../lib/agenda-event-validation.js';
 import { agendaEventDurationMinutes, agendaEventEndDate } from '../lib/agenda-event-interval.js';
 import { isAgendaAllDayEvent } from '../lib/agenda-event-presentation.js';
@@ -528,19 +529,9 @@ function WorkScreen({ page, navigationContext = null, onNavigationContextConsume
     notify(`Tarefa concluída. Próxima ocorrência criada para ${new Date(`${result.occurrence.due}T12:00:00`).toLocaleDateString('pt-BR')}.`);
   };
   const saveTaskDetails = async (patch) => {
-    const candidate = tasks.map((item) => String(item.id) === String(selectedTask.id) ? { ...item, ...patch, status: item.status } : item);
-    const currentTask = tasks.find((item) => String(item.id) === String(selectedTask.id));
-    const nextTask = { ...currentTask, ...patch };
-    if (taskDependencyWouldCreateCycle(candidate, selectedTask.id, nextTask.dependency)) {
-      return { ok: false, error: { message: 'Esta dependência criaria um ciclo. Escolha uma tarefa que não dependa desta tarefa.' } };
-    }
-    const completing = currentTask && !taskIsCompleted(currentTask) && taskIsCompleted(nextTask);
-    if (completing) {
-      const blocker = taskDependencyBlocker(tasks, nextTask);
-      if (blocker) return { ok: false, error: { message: taskDependencyBlockMessage(blocker) } };
-    }
-    const next = completing ? completeTaskOccurrence(candidate, selectedTask.id).tasks : candidate.map((item) => String(item.id) === String(selectedTask.id) ? nextTask : item);
-    const result = await setTasks(next);
+    const transition = prepareTaskDetailsUpdate(tasks, selectedTask.id, patch);
+    if (!transition.ok) return transition;
+    const result = await setTasks(transition.tasks);
     if (result?.ok) setSelectedTask((current) => current ? { ...current, ...patch } : current);
     return result;
   };

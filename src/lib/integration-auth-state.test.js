@@ -52,6 +52,18 @@ test('shows a configured but untested provider as pending, not connected', () =>
   assert.equal(integrationStatusTone({ configured: false, enabled: false }), 'disconnected');
 });
 
+test('does not present cached integration status as current while it is loading or unavailable', () => {
+  const previouslyConnected = { configured: true, enabled: true, lastTestStatus: 'connected' };
+  assert.equal(integrationStatusTone(previouslyConnected, { loading: true }), 'pending');
+  assert.equal(integrationStatusTone(previouslyConnected, { error: true }), 'pending');
+});
+
+test('shows provider authentication and setup failures with an actionable non-success tone', () => {
+  assert.equal(integrationStatusTone({ configured: true, enabled: true, lastTestStatus: 'error' }), 'error');
+  assert.equal(integrationStatusTone({ configured: true, enabled: true, lastTestStatus: 'disconnected' }), 'disconnected');
+  assert.equal(integrationStatusTone({ configured: true, enabled: true, lastTestStatus: 'setup_required' }), 'pending');
+});
+
 test('keeps Google reauthorization available after a failed or incomplete test', () => {
   for (const lastTestStatus of ['connected', 'setup_required', 'error']) {
     assert.deepEqual(googleReauthorizationButtonState({ accountEmail: 'user@example.com', enabled: true, lastTestStatus }), {

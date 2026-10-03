@@ -1,0 +1,34 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { billingPayloadFingerprint, createBillingRequestUuid, reuseBillingRequestKey } from './billing-request-idempotency.js';
+
+test('a billing retry reuses its request key for an identical semantic payload', () => {
+  const first = reuseBillingRequestKey(null, 'orders', { amount: 40, payer: { name: 'Ana' } }, () => 'key-1');
+  const retry = reuseBillingRequestKey(first, 'orders', { payer: { name: 'Ana' }, amount: 40 }, () => 'key-2');
+  assert.equal(retry.key, 'key-1');
+});
+
+test('a changed payload or billing operation receives a new request key', () => {
+  const first = reuseBillingRequestKey(null, 'orders', { amount: 40 }, () => 'key-1');
+  assert.equal(reuseBillingRequestKey(first, 'orders', { amount: 41 }, () => 'key-2').key, 'key-2');
+  assert.equal(reuseBillingRequestKey(first, 'subscriptions', { amount: 40 }, () => 'key-3').key, 'key-3');
+});
+
+test('ephemeral card tokens do not turn a retry of the same charge into a new request', () => {
+  assert.equal(billingPayloadFingerprint('orders', { amount: 80, cardToken: 'token-a' }), billingPayloadFingerprint('orders', { amount: 80, cardToken: 'token-b' }));
+});
+
+test('billing request UUID fallback stays valid when crypto.randomUUID is unavailable', () => {
+  const previous = globalThis.crypto;
+  Object.defineProperty(globalThis, 'crypto', { configurable: true, value: undefined });
+  try { assert.match(createBillingRequestUuid(), /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/); }
+  finally { Object.defineProperty(globalThis, 'crypto', { configurable: true, value: previous }); }
+});
+
+test('payment create forms send and retain an Idempotency-Key until successful creation', async () => {
+  const source = await readFile(new URL('../screens/PaymentScreens.jsx', import.meta.url), 'utf8');
+  assert.match(source, /reuseBillingRequestKey/);
+  assert.match(source, /['"]Idempotency-Key['"]\s*:/);
+  assert.match(source, /billingRequestAttempt\.current\s*=\s*null/);
+});

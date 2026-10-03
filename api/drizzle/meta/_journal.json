@@ -78,6 +78,13 @@
       "when": 1790928000000,
       "tag": "0010_billing_provider_account",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1790930000000,
+      "tag": "0011_billing_request_idempotency",
+      "breakpoints": true
     }
   ]
 }

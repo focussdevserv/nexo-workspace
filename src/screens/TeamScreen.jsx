@@ -4,6 +4,7 @@ import { Check, Copy, MoreHorizontal, Pencil, Plus, Search, ShieldCheck, Trash2,
 import { apiRequest } from '../lib/workspace-api.js';
 import { copyTextToClipboard } from '../lib/copy-to-clipboard.js';
 import { isLocalDemoActive } from '../lib/local-demo.js';
+import { createLatestRequestGuard } from '../lib/latest-request.js';
 import { effectiveModulePermissionDraft, permissionDraftForAccount, permissionsPayload, setModulePermissionMode, setModulePermissionValue, validatePermissionDraft } from '../lib/team-permissions.js';
 import './team.css';
 
@@ -108,22 +109,31 @@ function TeamAccessPanel({ notify, onAccountCountChange }) {
   const [editingPermissions, setEditingPermissions] = useState(null);
   const [permissionDraft, setPermissionDraft] = useState(null);
   const [scopeSources, setScopeSources] = useState({ clients: [], projects: [] });
+  const refreshRequests = useRef(null);
+  if (!refreshRequests.current) refreshRequests.current = createLatestRequestGuard();
   const refresh = async () => {
+    const requestId = refreshRequests.current.begin();
     setLoading(true); setError(''); setListError('');
     try {
       const [accountsResult, clientsResult, projectsResult] = await Promise.allSettled([
         apiRequest('/api/team/users'), fetchAllRecords('/api/workspace/clients'), fetchAllRecords('/api/workspace/projects'),
       ]);
+      if (!refreshRequests.current.isCurrent(requestId)) return;
       if (accountsResult.status === 'rejected') throw accountsResult.reason;
       setAccounts(accountsResult.value.data || []);
       const clients = clientsResult.status === 'fulfilled' ? clientsResult.value : [];
       const projects = projectsResult.status === 'fulfilled' ? projectsResult.value : [];
       setScopeSources({ clients, projects });
       setScopeError([clientsResult, projectsResult].some((result) => result.status === 'rejected') ? 'Algumas listas de escopo não carregaram. Escopos selecionados ficam bloqueados para evitar salvar uma seleção incompleta.' : '');
-    } catch (err) { const message = err.message || 'Nao foi possivel carregar os acessos.'; setListError(message); setError(message); }
-    finally { setLoading(false); }
+    } catch (err) {
+      if (!refreshRequests.current.isCurrent(requestId)) return;
+      const message = err.message || 'Nao foi possivel carregar os acessos.'; setListError(message); setError(message);
+    } finally { if (refreshRequests.current.isCurrent(requestId)) setLoading(false); }
   };
-  useEffect(() => { if (currentUser?.role === 'owner' && !localDemo) refresh(); }, [currentUser?.role, localDemo]);
+  useEffect(() => {
+    if (currentUser?.role === 'owner' && !localDemo) refresh();
+    return () => refreshRequests.current.invalidate();
+  }, [currentUser?.role, localDemo]);
   useEffect(() => {
     if (currentUser?.role !== 'owner') return;
     if (localDemo) onAccountCountChange(1);
