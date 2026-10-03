@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildSiteAssetPayload, siteAssetUrlForEdit, siteMonitorSchedulesForAsset } from './site-asset.js';
+import { buildSiteAssetPayload, siteAssetUrlForEdit, siteMonitorScheduleState, siteMonitorSchedulesForAsset } from './site-asset.js';
 
 test('site asset payload keeps display name separate and normalizes a bare domain', () => {
   const client = { id: 'client-1', name: 'Cliente Exemplo' };
@@ -30,6 +30,22 @@ test('removing a site can find every schedule linked by numeric or string asset 
   ];
   assert.deepEqual(siteMonitorSchedulesForAsset('42', schedules).map(({ id }) => id), ['monitor-1', 'monitor-2']);
   assert.deepEqual(siteMonitorSchedulesForAsset(null, schedules), []);
+});
+
+test('monitoring state considers every schedule linked to an asset before reporting paused or saved interval', () => {
+  const schedules = [
+    { id: 'monitor-1', siteAssetId: 42, enabled: false, intervalMinutes: 15 },
+    { id: 'monitor-2', siteAssetId: '42', enabled: true, intervalMinutes: 30 },
+    { id: 'monitor-other', siteAssetId: '420', enabled: true, intervalMinutes: 15 },
+  ];
+  const state = siteMonitorScheduleState('42', schedules, 15);
+  assert.equal(state.enabled, true);
+  assert.equal(state.intervalNeedsSave, true);
+  assert.deepEqual(state.enabledSchedules.map(({ id }) => id), ['monitor-2']);
+  assert.equal(siteMonitorScheduleState('42', schedules, 30).intervalNeedsSave, false);
+  const changedInterval = siteMonitorScheduleState(42, schedules, 5);
+  assert.equal(changedInterval.intervalNeedsSave, true);
+  assert.deepEqual(changedInterval.schedules.map(({ id }) => id), ['monitor-1', 'monitor-2']);
 });
 
 test('site asset URLs must match the public monitor supported HTTP rules', () => {

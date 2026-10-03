@@ -35,3 +35,15 @@ export function siteMonitorSchedulesForAsset(assetId, schedules = []) {
   if (assetId == null || assetId === '') return [];
   return schedules.filter((schedule) => String(schedule.siteAssetId ?? '') === String(assetId));
 }
+
+export function siteMonitorScheduleState(assetId, schedules = [], selectedMinutes = 15) {
+  const linkedSchedules = siteMonitorSchedulesForAsset(assetId, schedules);
+  const enabledSchedules = linkedSchedules.filter((schedule) => schedule.enabled === true);
+  const interval = Number(selectedMinutes);
+  return {
+    schedules: linkedSchedules,
+    enabledSchedules,
+    enabled: enabledSchedules.length > 0,
+    intervalNeedsSave: enabledSchedules.some((schedule) => Number(schedule.intervalMinutes || 15) !== interval),
+  };
+}

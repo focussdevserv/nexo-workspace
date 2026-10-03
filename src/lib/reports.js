@@ -24,25 +24,32 @@ export const inPeriod = (item, periodId, now = new Date(), field = 'default') =>
   return !Number.isNaN(date.getTime()) && date >= periodStart(periodId, now) && date <= now;
 };
 
-const paidReportStatuses = new Set(['paid', 'processed', 'approved', 'paga', 'pago', 'recebida', 'received', 'conciliada', 'conciliado']);
 const normalizedStatus = (value) => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+const paidReportStatuses = new Set(['paid', 'processed', 'approved', 'paga', 'pago', 'recebida', 'received', 'conciliada', 'conciliado']);
+const isPaidReportRecord = (item) => paidReportStatuses.has(normalizedStatus(item.status));
+
+// Billing providers and imported financial records use several equivalent
+// paid states. Keep report totals, rows, and charts on the same status rules.
+export function paidReportPayments(records = [], periodId, now = new Date()) {
+  return records.filter((item) => isPaidReportRecord(item) && inPeriod(item, periodId, now, 'paid'));
+}
 
 // Manual receipts belong to the period in which they were settled, not the
 // period when the revenue row was first created or its original due date.
 export function paidReportRevenues(records = [], periodId, now = new Date()) {
-  return records.filter((item) => paidReportStatuses.has(normalizedStatus(item.status)) && inPeriod(item, periodId, now, 'revenue-paid'));
+  return records.filter((item) => isPaidReportRecord(item) && inPeriod(item, periodId, now, 'revenue-paid'));
 }
 
 // A received revenue belongs to the period in which it was settled. Open and
 // other non-paid entries remain grouped by their accounting date.
 export function revenueRecordsForReport(records = [], periodId, now = new Date()) {
-  return records.filter((item) => paidReportStatuses.has(normalizedStatus(item.status))
+  return records.filter((item) => isPaidReportRecord(item)
     ? inPeriod(item, periodId, now, 'revenue-paid')
     : inPeriod(item, periodId, now, 'expense'));
 }
 
 export function reportRevenueDate(item = {}) {
-  return paidReportStatuses.has(normalizedStatus(item.status))
+  return isPaidReportRecord(item)
     ? dateOf(item, 'revenue-paid')
     : dateOf(item, 'expense');
 }

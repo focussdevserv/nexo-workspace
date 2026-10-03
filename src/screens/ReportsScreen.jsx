@@ -2,7 +2,7 @@
 import { BriefcaseBusiness, CheckCircle2, CircleDollarSign, Clock3, Download, RefreshCw, Target, TrendingUp, Users } from 'lucide-react';
 import './reports.css';
 import { fetchAllRecords } from '../lib/workspace-api.js';
-import { buildChartBuckets, buildProjectReportRows, dateOf, formatReportHours, hasReportChartFailures, hasReportSourceFailures, inPeriod, paidReportRevenues, parseReportAmount, reportDateLabel, reportHours, reportRevenueDate, reportSourceState, reportSourcesForTab, revenueRecordsForReport } from '../lib/reports.js';
+import { buildChartBuckets, buildProjectReportRows, dateOf, formatReportHours, hasReportChartFailures, hasReportSourceFailures, inPeriod, paidReportPayments, paidReportRevenues, parseReportAmount, reportDateLabel, reportHours, reportRevenueDate, reportSourceState, reportSourcesForTab, revenueRecordsForReport } from '../lib/reports.js';
 import { downloadCsvFile, rowsToCsv } from '../lib/csv.js';
 import { reportTabForKey } from '../lib/report-tab-navigation.js';
 import { isReportProjectActive, isReportProjectCompleted } from '../lib/report-project-status.js';
@@ -76,7 +76,7 @@ export default function ReportsScreen({ notify }) {
   const won = leads.filter((item) => [item.stage, item.status].some((value) => ['fechado','ganho','won','closed'].includes(statusKey(value))));
   const activeProjects = data.projects.filter(isReportProjectActive);
   const completedProjects = data.projects.filter((item) => isReportProjectCompleted(item) && inPeriod(item, periodId, now, 'completed'));
-  const paidOrders = data.orders.filter((item) => ['paid','processed','approved','paga','pago','recebida'].includes(statusKey(item.status)) && inPeriod(item, periodId, now, 'paid'));
+  const paidOrders = paidReportPayments(data.orders, periodId, now);
   const periodRevenues = revenueRecordsForReport(data.revenues, periodId, now);
   const paidRevenues = paidReportRevenues(data.revenues, periodId, now);
   const revenue = [...paidOrders, ...paidRevenues].reduce((sum, item) => sum + parseReportAmount(item.amount ?? item.value), 0);

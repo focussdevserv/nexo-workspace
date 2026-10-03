@@ -50,7 +50,7 @@ import { n8nSetupActionRequired } from '../lib/n8n-screen-state.js';
 import { isLocalDemoActive } from '../lib/local-demo.js';
 import { createLatestRequestGuard } from '../lib/latest-request.js';
 import { startGithubActivityRequest } from '../lib/github-activity-request.js';
-import { buildSiteAssetPayload, siteAssetUrlForEdit, siteMonitorSchedulesForAsset } from '../lib/site-asset.js';
+import { buildSiteAssetPayload, siteAssetUrlForEdit, siteMonitorScheduleState, siteMonitorSchedulesForAsset } from '../lib/site-asset.js';
 import { canRemoveSiteAsset } from '../lib/site-asset-removal.js';
 import { siteRenewalDate, summarizeSiteRenewals } from '../lib/site-renewal.js';
 import { confirmWorkspaceDelete, useWorkspacePreferences } from '../lib/workspace-preferences.js';
@@ -885,21 +885,25 @@ function Sites({ page, notify }) {
     if (scheduleBusyId) return;
     setScheduleBusyId(String(asset.id));
     setScheduleError((current) => ({ ...current, [asset.id]: '' }));
-    const schedule = monitorsState.find((item) => String(item.siteAssetId) === String(asset.id));
+    const state = siteMonitorScheduleState(asset.id, monitorsState);
+    const schedule = state.schedules[0];
     const minutes = Number(scheduleIntervals[asset.id] || schedule?.intervalMinutes || 15);
     try {
-      if (schedule?.enabled) {
-        if (minutes !== Number(schedule.intervalMinutes || 15)) {
-          await monitorsStore.update(schedule.id, { intervalMinutes: minutes, nextCheckAt: new Date(Date.now() + minutes * 60_000).toISOString() });
+      if (state.enabled) {
+        if (siteMonitorScheduleState(asset.id, monitorsState, minutes).intervalNeedsSave) {
+          const nextCheckAt = new Date(Date.now() + minutes * 60_000).toISOString();
+          for (const linked of state.enabledSchedules) await monitorsStore.update(linked.id, { intervalMinutes: minutes, nextCheckAt });
           setScheduleIntervals((current) => ({ ...current, [asset.id]: String(minutes) }));
           notify(`Intervalo atualizado para ${minutes} minutos. A próxima checagem seguirá o novo prazo.`);
         } else {
-          await monitorsStore.update(schedule.id, { enabled: false, nextCheckAt: null });
+          for (const linked of state.enabledSchedules) await monitorsStore.update(linked.id, { enabled: false, nextCheckAt: null });
           notify('Checagens automáticas pausadas.');
         }
       } else {
         const data = { siteAssetId: asset.id, name: asset.name, clientId: asset.clientId || null, intervalMinutes: minutes, enabled: true, nextCheckAt: new Date().toISOString() };
-        if (schedule) await monitorsStore.update(schedule.id, data);
+        if (state.schedules.length) {
+          for (const linked of state.schedules) await monitorsStore.update(linked.id, data);
+        }
         else await monitorsStore.create(data);
         notify(`Checagens automáticas ativadas a cada ${minutes} minutos. A primeira ocorre em até 1 minuto.`);
       }
@@ -936,7 +940,10 @@ function Sites({ page, notify }) {
     }
   };
   const monitorsState = monitorsStore.records;
-  const siteSchedule = (assetId) => monitorsState.find((monitor) => String(monitor.siteAssetId) === String(assetId));
+  const siteSchedule = (assetId) => {
+    const schedules = siteMonitorSchedulesForAsset(assetId, monitorsState);
+    return siteMonitorScheduleState(assetId, monitorsState, scheduleIntervals[assetId] || schedules[0]?.intervalMinutes || 15);
+  };
   const removeSiteAsset = async (asset) => {
     if (!canRemoveSiteAsset({ monitorsLoading: monitorsStore.loading, monitorsError: monitorsStore.error }) || removingAssetId) return;
     if (!confirmWorkspaceDelete(`Remover ${asset.name} do cadastro?`, preferences)) return;
@@ -952,9 +959,8 @@ function Sites({ page, notify }) {
   };
   const scheduleButtonLabel = (asset) => {
     const schedule = siteSchedule(asset.id);
-    if (!schedule?.enabled) return 'Agendar';
-    const selectedMinutes = Number(scheduleIntervals[asset.id] || schedule.intervalMinutes || 15);
-    return selectedMinutes !== Number(schedule.intervalMinutes || 15) ? 'Salvar intervalo' : 'Pausar agenda';
+    if (!schedule.enabled) return 'Agendar';
+    return schedule.intervalNeedsSave ? 'Salvar intervalo' : 'Pausar agenda';
   };
   const [assetModal, setAssetModal] = useState(false);
   const [editingAsset, setEditingAsset] = useState(null);

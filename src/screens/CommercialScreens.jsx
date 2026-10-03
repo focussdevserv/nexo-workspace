@@ -34,6 +34,7 @@ import { clientFileRecordForUpload } from "../lib/client-file-link.js";
 import { buildClientRelationshipHistory, clientRelationshipHistoryDateLabel } from "../lib/client-relationship-history.js";
 import { buildCommercialRecordEditorPatch, companyContactCount, commercialRecordEditorDraft, commercialRecordEditorFields, commercialRecordEditorIsDirty } from "../lib/commercial-record-editor.js";
 import { filterCommercialRecords } from "../lib/commercial-record-filter.js";
+import { commercialStageTone } from "../lib/commercial-stage-tone.js";
 import { averageProposalApprovalDays, countLeadsWithoutNextAction, formatElapsedDays } from "../lib/commercial-cycle-metrics.js";
 import { buildLeadFollowUpTaskData, findOpenLeadFollowUpTask, isTerminalLeadStage } from "../lib/lead-follow-up-task.js";
 import { isCommercialDateWithinNextDays } from "../lib/commercial-date.js";
@@ -2810,8 +2811,7 @@ function EmptyState({
   return <div className="com-empty"><span><Search size={20} /></span><b>{messages[noun] || "Nenhum resultado encontrado"}</b><small>{query ? "Tente outro termo ou ajuste os filtros." : "Nenhum item corresponde aos filtros selecionados."}</small><button onClick={onClear}>Limpar busca e filtros</button></div>;
 }
 function stageTone(stage = "") {
-  const value = String(stage || "");
-  return value.includes("Novo") ? "blue" : value.includes("Qualificação") ? "purple" : value.includes("Reunião") ? "amber" : "green";
+  return commercialStageTone(stage);
 }
 function PipelineView({
   items = datasets.leads,

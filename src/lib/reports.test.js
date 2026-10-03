@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildChartBuckets, buildProjectReportRows, dateOf, formatReportHours, hasReportChartFailures, hasReportSourceFailures, inPeriod, paidReportRevenues, parseReportAmount, periodStart, reportDateLabel, reportHours, reportRevenueDate, reportSourceState, reportSourcesForTab, revenueRecordsForReport } from './reports.js';
+import { buildChartBuckets, buildProjectReportRows, dateOf, formatReportHours, hasReportChartFailures, hasReportSourceFailures, inPeriod, paidReportPayments, paidReportRevenues, parseReportAmount, periodStart, reportDateLabel, reportHours, reportRevenueDate, reportSourceState, reportSourcesForTab, revenueRecordsForReport } from './reports.js';
 
 test('report amounts parse Brazilian and US mixed thousands and decimal separators', () => {
   assert.equal(parseReportAmount('R$ 1.234,56'), 1234.56);
@@ -74,6 +74,19 @@ test('paid manual revenues are reported in their settlement period, not creation
 
   assert.deepEqual(paidReportRevenues(revenues, 'month', now).map(({ id }) => id), ['settled-this-month']);
   assert.equal(dateOf(revenues[0], 'paid').toISOString(), '2026-10-01T10:00:00.000Z');
+});
+
+test('billing reports include every paid status recognized by the financial report rules', () => {
+  const now = new Date('2026-10-02T15:00:00.000Z');
+  const orders = [
+    { id: 'paid', status: 'paid', paidAt: '2026-10-01T10:00:00.000Z' },
+    { id: 'received', status: 'received', paidAt: '2026-10-01T11:00:00.000Z' },
+    { id: 'conciliated', status: 'Conciliada', paidAt: '2026-10-01T12:00:00.000Z' },
+    { id: 'pending', status: 'pending', paidAt: '2026-10-01T13:00:00.000Z' },
+    { id: 'outside-period', status: 'approved', paidAt: '2026-09-30T23:59:00.000Z' },
+  ];
+
+  assert.deepEqual(paidReportPayments(orders, 'month', now).map(({ id }) => id), ['paid', 'received', 'conciliated']);
 });
 
 test('report revenue rows and chart dates follow settlement for paid entries', () => {
