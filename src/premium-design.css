@@ -1089,10 +1089,15 @@ html[data-theme] #root .app-shell .dashboard-view > .welcome-row {
   padding: 0 4px;
   align-items: center;
 }
+html[data-theme] #root .app-shell .dashboard-view > .welcome-row > div:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
 html[data-theme] #root .app-shell .dashboard-view > .welcome-row h1 {
   font-size: clamp(30px, 3vw, 42px);
   font-weight: 650;
   letter-spacing: -.055em;
+  white-space: nowrap;
 }
 html[data-theme] #root .app-shell .dashboard-view > .welcome-row .eyebrow {
   margin-bottom: 5px;
@@ -1341,13 +1346,14 @@ html[data-theme='dark'] #root .app-shell .dashboard-view .lead-card .source-tag 
 html[data-theme='dark'] #root .app-shell .dashboard-view .lead-card .lead-action { background: var(--nexo-surface-raised) !important; border-color: var(--nexo-border) !important; color: var(--nexo-text) !important; }
 html[data-theme='dark'] #root .app-shell .dashboard-view .lead-card .lead-action > span { background: #c6f542 !important; color: #171a18 !important; }
 html[data-theme='dark'] #root .app-shell .dashboard-view .alert-icon { background: var(--nexo-lime-soft); color: var(--nexo-text); }
-@media(max-width:1200px) {
+@media(max-width:1600px) {
   html[data-theme] #root .app-shell .dashboard-view { grid-template-columns: minmax(0,1fr); row-gap: 18px; }
   html[data-theme] #root .app-shell .dashboard-view > .welcome-row { grid-column: 1; grid-row: 1; }
   html[data-theme] #root .app-shell .dashboard-view > .stats-grid { grid-column: 1; grid-row: 2; grid-template-columns: repeat(4,minmax(0,1fr)); padding: 13px 16px; border: 1px solid var(--nexo-border); border-radius: 16px; background: var(--nexo-surface); }
   html[data-theme] #root .app-shell .dashboard-view > .dashboard-grid { grid-column: 1; grid-row: 3; }
   html[data-theme] #root .app-shell .dashboard-view > .bottom-alerts { grid-column: 1; grid-row: 4; }
   html[data-theme] #root .app-shell .dashboard-view > .dashboard-data-error { grid-column: 1; }
+  html[data-theme] #root .app-shell .dashboard-view > .attention-reopen { grid-column: 1; }
 }
 @media(max-width:760px) {
   html[data-theme] #root .app-shell .dashboard-view { display: block; }

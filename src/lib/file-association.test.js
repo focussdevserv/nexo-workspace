@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { fileAssociationDraft, resolveFileAssociation } from './file-association.js';
+import { buildLinkedDriveFileRecord, fileAssociationDraft, resolveFileAssociation } from './file-association.js';
 
 const clients = [{ id: 'client-1', name: 'Café Aurora' }, { id: 'client-2', name: 'Ateliê Norte' }];
 const projects = [{ id: 'project-1', name: 'Site institucional', clientId: 'client-1', client: 'Café Aurora' }];
@@ -21,4 +21,34 @@ test('rejects a project belonging to a different selected client', () => {
   assert.deepEqual(resolveFileAssociation({ clientId: 'client-2', projectId: 'project-1' }, clients, projects), {
     error: 'file_project_client_mismatch',
   });
+});
+
+test('linked Drive records keep the selected project and client names for cards and search', () => {
+  const linked = buildLinkedDriveFileRecord({
+    file: { id: 'drive-1', name: 'Brief.pdf', mimeType: 'application/pdf', url: 'https://drive.google.com/open?id=drive-1' },
+    id: 'workspace-file-1',
+    scopeLink: { projectId: 'project-1', clientId: 'client-1' },
+    clients,
+    projects,
+    date: '03/10/2026',
+    size: '2 MB',
+    type: 'pdf',
+  });
+
+  assert.equal(linked.client, clients[0].name);
+  const linkedRecord = { ...linked };
+  delete linkedRecord.client;
+  assert.deepEqual(linkedRecord, {
+    id: 'workspace-file-1', name: 'Brief.pdf', project: 'Site institucional',
+    date: '03/10/2026', size: '2 MB', type: 'pdf', folder: false,
+    url: 'https://drive.google.com/open?id=drive-1', driveFileId: 'drive-1', mimeType: 'application/pdf',
+    clientId: 'client-1', projectId: 'project-1',
+  });
+});
+
+test('rejects a linked Drive record when its selected project has been removed', () => {
+  assert.deepEqual(buildLinkedDriveFileRecord({
+    file: { id: 'drive-1', name: 'Brief.pdf' }, id: 'workspace-file-1',
+    scopeLink: { projectId: 'deleted-project' }, clients, projects,
+  }), { error: 'file_project_not_found' });
 });

@@ -36,3 +36,24 @@ export function resolveFileAssociation(draft = {}, clients = [], projects = []) 
     project: String(project?.name || project?.title || draft.project || ''),
   };
 }
+
+export function buildLinkedDriveFileRecord({ file, id, scopeLink = {}, clients = [], projects = [], date = '', size = '', type = '' }) {
+  if (!file?.id || !id) return { error: 'drive_file_or_record_id_missing' };
+  const association = resolveFileAssociation(scopeLink, clients, projects);
+  if (association.error) return association;
+
+  return {
+    id,
+    name: String(file.name || 'Arquivo sem nome'),
+    project: association.project,
+    client: association.client,
+    date,
+    size,
+    type,
+    folder: file.mimeType === 'application/vnd.google-apps.folder',
+    url: file.url || '',
+    driveFileId: String(file.id),
+    mimeType: file.mimeType || '',
+    ...association,
+  };
+}

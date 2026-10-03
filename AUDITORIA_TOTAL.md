@@ -557,3 +557,16 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - **Validacao:** 563 testes frontend e 221 testes API passaram; lint, build web, build TypeScript da API e `git diff --check` passaram. No navegador local, KPI e grafico coincidiram em R$ 4.800,00, a tabela mostrou movimentos do periodo, console sem erros e sem overflow horizontal a 390 px.
 - **Publicacao:** commit `1a3d29001e23b350597655ae56f9b922cbb15377` publicado e confirmado pelo manifesto web e pela API; banco conectado, HTML e bundle HTTP 200, rota protegida sem sessao HTTP 401.
 - **Limites desta rodada:** a validacao foi direcionada aos modulos alterados e nao equivale a certificacao ponta a ponta de todos os provedores, credenciais ou configuracoes de producao.
+
+## Onda 9 - validacao visual e integridade entre modulos - 03/10/2026
+
+- **Meu Dia:** corrigido o cabecalho comprimido em desktop intermediario; titulo e acoes mantem alinhamento e nao disputam a coluna dos indicadores.
+- **CRM / Financeiro:** links de comprovante do cliente aceitam somente HTTP/HTTPS absoluto, sem credenciais embutidas; links externos abrem com isolamento da janela original.
+- **Projetos / Arquivos:** ao vincular arquivo existente do Drive, o registro herda o nome canonico do cliente/projeto escolhido e rejeita referencias desatualizadas antes de iniciar o salvamento.
+- **Sites e dominios:** remocao aguarda a leitura dos agendamentos de monitoramento; se a leitura falhar, a acao fica bloqueada ate atualizar, evitando deixar agendamentos orfaos.
+- **Automacoes:** erros por integracao n8n ausente ou desconectada agora oferecem acao para abrir Integracoes; outros erros permanecem apresentados como falha de consulta.
+- **Validacao automatizada:** 571 testes frontend e 221 API passaram; `npm run lint`, `npm run build`, `npm run api:build` e `git diff --check` passaram.
+- **Navegador local:** 37 de 37 rotas abriram a 390 px em tema claro e escuro e a 1440 px em tema escuro, sem tela de erro ou overflow horizontal; Meu Dia ficou alinhado a 1440 e 390 px; a tela de Automações mostrou a acao de configuracao n8n; os controles de linha ficaram dentro do card. Console local sem erros nem avisos.
+- **Integridade:** formulários e exemplos foram avaliados apenas em modo de demonstração. O teste de formulário vazio não gravou dados. Não houve chamadas a Google Drive, n8n, WhatsApp, gateways de pagamento ou outras integrações reais.
+- **Produção antes desta onda:** health HTTP 200, banco conectado, manifesto em `1a3d29001e23b350597655ae56f9b922cbb15377`. As alterações desta onda ainda precisam ser publicadas e confirmadas no manifesto.
+- **Limites:** teste local não verifica permissões nem respostas das contas externas, OAuth, uploads reais, entrega de automações ou operações financeiras de produção.

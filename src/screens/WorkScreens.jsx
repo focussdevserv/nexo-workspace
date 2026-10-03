@@ -23,7 +23,7 @@ import { findProjectForTask, taskBelongsToProject } from '../lib/project-task-li
 import { summarizeProjectTasks } from '../lib/project-task-progress.js';
 import { sortFilesByName, sortFilesByRecent } from '../lib/file-sort.js';
 import { classifyWorkspaceFile, matchesWorkspaceFileFilter } from '../lib/file-category.js';
-import { fileAssociationDraft, resolveFileAssociation } from '../lib/file-association.js';
+import { buildLinkedDriveFileRecord, fileAssociationDraft, resolveFileAssociation } from '../lib/file-association.js';
 import { formatDriveFileSize } from '../lib/drive-file-presentation.js';
 import { resolveFileUploadScopeLink } from '../lib/file-upload-scope.js';
 import { formatHoursEntryEnd, hoursDateRange, hoursEntryLocalDate } from '../lib/hours-entry-date.js';
@@ -795,17 +795,19 @@ function WorkScreen({ page, navigationContext = null, onNavigationContextConsume
     if (!driveFile?.id || linkingDriveFileId) return;
     if (fileUploadScopeRequired && !selectedFileScopeLink) { notify('Selecione um cliente ou projeto do seu escopo antes de vincular o arquivo.'); return; }
     if (files.some((file) => String(file.driveFileId) === String(driveFile.id))) { notify('Este arquivo já está vinculado ao workspace.'); return; }
-    setLinkingDriveFileId(String(driveFile.id));
     const modifiedAt = driveFile.modifiedAt ? new Date(driveFile.modifiedAt) : null;
-    const record = {
+    const record = buildLinkedDriveFileRecord({
+      file: driveFile,
       id: globalThis.crypto?.randomUUID?.() || `drive-file-${Date.now()}`,
-      name: driveFile.name,
-      project: '', client: '', date: modifiedAt && !Number.isNaN(modifiedAt.getTime()) ? modifiedAt.toLocaleDateString('pt-BR') : '',
+      scopeLink: selectedFileScopeLink,
+      clients: workspaceClients,
+      projects,
+      date: modifiedAt && !Number.isNaN(modifiedAt.getTime()) ? modifiedAt.toLocaleDateString('pt-BR') : '',
       size: formatDriveFileSize(driveFile.size),
       type: classifyWorkspaceFile({ name: driveFile.name, mimeType: driveFile.mimeType }),
-      folder: driveFile.mimeType === 'application/vnd.google-apps.folder',
-      url: driveFile.url, driveFileId: driveFile.id, mimeType: driveFile.mimeType, ...selectedFileScopeLink,
-    };
+    });
+    if (record.error) { notify('O vínculo de cliente/projeto selecionado não existe mais. Atualize a tela e escolha outro.'); return; }
+    setLinkingDriveFileId(String(driveFile.id));
     try {
       const saved = await setFiles((current) => current.some((file) => String(file.driveFileId) === String(driveFile.id)) ? current : [record, ...current]);
       if (!saved.ok) { notify(saved.error?.message || 'Não foi possível vincular o arquivo ao workspace.'); return; }

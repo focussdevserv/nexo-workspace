@@ -25,7 +25,7 @@ import { splitInstallmentAmounts } from "../lib/installment-plan.js";
 import { clientMonthlyRevenue, clientMonthlyRevenueLabel, parseDisplayAmount, recurringMonthlyAmount } from "../lib/client-billing-summary.js";
 import { downloadCsvFile, recordsToCsv } from "../lib/csv.js";
 import { isLocalDemoActive } from "../lib/local-demo.js";
-import { buildClientFinanceHistory, clientFinanceDateKey, clientFinanceDueDateLabel, clientFinanceEditPatch, clientFinanceFailedResources, clientFinanceFilterCounts, clientFinanceFilterForPage, clientFinanceLegacyClientValue, clientFinanceOpenBillingCount, isClientFinanceCancelled, isClientFinanceSettled, manualFinanceSettlementPatch, normalizeClientSubscriptionTerms, prepareClientContractTrackingPatch, prepareClientServiceChargeUpdate } from "../lib/client-finance.js";
+import { buildClientFinanceHistory, clientFinanceDateKey, clientFinanceDueDateLabel, clientFinanceEditPatch, clientFinanceFailedResources, clientFinanceFilterCounts, clientFinanceFilterForPage, clientFinanceLegacyClientValue, clientFinanceOpenBillingCount, isClientFinanceCancelled, isClientFinanceSettled, manualFinanceSettlementPatch, normalizeClientSubscriptionTerms, prepareClientContractTrackingPatch, prepareClientServiceChargeUpdate, safeClientFinanceExternalHref } from "../lib/client-finance.js";
 import { clientContactActions } from "../lib/client-contact-actions.js";
 import { removeClientContact } from "../lib/client-contact-records.js";
 import { presentClientContact } from "../lib/client-contact-presentation.js";
@@ -1466,6 +1466,7 @@ function ClientBillingRecord({
     expired: "Expirada"
   };
   const due = item.dueAt || item.due;
+  const ticketHref = safeClientFinanceExternalHref(item.paymentDetails?.ticketUrl);
   const dueLabel = clientFinanceDueDateLabel(due) || "Vencimento n\u00e3o informado";
   const paid = item.status === "paid" || item.status === "Paga";
   const copyCode = async () => {
@@ -1479,7 +1480,7 @@ function ClientBillingRecord({
   return <article className="com-client-row com-client-billing-record" aria-busy={refreshing || cancelling}><CircleDollarSign size={15} /><div><b>{item.description || "Cobrança"}</b><small>{item.method || item.paymentDetails?.paymentMethod || "Pagamento"} · {dueLabel}</small></div><strong>{new Intl.NumberFormat("pt-BR", {
         style: "currency",
         currency: "BRL"
-      }).format(Number(item.amount) || 0)}</strong><Badge tone={paid ? "green" : "amber"}>{labels[item.status] || item.status || "Sem status"}</Badge><div className="com-client-finance-row-actions">{(localDemo || item.mpOrderId) && <button type="button" className="com-secondary" disabled={refreshing || cancelling} onClick={() => onRefresh(item)}><RefreshCw size={13} />{refreshing ? "Consultando..." : "Consultar status"}</button>}{item.paymentDetails?.pixCode && <button type="button" className="com-secondary" disabled={refreshing || cancelling} onClick={copyCode}>Copiar Pix</button>}{item.paymentDetails?.ticketUrl && <a className="com-secondary" href={item.paymentDetails.ticketUrl} target="_blank" rel="noreferrer">Abrir boleto</a>}{item.status === "pending" && (localDemo || ["created", "action_required"].includes(item.paymentDetails?.status)) && <button type="button" className="com-secondary com-delete-action" disabled={refreshing || cancelling} onClick={() => onCancel(item)}>{cancelling ? "Cancelando..." : "Cancelar cobran\u00e7a"}</button>}{!paid && <small className="com-client-provider-note">O status é atualizado pelo provedor de pagamento.</small>}</div></article>;
+      }).format(Number(item.amount) || 0)}</strong><Badge tone={paid ? "green" : "amber"}>{labels[item.status] || item.status || "Sem status"}</Badge><div className="com-client-finance-row-actions">{(localDemo || item.mpOrderId) && <button type="button" className="com-secondary" disabled={refreshing || cancelling} onClick={() => onRefresh(item)}><RefreshCw size={13} />{refreshing ? "Consultando..." : "Consultar status"}</button>}{item.paymentDetails?.pixCode && <button type="button" className="com-secondary" disabled={refreshing || cancelling} onClick={copyCode}>Copiar Pix</button>}{ticketHref && <a className="com-secondary" href={ticketHref} target="_blank" rel="noopener noreferrer">Abrir boleto</a>}{item.status === "pending" && (localDemo || ["created", "action_required"].includes(item.paymentDetails?.status)) && <button type="button" className="com-secondary com-delete-action" disabled={refreshing || cancelling} onClick={() => onCancel(item)}>{cancelling ? "Cancelando..." : "Cancelar cobran\u00e7a"}</button>}{!paid && <small className="com-client-provider-note">O status é atualizado pelo provedor de pagamento.</small>}</div></article>;
 }
 function ClientProfileModal({
   client: initialClient,

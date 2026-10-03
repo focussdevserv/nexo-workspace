@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildClientFinanceHistory, clientFinanceDateKey, clientFinanceDueDateLabel, clientFinanceEditPatch, clientFinanceFailedResources, clientFinanceFilterCounts, clientFinanceFilterForPage, clientFinanceLegacyClientValue, clientFinanceOpenBillingCount, isClientFinanceCancelled, isClientFinanceSettled, manualFinanceSettlementPatch, normalizeClientSubscriptionTerms, prepareClientContractTrackingPatch, prepareClientServiceChargeUpdate } from './client-finance.js';
+import { buildClientFinanceHistory, clientFinanceDateKey, clientFinanceDueDateLabel, clientFinanceEditPatch, clientFinanceFailedResources, clientFinanceFilterCounts, clientFinanceFilterForPage, clientFinanceLegacyClientValue, clientFinanceOpenBillingCount, isClientFinanceCancelled, isClientFinanceSettled, manualFinanceSettlementPatch, normalizeClientSubscriptionTerms, prepareClientContractTrackingPatch, prepareClientServiceChargeUpdate, safeClientFinanceExternalHref } from './client-finance.js';
 import { belongsToClient } from '../data/client-link.js';
 
 test('client finance shortcuts map to an in-profile filter', () => {
@@ -15,6 +15,14 @@ test('client finance shortcuts map to an in-profile filter', () => {
 test('client profile shows billing deadlines in the workspace timezone', () => {
   assert.equal(clientFinanceDueDateLabel('2026-10-04T02:59:59.000Z'), '03/10/2026');
   assert.equal(clientFinanceDueDateLabel('invalid'), '');
+});
+
+test('client billing links allow only credential-free HTTP or HTTPS URLs', () => {
+  assert.equal(safeClientFinanceExternalHref('https://payments.example.test/ticket?id=1'), 'https://payments.example.test/ticket?id=1');
+  assert.equal(safeClientFinanceExternalHref('http://payments.example.test/ticket'), 'http://payments.example.test/ticket');
+  for (const value of ['javascript:alert(1)', 'data:text/html,unsafe', '//attacker.example/path', 'https://user:secret@example.test/ticket', '', null]) {
+    assert.equal(safeClientFinanceExternalHref(value), '');
+  }
 });
 
 test('finance failure state is scoped to the active client-profile filter', () => {

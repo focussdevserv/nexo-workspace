@@ -15,6 +15,17 @@ export function clientFinanceDueDateLabel(value) {
   }).format(date);
 }
 
+export function safeClientFinanceExternalHref(value) {
+  if (typeof value !== 'string' || !value.trim()) return '';
+  try {
+    const url = new URL(value.trim());
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return '';
+    return url.toString();
+  } catch {
+    return '';
+  }
+}
+
 export function clientFinanceFilterForPage(page) {
   const normalized = String(page || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLocaleLowerCase('pt-BR');
   if (normalized === 'receitas') return 'revenues';
