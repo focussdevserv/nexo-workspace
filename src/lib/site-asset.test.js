@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildSiteAssetPayload, siteAssetUrlForEdit, siteMonitorScheduleState, siteMonitorSchedulesForAsset } from './site-asset.js';
+import { buildSiteAssetPayload, siteAssetUrlForEdit, siteMonitorIntervalForAsset, siteMonitorScheduleState, siteMonitorSchedulesForAsset } from './site-asset.js';
 
 test('site asset payload keeps display name separate and normalizes a bare domain', () => {
   const client = { id: 'client-1', name: 'Cliente Exemplo' };
@@ -46,6 +46,17 @@ test('monitoring state considers every schedule linked to an asset before report
   const changedInterval = siteMonitorScheduleState(42, schedules, 5);
   assert.equal(changedInterval.intervalNeedsSave, true);
   assert.deepEqual(changedInterval.schedules.map(({ id }) => id), ['monitor-1', 'monitor-2']);
+});
+
+test('monitor interval defaults to an enabled schedule when stale or paused duplicates exist', () => {
+  const schedules = [
+    { id: 'paused', siteAssetId: 'site-1', enabled: false, intervalMinutes: 60 },
+    { id: 'active', siteAssetId: 'site-1', enabled: true, intervalMinutes: 30 },
+    { id: 'other', siteAssetId: 'site-2', enabled: true, intervalMinutes: 5 },
+  ];
+  assert.equal(siteMonitorIntervalForAsset('site-1', schedules), 30);
+  assert.equal(siteMonitorIntervalForAsset('site-2', schedules), 5);
+  assert.equal(siteMonitorIntervalForAsset('missing', schedules), 15);
 });
 
 test('site asset URLs must match the public monitor supported HTTP rules', () => {

@@ -16,6 +16,13 @@ test('finds the open task linked to the lead and ignores completed follow-ups', 
   assert.equal(findOpenLeadFollowUpTask([{ id: 'unlinked', status: 'A fazer' }], '42'), null);
 });
 
+test('falls back to a legacy leadId when sourceLeadId is present but empty', () => {
+  const legacyLinkedTask = { id: 'task-legacy', sourceLeadId: '', leadId: 'lead-7', status: 'A fazer' };
+  assert.equal(findOpenLeadFollowUpTask([legacyLinkedTask], 'lead-7'), legacyLinkedTask);
+  const whitespaceSourceIdTask = { ...legacyLinkedTask, sourceLeadId: '   ' };
+  assert.equal(findOpenLeadFollowUpTask([whitespaceSourceIdTask], 'lead-7'), whitespaceSourceIdTask);
+});
+
 test('builds an active task payload linked to the lead and uses its owner and customer', () => {
   assert.deepEqual(buildLeadFollowUpTaskData({
     id: 'lead-1', name: 'Aline', company: 'Acme', owner: 'Joao', stage: 'Negociação',

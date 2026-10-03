@@ -36,6 +36,13 @@ export function siteMonitorSchedulesForAsset(assetId, schedules = []) {
   return schedules.filter((schedule) => String(schedule.siteAssetId ?? '') === String(assetId));
 }
 
+export function siteMonitorIntervalForAsset(assetId, schedules = [], fallback = 15) {
+  const linked = siteMonitorSchedulesForAsset(assetId, schedules);
+  const selected = linked.find((schedule) => schedule.enabled === true) || linked[0];
+  const interval = Number(selected?.intervalMinutes);
+  return Number.isFinite(interval) && interval > 0 ? interval : fallback;
+}
+
 export function siteMonitorScheduleState(assetId, schedules = [], selectedMinutes = 15) {
   const linkedSchedules = siteMonitorSchedulesForAsset(assetId, schedules);
   const enabledSchedules = linkedSchedules.filter((schedule) => schedule.enabled === true);

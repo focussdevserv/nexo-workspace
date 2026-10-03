@@ -12,7 +12,11 @@ export function isTerminalLeadStage(stage) {
 export function findOpenLeadFollowUpTask(tasks = [], leadId) {
   if (leadId === undefined || leadId === null || leadId === '') return null;
   return tasks.find((task) => {
-    const linkedLeadId = task?.sourceLeadId ?? task?.leadId;
+    // Some older/manual tasks carry an empty sourceLeadId alongside a valid
+    // leadId. Nullish coalescing treats the empty string as authoritative and
+    // misses the existing task, causing the CRM retry to create a duplicate.
+    const linkedLeadId = [task?.sourceLeadId, task?.leadId]
+      .find((value) => value !== undefined && value !== null && String(value).trim() !== '');
     const states = [normalized(task?.state), normalized(task?.status)].filter(Boolean);
     return String(linkedLeadId ?? '') === String(leadId) && !states.some((state) => terminalTaskStates.has(state));
   }) || null;
