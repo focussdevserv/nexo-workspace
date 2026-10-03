@@ -113,7 +113,37 @@ function useLocalState(key, fallback) {
     const newById = new Map(next.map((item) => [String(item.id), item]));
     const createdIds = {};
     const recordData = (item) => Object.fromEntries(Object.entries(item).filter(([field]) => !['id', 'createdAt', 'updatedAt'].includes(field)));
-    return Promise.all([
+    const createdRows = next.filter((item) => !oldById.has(String(item.id)));
+    const changedRows = next.filter((item) => oldById.has(String(item.id)) && JSON.stringify(recordData(item)) !== JSON.stringify(recordData(oldById.get(String(item.id)))));
+    const deletedRows = previous.filter((item) => !newById.has(String(item.id)));
+    const completedRecurringTask = resource === 'tasks' && createdRows.length === 1 && changedRows.length === 1 && !deletedRows.length
+      && !taskIsCompleted(oldById.get(String(changedRows[0].id))) && taskIsCompleted(changedRows[0])
+      && String(createdRows[0].recurrenceId || createdRows[0].id) === String(changedRows[0].recurrenceId || changedRows[0].id)
+      && Number(createdRows[0].recurrenceSequence || 1) === Number(changedRows[0].recurrenceSequence || 1) + 1;
+    const atomicAgendaSeries = resource === 'events' && createdRows.length >= 2 && !changedRows.length && !deletedRows.length
+      && new Set(createdRows.map((row) => String(row.recurrenceId || ''))).size === 1
+      && Boolean(createdRows[0].recurrenceId) && createdRows.every((row) => Number(row.recurrenceCount) === createdRows.length);
+    let persistRequest;
+    if (!isLocalDemoActive() && atomicAgendaSeries) {
+      const seriesId = String(createdRows[0].recurrenceId);
+      persistRequest = apiRequest('/api/workspace/events/recurring-series', { method: 'POST', body: JSON.stringify({ seriesId, events: createdRows.map((row) => ({ clientId: String(row.id), data: recordData(row) })) }) }).then(({ data }) => {
+        const serverRecords = new Map(data.records.map((record) => [String(record.clientId), record]));
+        data.records.forEach((record) => { createdIds[String(record.clientId)] = String(record.id); });
+        valueRef.current = next.map((row) => serverRecords.get(String(row.id)) || row);
+        setValue(valueRef.current);
+      });
+    } else if (!isLocalDemoActive() && completedRecurringTask) {
+      const currentTask = changedRows[0];
+      const previousTask = oldById.get(String(currentTask.id));
+      const patch = Object.fromEntries(Object.entries(recordData(currentTask)).filter(([field, value]) => JSON.stringify(value) !== JSON.stringify(recordData(previousTask)[field])));
+      persistRequest = apiRequest(`/api/workspace/tasks/${encodeURIComponent(currentTask.id)}/complete-occurrence`, { method: 'POST', body: JSON.stringify({ patch, nextOccurrence: recordData(createdRows[0]) }) }).then(({ data }) => {
+        createdIds[String(createdRows[0].id)] = String(data.nextOccurrence.id);
+        const serverRecords = new Map([[String(currentTask.id), data.task], [String(createdRows[0].id), data.nextOccurrence]]);
+        valueRef.current = next.map((row) => serverRecords.get(String(row.id)) || row);
+        setValue(valueRef.current);
+      });
+    } else {
+      persistRequest = Promise.all([
       ...next.filter((item) => !oldById.has(String(item.id))).map(async (item) => {
         const tempId = String(item.id);
         const saved = await apiRequest(`/api/workspace/${resource}`, { method: 'POST', body: JSON.stringify({ data: recordData(item) }) });
@@ -122,7 +152,9 @@ function useLocalState(key, fallback) {
       }),
       ...next.filter((item) => oldById.has(String(item.id)) && JSON.stringify(recordData(item)) !== JSON.stringify(recordData(oldById.get(String(item.id))))).map((item) => apiRequest(`/api/workspace/${resource}/${item.id}`, { method: 'PATCH', body: JSON.stringify({ data: recordData(item) }) })),
       ...previous.filter((item) => !newById.has(String(item.id))).map((item) => apiRequest(`/api/workspace/${resource}/${item.id}`, { method: 'DELETE' })),
-    ]).then(() => { setSyncError(''); return { ok: true, records: valueRef.current, createdIds }; }).catch(async (error) => {
+      ]);
+    }
+    return persistRequest.then(() => { setSyncError(''); return { ok: true, records: valueRef.current, createdIds }; }).catch(async (error) => {
       const recovery = await recoverWorkspaceRecordsAfterFailure(fetchAllRecords, resource, previous);
       if (recovery.recovered) {
         valueRef.current = recovery.records;
@@ -355,6 +387,7 @@ function WorkScreen({ page, navigationContext = null, onNavigationContextConsume
   const [savingAgenda, setSavingAgenda] = useState(false);
   const agendaCreateLockRef = useRef(null);
   if (!agendaCreateLockRef.current) agendaCreateLockRef.current = createAsyncActionLock();
+  const recurringAgendaSeriesRef = useRef(null);
   const [savingProject, setSavingProject] = useState(false);
   const projectCreateLockRef = useRef(false);
   const [savingTask, setSavingTask] = useState(false);
@@ -607,7 +640,11 @@ function WorkScreen({ page, navigationContext = null, onNavigationContextConsume
     const internalRecurrence = recurrence !== 'none';
     const shouldSyncGoogle = !localDemo && !internalRecurrence && (draft.syncGoogleCalendar || draft.createMeet);
     const eventRecord = { id: tempId, date: draft.due, endDate: draft.allDay ? nextCalendarDate(draft.due) : calendarEndDate(draft.due, draft.time, draft.endTime), time: draft.allDay ? '' : draft.time, end: draft.allDay ? '' : draft.endTime, allDay: Boolean(draft.allDay), title: draft.title.trim(), detail: draft.detail.trim() || draft.client || 'Agenda da equipe', people: attendees.join(', ') || draft.assignee, googleEventId: '', googleMeetUrl: '', calendarSyncStatus: localDemo ? 'demo_local' : shouldSyncGoogle ? 'pending' : internalRecurrence ? 'internal_only' : 'not_requested', recurrence, recurrenceCount: internalRecurrence ? Math.max(2, Math.min(52, Number(draft.recurrenceCount) || 2)) : 1, color: 'blue' };
-    const seriesId = internalRecurrence ? globalThis.crypto?.randomUUID?.() || `event-series-${Date.now()}` : '';
+    const seriesSignature = JSON.stringify({ ...eventRecord, id: '' });
+    const seriesId = internalRecurrence
+      ? recurringAgendaSeriesRef.current?.signature === seriesSignature ? recurringAgendaSeriesRef.current.id : globalThis.crypto?.randomUUID?.() || `event-series-${Date.now()}`
+      : '';
+    if (internalRecurrence) recurringAgendaSeriesRef.current = { signature: seriesSignature, id: seriesId };
     const eventRecords = buildAgendaRecurrenceSeries(eventRecord, { recurrence, count: eventRecord.recurrenceCount, seriesId, makeId: (sequence) => `${tempId}-${sequence + 1}` });
     setSavingAgenda(true);
     try {
@@ -639,6 +676,7 @@ function WorkScreen({ page, navigationContext = null, onNavigationContextConsume
         }
       }
       setComposer('');
+      if (internalRecurrence) recurringAgendaSeriesRef.current = null;
       notify(googleEvent ? (googleEvent.meetUrl ? 'Evento salvo e sincronizado; link do Meet criado.' : 'Evento salvo e sincronizado com Google Calendar.') : shouldSyncGoogle ? `Evento salvo no Focusshub, mas não sincronizado com o Google: ${calendarError || 'confira sua conexão Google Workspace.'}` : internalRecurrence ? `Série com ${eventRecords.length} compromissos salva internamente no Focusshub; esta série não sincroniza com o Google Calendar.` : localDemo ? 'Evento salvo só nesta demonstração local.' : 'Evento salvo na agenda do Focusshub.');
     } finally { setSavingAgenda(false); }
   };

@@ -664,6 +664,16 @@ function WorkspaceShell() {
     taskMutationLock.current.add(taskKey);
     setUpdatingTaskIds((current) => new Set(current).add(taskKey));
     try {
+      if (occurrence && !localDemo) {
+        const { id: _id, createdAt: _createdAt, updatedAt: _updatedAt, ...nextOccurrence } = occurrence;
+        const completed = await apiRequest(`/api/workspace/tasks/${encodeURIComponent(id)}/complete-occurrence`, { method: 'POST', body: JSON.stringify({ patch: { state, status: state }, nextOccurrence }) });
+        setTasks((current) => {
+          const withoutOccurrence = current.filter((item) => String(item.id) !== String(completed.data.nextOccurrence.id));
+          return withoutOccurrence.map((item) => String(item.id) === String(id) ? { ...item, ...completed.data.task } : item).concat(completed.data.nextOccurrence);
+        });
+        notify(`Tarefa concluída. Próxima ocorrência criada para ${new Date(`${occurrence.due}T12:00:00`).toLocaleDateString('pt-BR')}.`);
+        return;
+      }
       const result = await apiRequest(`/api/workspace/tasks/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ data: { state, status: state } }) });
       const savedTask = { ...task, ...result.data, state, status: state };
       setTasks((current) => current.map((item) => String(item.id) === String(id) ? savedTask : item));

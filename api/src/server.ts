@@ -77,6 +77,8 @@ import { siteCheckFailureData } from './monitoring/site-check-failure.js';
 import { siteCheckResultData, siteCheckResultMatchesAsset, siteCheckTargetFor } from './monitoring/site-check-result.js';
 import { siteAssetScheduleIds } from './monitoring/site-asset-removal.js';
 import { findOtherRunningHoursTimer } from './security/active-hours-timer.js';
+import { isTaskCompleted, taskOccurrenceMatches, taskRecurrenceIdentity, validNextTaskOccurrence } from './tasks/recurring-task-transition.js';
+import { recurringAgendaSeriesMatches, validateRecurringAgendaSeries, type RecurringAgendaInput } from './agenda/recurring-series.js';
 import { scrubSentryEvent } from './integrations/sentry-scrub.js';
 import { normalizeBrowserNotificationPreferences, notificationAccessPath, resolveActivityNotificationTitle } from './notifications.js';
 import { googleCalendarAttendeesPayload, mapGoogleCalendarEvents } from './integrations/google-calendar.js';
@@ -3649,6 +3651,112 @@ app.post('/api/workspace/:resource/recurring', { preHandler: app.authenticate },
   return reply.code(201).send({ data: {
     seriesId: body.seriesId,
     records: outcome.map((row) => ({ ...row.data, id: row.id, createdAt: row.createdAt, updatedAt: row.updatedAt })),
+  } });
+});
+
+app.post('/api/workspace/tasks/:id/complete-occurrence', { preHandler: app.authenticate, config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request, reply) => {
+  const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
+  const body = parseBody(z.object({ patch: workspaceDataSchema, nextOccurrence: workspaceDataSchema }), request.body, reply);
+  if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Identificador da tarefa inválido.' });
+  if (!body) return;
+
+  let dependencyBlocked = false;
+  let scopeDenied = false;
+  const outcome = await db.transaction(async (tx) => {
+    const [current] = await tx.select().from(workspaceRecords).where(and(
+      eq(workspaceRecords.id, params.data.id), eq(workspaceRecords.organizationId, request.user.organizationId),
+      eq(workspaceRecords.resource, 'tasks'), isNull(workspaceRecords.archivedAt),
+    )).for('update').limit(1);
+    if (!current) return { kind: 'missing' as const };
+    const scope = request.user.permissions?.scope;
+    if (!recordMatchesWorkspaceScope('tasks', current.id, current.data, scope)) { scopeDenied = true; return { kind: 'missing' as const }; }
+    if (!isTaskCompleted(body.patch)) return { kind: 'invalid' as const };
+    const merged = { ...current.data, ...body.patch, status: 'Concluída', state: 'Concluída' };
+    if (!recordMatchesWorkspaceScope('tasks', current.id, merged, scope) || !recordMatchesWorkspaceScope('tasks', '', body.nextOccurrence, scope)) { scopeDenied = true; return { kind: 'missing' as const }; }
+    const identity = taskRecurrenceIdentity(current.id, merged);
+    if (!identity || !validNextTaskOccurrence(current.id, current.data, merged, body.nextOccurrence)) return { kind: 'invalid' as const };
+
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${request.user.organizationId}), hashtext(${identity.recurrenceId}))`);
+    const dependencyId = z.string().uuid().safeParse(current.data.dependency);
+    if (dependencyId.success) {
+      const [dependency] = await tx.select({ data: workspaceRecords.data }).from(workspaceRecords).where(and(
+        eq(workspaceRecords.id, dependencyId.data), eq(workspaceRecords.organizationId, request.user.organizationId),
+        eq(workspaceRecords.resource, 'tasks'), isNull(workspaceRecords.archivedAt),
+      )).limit(1);
+      if (dependency && !isTaskCompleted(dependency.data)) { dependencyBlocked = true; return { kind: 'dependency' as const }; }
+    }
+
+    const [existingNext] = await tx.select().from(workspaceRecords).where(and(
+      eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'tasks'),
+      isNull(workspaceRecords.archivedAt), sql`${workspaceRecords.data}->>'recurrenceId' = ${identity.recurrenceId}`,
+      sql`${workspaceRecords.data}->>'recurrenceSequence' = ${String(identity.nextSequence)}`,
+    )).limit(1);
+    if (existingNext && !taskOccurrenceMatches(existingNext.data, body.nextOccurrence)) return { kind: 'conflict' as const };
+    const timestamp = new Date();
+    let savedTask = current;
+    if (!isTaskCompleted(current.data)) {
+      const updatedRows = await tx.update(workspaceRecords).set({ data: merged, updatedAt: timestamp }).where(and(
+        eq(workspaceRecords.id, current.id), eq(workspaceRecords.organizationId, request.user.organizationId),
+        eq(workspaceRecords.resource, 'tasks'), isNull(workspaceRecords.archivedAt),
+      )).returning();
+      savedTask = updatedRows[0] ?? current;
+      await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'tasks', entityId: current.id, action: 'completed', payload: { recurrenceId: identity.recurrenceId, nextSequence: identity.nextSequence } });
+    }
+    let next = existingNext;
+    if (!next) {
+      const nextData = Object.fromEntries(Object.entries(body.nextOccurrence).filter(([key]) => !['id', 'createdAt', 'updatedAt'].includes(key)));
+      const insertedRows = await tx.insert(workspaceRecords).values({ organizationId: request.user.organizationId, createdBy: request.user.sub, resource: 'tasks', data: nextData }).returning();
+      next = insertedRows[0];
+      if (!next) throw new Error('The recurring task occurrence was not inserted.');
+      await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'tasks', entityId: next.id, action: 'created', payload: { recurrenceId: identity.recurrenceId, recurrenceSequence: identity.nextSequence } });
+    }
+    return { kind: existingNext ? 'replayed' as const : 'completed' as const, task: savedTask!, nextOccurrence: next! };
+  });
+  if (dependencyBlocked || outcome.kind === 'dependency') return reply.code(409).send({ error: 'task_dependency_pending', message: 'Conclua a tarefa vinculada antes de finalizar esta tarefa.' });
+  if (scopeDenied) return reply.code(404).send({ error: 'not_found', message: 'Tarefa não encontrada.' });
+  if (outcome.kind === 'missing') return reply.code(404).send({ error: 'not_found', message: 'Tarefa não encontrada.' });
+  if (outcome.kind === 'invalid') return reply.code(400).send({ error: 'task_recurrence_invalid', message: 'A próxima ocorrência não corresponde à recorrência da tarefa.' });
+  if (outcome.kind === 'conflict') return reply.code(409).send({ error: 'task_recurrence_conflict', message: 'Já existe uma próxima ocorrência com dados diferentes. Revise a série antes de concluir novamente.' });
+  const serialize = (row: typeof outcome.task) => ({ ...row.data, id: row.id, createdAt: row.createdAt, updatedAt: row.updatedAt });
+  return { data: { task: serialize(outcome.task), nextOccurrence: serialize(outcome.nextOccurrence), idempotent: outcome.kind === 'replayed' } };
+});
+
+app.post('/api/workspace/events/recurring-series', { preHandler: app.authenticate, config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {
+  const body = parseBody(z.object({
+    seriesId: z.string().trim().min(1).max(128),
+    events: z.array(z.object({ clientId: z.string().trim().min(1).max(128), data: workspaceDataSchema })).min(2).max(52),
+  }), request.body, reply);
+  if (!body) return;
+  if (!validateRecurringAgendaSeries(body.seriesId, body.events)) return reply.code(400).send({ error: 'agenda_recurrence_invalid', message: 'A série de compromissos está incompleta ou contém datas inválidas.' });
+
+  const outcome = await db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${request.user.organizationId}), hashtext(${body.seriesId}))`);
+    const existing = await tx.select().from(workspaceRecords).where(and(
+      eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'events'),
+      isNull(workspaceRecords.archivedAt), sql`${workspaceRecords.data}->>'recurrenceId' = ${body.seriesId}`,
+    )).orderBy(asc(workspaceRecords.createdAt));
+    if (existing.length) {
+      existing.sort((left, right) => Number(left.data.recurrenceSequence || 0) - Number(right.data.recurrenceSequence || 0));
+      return recurringAgendaSeriesMatches(existing, body.events)
+        ? { kind: 'replayed' as const, rows: existing }
+      : { kind: 'conflict' as const, rows: [] };
+    }
+
+    const values = body.events.map(({ data }, index) => {
+      const cleanData = Object.fromEntries(Object.entries(data).filter(([field]) => !['id', 'createdAt', 'updatedAt'].includes(field)));
+      return {
+        organizationId: request.user.organizationId, createdBy: request.user.sub, resource: 'events',
+        data: { ...cleanData, recurrenceId: body.seriesId, recurrenceSequence: index + 1, recurrenceCount: body.events.length, calendarSyncStatus: 'internal_only', googleEventId: '', googleMeetUrl: '', calendarSyncError: '' },
+      };
+    });
+    const rows = await tx.insert(workspaceRecords).values(values).returning();
+    await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'events', entityId: rows[0]!.id, action: 'recurrence_created', payload: { recurrenceId: body.seriesId, recurrence: String(body.events[0]!.data.recurrence), count: rows.length } });
+    return { kind: 'created' as const, rows };
+  });
+  if (outcome.kind === 'conflict') return reply.code(409).send({ error: 'agenda_recurrence_conflict', message: 'Este identificador de série já foi usado com outros compromissos.' });
+  return reply.code(outcome.kind === 'created' ? 201 : 200).send({ data: {
+    idempotent: outcome.kind === 'replayed',
+    records: body.events.map((entry, index) => ({ ...outcome.rows[index]!.data, id: outcome.rows[index]!.id, createdAt: outcome.rows[index]!.createdAt, updatedAt: outcome.rows[index]!.updatedAt, clientId: entry.clientId })),
   } });
 });
 
