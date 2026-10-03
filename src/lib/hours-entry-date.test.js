@@ -13,6 +13,16 @@ test('preserves date-only manual entries and falls back to the start time', () =
   assert.equal(hoursEntryLocalDate({ endedAt: 'invalid' }), '');
 });
 
+test('attributes overnight timer entries to the date work started', () => {
+  const entry = {
+    startedAt: '2026-10-02T23:30:00.000Z',
+    endedAt: '2026-10-03T01:00:00.000Z',
+  };
+  assert.equal(hoursEntryLocalDate(entry, 'UTC'), '2026-10-02');
+  assert.equal(hoursEntryIsInDateRange(entry, 'UTC', '2026-10-02', '2026-10-02'), true);
+  assert.equal(hoursEntryIsInDateRange(entry, 'UTC', '2026-10-03', '2026-10-03'), false);
+});
+
 test('hours date ranges follow the workspace calendar near UTC midnight', () => {
   const instant = new Date('2026-10-02T01:30:00.000Z');
   assert.deepEqual(hoursDateRange('Esta semana', instant, 'America/Sao_Paulo'), ['2026-09-28', '2026-10-01']);

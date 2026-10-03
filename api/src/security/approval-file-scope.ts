@@ -14,19 +14,21 @@ export function approvalFileMatchesClientScope(input: {
   project?: RecordData;
 }) {
   if (String(input.file.driveFileId || '') !== input.fileId) return false;
-  const fileClientId = String(input.file.clientId || input.file.workspaceClientId || input.file.clientRecordId || '');
+  const fileClientIds = [input.file.clientId, input.file.workspaceClientId, input.file.clientRecordId]
+    .filter((value): value is string => typeof value === 'string' && value.length > 0);
   const fileClient = normalized(input.file.client);
   const clientName = normalized(input.clientName);
-  const directClientMatch = fileClientId === input.clientId || Boolean(fileClient && fileClient !== 'sem cliente' && clientName && fileClient === clientName);
-  if (fileClientId && fileClientId !== input.clientId) return false;
+  const directClientMatch = (fileClientIds.length > 0 && fileClientIds.every((id) => id === input.clientId)) || Boolean(fileClient && fileClient !== 'sem cliente' && clientName && fileClient === clientName);
+  if (fileClientIds.some((id) => id !== input.clientId)) return false;
   if (fileClient && fileClient !== 'sem cliente' && clientName && fileClient !== clientName) return false;
 
-  const fileProjectId = String(input.file.projectId || input.file.sourceProjectId || '');
+  const fileProjectIds = [input.file.projectId, input.file.sourceProjectId]
+    .filter((value): value is string => typeof value === 'string' && value.length > 0);
   const fileProject = normalized(input.file.project);
-  const hasProjectLink = Boolean(fileProjectId || (fileProject && fileProject !== 'sem projeto'));
+  const hasProjectLink = Boolean(fileProjectIds.length || (fileProject && fileProject !== 'sem projeto'));
   const targetProjectMatches = Boolean(input.projectId && input.project && (
-    (fileProjectId && fileProjectId === input.projectId)
-    || (!fileProjectId && fileProject && fileProject === normalized(input.projectName))
+    (fileProjectIds.length > 0 && fileProjectIds.every((id) => id === input.projectId))
+    || (!fileProjectIds.length && fileProject && fileProject === normalized(input.projectName))
   ));
   const projectClientId = String(input.project?.clientId || input.project?.workspaceClientId || input.project?.clientRecordId || '');
   const projectClientName = normalized(input.project?.client);
@@ -39,6 +41,7 @@ export function approvalFileMatchesClientScope(input: {
   // linked directly to its client. Never let a valid client file legitimize
   // a project that belongs to a different client (or has no client link).
   if (input.projectId && !projectBelongsToClient) return false;
+  if (fileProjectIds.some((id) => id !== input.projectId)) return false;
 
   if (hasProjectLink) return targetProjectMatches && projectBelongsToClient;
   return directClientMatch;

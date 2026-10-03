@@ -40,6 +40,7 @@ import { isWithinWorkspaceQuietHours, shouldSendActivityBrowserAlert, taskRemind
 import { dispatchBeforeWorkspaceNavigation, workspaceRouteDestination } from './lib/navigation-guards.js';
 import { logoutWorkspace } from './lib/workspace-session.js';
 import { shouldInterceptWorkspaceLink } from './lib/workspace-navigation-link.js';
+import { roleCanOpenWorkspacePage as roleCanOpenPage } from './lib/workspace-page-access.js';
 import './screens/forms-polish.css';
 import './screens/buttons-polish.css';
 import './screens/onboarding.css';
@@ -101,33 +102,6 @@ const navGroups = [
 const allWorkspacePageLabels = new Set([...navGroups.flatMap((group) => group.items.map((item) => item.label)), ...commercialPages]);
 
 const memberWorkspacePages = new Set(['Meu Dia', 'Agenda', 'Tarefas', 'Caixa de entrada', 'Aprova\u00e7\u00f5es', 'Projetos', 'Arquivos', 'Tickets']);
-function navigationPermissionModule(page) {
-  if (commercialPages.has(page)) return 'crm';
-  const groupIndex = navGroups.findIndex((group) => group.items.some((item) => item.label === page));
-  const group = navGroups[groupIndex];
-  const itemIndex = group?.items.findIndex((item) => item.label === page) ?? -1;
-  if (groupIndex === 0) return itemIndex >= 3 ? 'support' : itemIndex > 0 ? 'delivery' : null;
-  if (groupIndex === 1) return 'crm';
-  if (groupIndex === 2) return 'delivery';
-  if (groupIndex === 3 || groupIndex === 6) return 'support';
-  if (groupIndex === 4) return 'sites';
-  if (groupIndex === 5) return 'finance';
-  if (groupIndex === 7) return 'team';
-  if (groupIndex === 8) return itemIndex === 0 ? 'automations' : 'integrations';
-  if (groupIndex === 9) return itemIndex < 2 ? 'reports' : 'settings';
-  return null;
-}
-function roleCanOpenPage(role, page, permissions = null) {
-  if (!['owner', 'admin', 'member'].includes(role)) return false;
-  if (page === navGroups[7]?.items[0]?.label) return role === 'owner';
-  if (role === 'owner') return true;
-  const module = navigationPermissionModule(page);
-  const modulePermissions = module && permissions?.[module];
-  const explicitRead = module && permissions?.[module]?.read;
-  if (typeof explicitRead === 'boolean') return explicitRead;
-  if (modulePermissions) return false;
-  return role !== 'member' || memberWorkspacePages.has(page);
-}
 function storedWorkspaceUser() { try { return JSON.parse(sessionStorage.getItem('nexo.api.user') || 'null'); } catch { return null; } }
 function savedWorkspacePage() { try { return sessionStorage.getItem('nexo.workspace.activePage'); } catch { return null; } }
 

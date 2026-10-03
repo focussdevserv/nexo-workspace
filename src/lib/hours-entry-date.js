@@ -4,7 +4,10 @@ export function hoursEntryLocalDate(item, timeZone) {
   const storedDate = String(item?.date || '');
   if (/^\d{4}-\d{2}-\d{2}$/.test(storedDate)) return storedDate;
 
-  const timestamp = item?.endedAt || item?.startedAt || item?.date;
+  // A time entry belongs to the work date on which it started. Using endedAt
+  // first moves overnight sessions into the following day (and can move them
+  // into a different week or month in the Hours period filters).
+  const timestamp = item?.startedAt || item?.endedAt || item?.date;
   if (!timestamp) return '';
   const date = new Date(timestamp);
   if (Number.isNaN(date.getTime())) return '';

@@ -594,3 +594,13 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - **Navegador local:** os 29 destinos abriram em desktop 1440×900 e mobile 390×844 sem erro de tela, overflow horizontal ou erros de console. A busca automática de campos sinalizou um input `file` oculto em Arquivos; a inspeção confirmou que os controles visíveis têm rótulos/nomes.
 - **Integridade:** testes de escrita usaram exclusivamente a demonstração local; o evento de QA e o registro de horas foram excluídos. Sem gravação real, pagamentos, OAuth ou chamadas externas.
 - **Produção:** commit de código `8fc04cdf49656af023bca1d293ac04eb52340dd0` publicado pelo workflow `37125047507`. `/api/health` e `/nexo-build.json` confirmam essa revisão, API `ok` e banco conectado; homepage `200`; sessão e Calendar sem autenticação retornam `401`, como esperado.
+
+## Onda 11 - acesso, escopo do portal e períodos de horas - 03/10/2026
+
+- **Acesso:** navegação de administração do Portal do cliente agora segue permissão CRM, alinhada aos endpoints que gerenciam os links do portal; anteriormente herdava permissão de Atendimento.
+- **Aprovações:** referências conflitantes de cliente/projeto em arquivos do Drive agora são rejeitadas antes de anexar o arquivo à aprovação.
+- **Portal:** filtro de recursos relacionados ao cliente agora é aplicado no SQL antes do limite de 300 registros, para registros antigos não desaparecerem quando outros clientes têm atividade mais recente.
+- **Horas:** sessões que atravessam a meia-noite pertencem ao dia em que começaram, tanto no agrupamento da tabela quanto no CSV do período; datas explícitas continuam prevalecendo.
+- **Validação automatizada:** 695 testes frontend e 272 API passaram; lint, build web (2.093 módulos), build TypeScript da API e `git diff --check` passaram.
+- **Integridade:** nenhuma conta, sessão, arquivo Drive, convite, pagamento ou provedor real foi alterado. Login e entrega de convite/e-mail dependem de uma conta de teste controlada e configuração externa.
+- **Publicação:** esta onda aguarda commit e deploy; a produção confirmada no momento é `8fc04cdf49656af023bca1d293ac04eb52340dd0`.
