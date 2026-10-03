@@ -17,6 +17,8 @@ import { resolveSettingsDraftUpdate, settingsBaseline, settingsDraftHasChanges }
 import { resolveSettingsHydration } from '../lib/settings-hydration.js';
 import { validateWorkspaceSettings } from '../lib/settings-validation.js';
 import { isBillingSettingAvailable } from '../lib/billing-setting-capabilities.js';
+import { isLocalDemoActive } from '../lib/local-demo.js';
+import { canUseWorkspaceBackup, workspaceBackupUnavailableReason } from '../lib/workspace-backup-access.js';
 
 const defaults = {
   workspace: { agency: '', timezone: 'America/Sao_Paulo', weekStart: 'monday', currency: 'BRL', dateFormat: 'dd/MM/yyyy', language: 'pt-BR', fiscalName: '', document: '', email: '', phone: '', website: '', address: '', brandLogo: '' },
@@ -188,6 +190,8 @@ export default function SettingsScreen({ notify, navigationContext = null, onNav
     setDirty(true);
   };
   const exportBackup = async () => {
+    const localDemo = isLocalDemoActive();
+    if (!canUseWorkspaceBackup({ isOwner, localDemo })) { notify(workspaceBackupUnavailableReason({ isOwner, localDemo })); return; }
     setBackupBusy(true);
     try {
       const backup = await apiRequest('/api/workspace/backup');
@@ -200,6 +204,8 @@ export default function SettingsScreen({ notify, navigationContext = null, onNav
     const file = event.target.files?.[0];
     if (!file) return;
     try {
+      const localDemo = isLocalDemoActive();
+      if (!canUseWorkspaceBackup({ isOwner, localDemo })) throw new Error(workspaceBackupUnavailableReason({ isOwner, localDemo }));
       if (!isOwner) throw new Error('Somente a pessoa proprietária pode restaurar o backup deste workspace.');
       if (file.size > 25 * 1024 * 1024) throw new Error('O arquivo de backup excede o limite de 25 MB.');
       const backup = JSON.parse(await file.text());
@@ -284,8 +290,8 @@ export default function SettingsScreen({ notify, navigationContext = null, onNav
         <SettingsCard title="Credenciais e integrações" description="Tokens privados devem ser gerenciados no servidor." icon={KeyRound}><div className="settings-security-note"><LockKeyhole size={19} /><div><b>Nenhuma chave secreta é armazenada aqui</b><p>As credenciais das integrações ficam nas variáveis protegidas do VPS. Esta tela não salva senhas, tokens ou chaves de API no navegador.</p></div></div><button type="button" className="admin-secondary" onClick={openIntegrations}><Link2 size={15} /> Abrir painel de Integrações</button></SettingsCard>
       </>}
 
-      {active === 'data' && <>
-        <SettingsCard title="Backup do workspace" description="Exporte ou restaure clientes, registros operacionais, histórico financeiro e preferências." icon={Database}>{isOwner ? <><div className="settings-data-action"><div><b>Baixar backup completo</b><small>Inclui os dados deste workspace e os registros do Mercado Pago. Senhas, tokens e filas de automação ficam de fora; arquivos do Drive mantêm o link, sem copiar o conteúdo.</small></div><button type="button" className="admin-secondary" disabled={backupBusy} onClick={exportBackup}><Download size={15} /> {backupBusy ? 'Preparando…' : 'Baixar backup'}</button></div><div className="settings-data-action"><div><b>Restaurar backup</b><small>Disponível no mesmo workspace. Mescla por ID e não dispara integrações; lembretes automáticos de cobranças vencidas do arquivo são suprimidos para evitar reenvio de avisos antigos.</small></div><button type="button" className="admin-secondary" disabled={backupBusy} onClick={() => backupRef.current?.click()}><Upload size={15} /> {backupBusy ? 'Restaurando…' : 'Selecionar backup'}</button><input ref={backupRef} hidden type="file" accept="application/json,.json" onChange={restoreBackup} /></div></> : <div className="settings-security-note"><LockKeyhole size={18} /><div><b>Backup restrito à pessoa proprietária</b><p>Exportar ou restaurar o workspace inclui dados de vários módulos e só está disponível para a conta proprietária.</p></div></div>}</SettingsCard>
+      {active === 'data' && <>{isLocalDemoActive() && <div className="settings-access-notice" role="note">{workspaceBackupUnavailableReason({ isOwner, localDemo: true })}</div>}
+        <SettingsCard title="Backup do workspace" description="Exporte ou restaure clientes, registros operacionais, histórico financeiro e preferências." icon={Database}>{isOwner ? <><div className="settings-data-action"><div><b>Baixar backup completo</b><small>Inclui os dados deste workspace e os registros do Mercado Pago. Senhas, tokens e filas de automação ficam de fora; arquivos do Drive mantêm o link, sem copiar o conteúdo.</small></div><button type="button" className="admin-secondary" disabled={backupBusy || isLocalDemoActive()} onClick={exportBackup}><Download size={15} /> {backupBusy ? 'Preparando…' : 'Baixar backup'}</button></div><div className="settings-data-action"><div><b>Restaurar backup</b><small>Disponível no mesmo workspace. Mescla por ID e não dispara integrações; lembretes automáticos de cobranças vencidas do arquivo são suprimidos para evitar reenvio de avisos antigos.</small></div><button type="button" className="admin-secondary" disabled={backupBusy || isLocalDemoActive()} onClick={() => backupRef.current?.click()}><Upload size={15} /> {backupBusy ? 'Restaurando…' : 'Selecionar backup'}</button><input ref={backupRef} hidden type="file" accept="application/json,.json" onChange={restoreBackup} /></div></> : <div className="settings-security-note"><LockKeyhole size={18} /><div><b>Backup restrito à pessoa proprietária</b><p>Exportar ou restaurar o workspace inclui dados de vários módulos e só está disponível para a conta proprietária.</p></div></div>}</SettingsCard>
         <SettingsCard title="Exportar configurações" description="Baixe uma cópia das preferências deste workspace em JSON." icon={Download}><div className="settings-data-action"><div><b>Exportar preferências</b><small>Este arquivo contém somente as preferências gerais do workspace; use o backup completo para incluir os outros dados.</small></div><button className="admin-secondary" onClick={exportData}><Download size={15} /> Exportar arquivo</button></div><div className="settings-data-action"><div><b>Importar preferências</b><small>Carregue um JSON exportado pelo Focusshub; revise as alterações e salve para aplicar.</small></div><button className="admin-secondary" onClick={() => fileRef.current?.click()}><Upload size={15} /> Escolher arquivo</button><input ref={fileRef} hidden type="file" accept="application/json,.json" onChange={importData} /></div></SettingsCard>
         <SettingsCard title="Privacidade e armazenamento" description="As preferências do workspace são persistidas no banco da aplicação." icon={Globe2}><div className="settings-security-note"><Database size={19} /><div><b>Salvas na conta proprietária</b><p>Clientes, projetos e preferências são acessados por sessão autenticada. A exportação nesta tela cobre apenas as preferências mostradas em Configurações, não substituindo backup completo do banco.</p></div></div></SettingsCard>
         <div className="settings-danger-zone"><div><b>Restaurar valores iniciais</b><small>Carrega os valores padrão desta tela. Revise e salve para aplicar ao workspace.</small></div><button onClick={reset}><RotateCcw size={14} /> Restaurar configurações</button></div>

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { paymentCancellationError } from './payment-cancellation.js';
+import { readFile } from 'node:fs/promises';
+import { paymentCancellationError, subscriptionCancellationError } from './payment-cancellation.js';
 import { handleLocalDemoRequest } from './local-demo.js';
 
 test('accepts an already-cancelled provider result, including legacy Portuguese status', () => {
@@ -15,6 +16,24 @@ test('does not report success when local demo declines cancellation or the recor
 
 test('does not report success for a response that still shows an open payment', () => {
   assert.match(paymentCancellationError({ data: { status: 'pending' } }), /não foi confirmado/);
+});
+
+test('subscription cancellation requires the expected ID and a confirmed canceled status', () => {
+  assert.equal(subscriptionCancellationError({ data: { id: 'subscription-1', status: 'canceled' } }, 'subscription-1'), '');
+  assert.equal(subscriptionCancellationError({ data: { id: 'subscription-1', status: 'Cancelada' } }, 'subscription-1'), '');
+  assert.match(subscriptionCancellationError({ data: { id: 'subscription-1', status: 'authorized' } }, 'subscription-1'), /cancelamento da assinatura/);
+  assert.match(subscriptionCancellationError({ data: { id: 'subscription-other', status: 'canceled' } }, 'subscription-1'), /cancelamento da assinatura/);
+  assert.match(subscriptionCancellationError({ data: null }, 'subscription-1'), /cancelamento da assinatura/);
+});
+
+test('subscription cancellation UI only reports success after validating the returned record', async () => {
+  const source = await readFile(new URL('../screens/PaymentScreens.jsx', import.meta.url), 'utf8');
+  const start = source.indexOf('const cancelSubscription = async (item) =>');
+  const end = source.indexOf('const toggleSubscription = async (item) =>', start);
+  assert.ok(start >= 0 && end > start);
+  const action = source.slice(start, end);
+  assert.match(action, /const cancellationError = subscriptionCancellationError\(response, item\.id\)/);
+  assert.ok(action.indexOf('if (cancellationError) throw new Error(cancellationError)') < action.indexOf("notify('Assinatura cancelada no Mercado Pago.')"));
 });
 
 test('local demo cancellation checks the returned state before reporting success', () => {

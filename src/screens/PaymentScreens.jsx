@@ -16,7 +16,7 @@ import { formatPaymentDate } from '../lib/payment-date-display.js';
 import { canCancelPaymentOrder, canCancelSubscription, normalizePaymentStatus } from '../lib/payment-status.js';
 import { copyPaymentText } from '../lib/copy-payment-text.js';
 import { createBillingRequestUuid, reuseBillingRequestKey } from '../lib/billing-request-idempotency.js';
-import { paymentCancellationError } from '../lib/payment-cancellation.js';
+import { paymentCancellationError, subscriptionCancellationError } from '../lib/payment-cancellation.js';
 import { paymentFrequencyLabel } from '../lib/payment-frequency.js';
 import { recurringBillingEnabled } from '../lib/billing-preferences.js';
 import { matchesPaymentSearch } from '../lib/payment-search.js';
@@ -264,7 +264,13 @@ export function PaymentConsole({ kind = 'orders', notify = () => {}, navigationC
   const cancelSubscription = async (item) => {
     if (!window.confirm(`Cancelar as cobranças futuras de ${item.clientName}?`)) return;
     setSubscriptionBusyId(item.id);
-    try { await request(subscriptionStatusUrl(item.id), { method: 'PATCH', body: JSON.stringify({ status: 'canceled' }) }); await refresh(); notify('Assinatura cancelada no Mercado Pago.'); }
+    try {
+      const response = await request(subscriptionStatusUrl(item.id), { method: 'PATCH', body: JSON.stringify({ status: 'canceled' }) });
+      const cancellationError = subscriptionCancellationError(response, item.id);
+      await refresh();
+      if (cancellationError) throw new Error(cancellationError);
+      notify('Assinatura cancelada no Mercado Pago.');
+    }
     catch (err) { setError(err.message); }
     finally { setSubscriptionBusyId(''); }
   };
