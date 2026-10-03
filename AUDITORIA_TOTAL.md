@@ -570,3 +570,9 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - **Integridade:** formulários e exemplos foram avaliados apenas em modo de demonstração. O teste de formulário vazio não gravou dados. Não houve chamadas a Google Drive, n8n, WhatsApp, gateways de pagamento ou outras integrações reais.
 - **Produção antes desta onda:** health HTTP 200, banco conectado, manifesto em `1a3d29001e23b350597655ae56f9b922cbb15377`. As alterações desta onda ainda precisam ser publicadas e confirmadas no manifesto.
 - **Limites:** teste local não verifica permissões nem respostas das contas externas, OAuth, uploads reais, entrega de automações ou operações financeiras de produção.
+
+### Reteste de produção - 03/10/2026
+
+- Depois de um período transitório HTTP 503 durante a publicação, o site voltou a responder normalmente. `https://focussdev.space/api/health` retornou `ok` e banco `connected`; health e `/nexo-build.json` confirmam `3ad06c05c069b3f2cbe8c22a76fbbf5c02a54269`.
+- No modo de demonstração local da versão publicada, as 29 rotas principais abriram em 1440 px claro e 390 px claro/escuro, com cabeçalho de página correto e sem overflow horizontal. As nove abas comerciais do CRM trocaram o conteúdo e o título em 1440 px. Console sem novos erros durante a navegação.
+- Nenhum login, gravação, pagamento, upload ou chamada de provedor foi executado. A demonstração não valida sessão real nem configuração OAuth e credenciais de terceiros; o endpoint de sessão sem autenticação continua exigindo login.
