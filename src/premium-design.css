@@ -325,7 +325,9 @@ html[data-theme] .app-shell :is(h1,h2,h3,h4) { font-family: Urbanist, 'DM Sans',
 html[data-theme] .app-shell :is(input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']):not([type='file']),select,textarea),
 html[data-theme] .workspace-access-page :is(input:not([type='checkbox']):not([type='radio']):not([type='range']),select,textarea),
 html[data-theme] .cp-public-page :is(input:not([type='checkbox']):not([type='radio']):not([type='range']),select,textarea) {
-  min-height:42px !important;
+  /* Match the shared secondary-action height; 42px controls were visibly
+     taller than adjacent toolbar buttons and overrode compact module fields. */
+  min-height:38px !important;
   border:1px solid var(--nexo-border) !important;
   border-radius:12px !important;
   background-color:var(--nexo-surface) !important;

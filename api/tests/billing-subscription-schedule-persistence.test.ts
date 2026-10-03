@@ -15,7 +15,10 @@ test('persists the selected recurring dates and sends them with the chosen cycle
   assert.match(route, /end_date: body\.endAt/);
 
   const screen = await readFile(new URL('../../src/screens/PaymentScreens.jsx', import.meta.url), 'utf8');
-  assert.match(screen, /frequency: form\.frequency, frequencyInterval: Number\(form\.frequencyInterval\), \.\.\.buildSubscriptionSchedule\(form\.startDate, form\.endDate\)/);
+  assert.match(screen, /\.\.\.subscriptionCyclePayload\(form\.frequency, form\.frequencyInterval\), \.\.\.buildSubscriptionSchedule\(form\.startDate, form\.endDate\)/);
+  assert.match(screen, /value=\{subscriptionCycleChoice\(form\.frequency, form\.frequencyInterval\)\}/);
+  assert.match(screen, /Personalizar frequ/);
+  assert.match(screen, /type="number" required min="1" max="24" step="1"/);
   assert.match(screen, /Recorr\u00eancia at\u00e9 \u00b7 \{formatPaymentDate\(item\.endAt\)\}/);
 });
 

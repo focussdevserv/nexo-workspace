@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { emptyInboxComposerDraft, inboxConversationClientId } from './inbox-composer.js';
+import { emptyInboxComposerDraft, inboxConversationAssignee, inboxConversationClientId } from './inbox-composer.js';
 
 test('a new inbox composer always starts without a previous recipient or message', () => {
   const draft = emptyInboxComposerDraft();
@@ -13,8 +13,8 @@ test('a new inbox composer always starts without a previous recipient or message
 
 test('inbox composer open and discard paths clear recipient, message, attachment and assignee state', () => {
   const source = readFileSync(fileURLToPath(new URL('../screens/ServiceScreens.jsx', import.meta.url)), 'utf8');
-  assert.match(source, /const closeNewConversation = \(\) => \{ setNewOpen\(false\); setNewContact\(emptyInboxComposerDraft\(\)\); setAttachment\(null\); setOwner\(''\); setConversationError\(''\); \};/);
-  assert.match(source, /const openNewConversation = \(trigger\) => \{ newDialogTriggerRef\.current = trigger \|\| null; setConversationError\(''\); setNewContact\(emptyInboxComposerDraft\(\)\); setAttachment\(null\); setOwner\(''\); setNewOpen\(true\); \};/);
+  assert.match(source, /const closeNewConversation = \(\) => \{ setNewOpen\(false\); setNewContact\(emptyInboxComposerDraft\(\)\); setAttachment\(null\); setOwner\(''\); setNewConversationOwnerId\(''\); setConversationError\(''\); \};/);
+  assert.match(source, /const openNewConversation = \(trigger\) => \{ newDialogTriggerRef\.current = trigger \|\| null; setConversationError\(''\); setNewContact\(emptyInboxComposerDraft\(\)\); setAttachment\(null\); setOwner\(''\); setNewConversationOwnerId\(''\); setNewOpen\(true\); \};/);
   assert.match(source, /label="Nova conversa" onClick=\{\(event\) => openNewConversation\(event\.currentTarget\)\}/);
   assert.match(source, /onClick=\{closeNewConversation\}>Cancelar<\/button>/);
   assert.match(source, /event\.target === event\.currentTarget\) closeNewConversation\(\);/);
@@ -39,6 +39,15 @@ test('inbox composer only infers a canonical client from a unique exact contact 
   assert.equal(inboxConversationClientId({ clientId: 'stale', email: 'ana@example.com' }, clients), '');
 });
 
+test('new conversation assignees resolve by stable user ID when names are duplicated', () => {
+  const members = [
+    { id: 'user-a', name: 'Alex Silva' },
+    { id: 'user-b', name: 'Alex Silva' },
+  ];
+  assert.equal(inboxConversationAssignee('user-b', members), members[1]);
+  assert.equal(inboxConversationAssignee('stale-user', members), null);
+});
+
 test('CRM client identity is retained from navigation prefill through the inbox creation payload', () => {
   const source = readFileSync(fileURLToPath(new URL('../screens/ServiceScreens.jsx', import.meta.url)), 'utf8');
   const navigationStart = source.indexOf('if (!navigationContext.clientId || messagesLoading');
@@ -49,5 +58,16 @@ test('CRM client identity is retained from navigation prefill through the inbox 
   const createHandler = source.slice(createStart, createEnd);
   assert.match(navigation, /setNewContact\(\{[^}]*clientId:\s*String\(client\.id\)/);
   assert.match(createHandler, /clientId:\s*inboxConversationClientId\(newContact, clientsStore\.records, contactsStore\.records\)/);
+  assert.match(createHandler, /const assignee = inboxConversationAssignee\(newConversationOwnerId, teamMembers\)/);
+  assert.match(createHandler, /owner:\s*assignee\?\.name \|\| ''/);
+  assert.match(source, /value=\{newConversationOwnerId\} onChange=\{\(event\) => \{ const assignee = teamMembers\.find\(\(member\) => String\(member\.id\) === String\(event\.target\.value\)\)/);
   assert.match(createHandler, /body:\s*JSON\.stringify\(\{\s*data:\s*Object\.fromEntries\(Object\.entries\(item\)/);
+});
+
+test('CRM-prefilled conversation creation clears unrelated assignee state', () => {
+  const source = readFileSync(fileURLToPath(new URL('../screens/ServiceScreens.jsx', import.meta.url)), 'utf8');
+  const start = source.indexOf('if (!navigationContext.clientId || messagesLoading');
+  const end = source.indexOf("    handledInboxNavigation.current = inboxNavigationKey;\r\n    onNavigationContextConsumed();\r\n  },", start);
+  const navigation = source.slice(start, end);
+  assert.match(navigation, /setOwner\(''\);\s*setNewConversationOwnerId\(''\);\s*setNewOpen\(true\)/);
 });

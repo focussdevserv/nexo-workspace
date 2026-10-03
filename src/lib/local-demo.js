@@ -1,5 +1,5 @@
 import { findLeadDuplicateMatch } from './lead-identity.js';
-import { checkLocalDemoSite, getLocalDemoSiteHistory, removeLocalDemoSiteAsset } from './local-demo-monitoring.js';
+import { checkLocalDemoSite, configureLocalDemoSiteSchedule, getLocalDemoSiteHistory, removeLocalDemoSiteAsset } from './local-demo-monitoring.js';
 import { proposalAcceptanceState } from './proposal-acceptance-state.js';
 import { handleLocalDemoInboxRequest } from './local-demo-inbox.js';
 import { financeEntryAttemptFingerprint } from './finance-entry-attempt.js';
@@ -331,6 +331,13 @@ export function handleLocalDemoRequest(path, options = {}) {
     store.financeCreateAttempts[attemptKey] = { fingerprint, ids: records.map((item) => String(item.id)) };
     save();
     return { data: { seriesId, records } };
+  }
+  const siteMonitorConfig = url.pathname.match(/^\/api\/workspace\/site-assets\/([^/]+)\/monitor$/);
+  if (siteMonitorConfig && method === 'POST') {
+    const [, rawAssetId] = siteMonitorConfig;
+    const data = configureLocalDemoSiteSchedule(store, decodeURIComponent(rawAssetId), body);
+    save();
+    return { data };
   }
   const resourceMatch = url.pathname.match(/^\/api\/workspace\/([a-z-]+)(?:\/([^/]+))?$/);
   if (resourceMatch) {

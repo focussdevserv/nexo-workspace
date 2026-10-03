@@ -112,6 +112,41 @@ test('commercial, project and hours metrics derive results from matching records
   assert.equal(calculateGoalMetric('registered_hours', data, ready, 'month', now, prefs).value, 1.5);
 });
 
+test('historical ISO years do not fall through to a newer legacy goal timestamp', () => {
+  const result = calculateGoalMetric('won_leads', {
+    leads: [
+      { stage: 'ganho', wonAt: '0001-01-01', updatedAt: '2026-10-01' },
+      { stage: 'ganho', wonAt: '0099-12-31', updatedAt: '2026-10-01' },
+    ],
+  }, { leads: 'ready' }, 'month', now, prefs);
+  assert.deepEqual(result, { state: 'ready', value: 0 });
+});
+
+test('completed project goals use the same delivered and legacy state rules as reports', () => {
+  const result = calculateGoalMetric('completed_projects', {
+    projects: [
+      { status: 'Entregue', completedAt: '2026-10-01' },
+      { state: 'published', completedAt: '2026-10-01' },
+      { status: 'Em andamento', updatedAt: '2026-10-01' },
+    ],
+  }, { projects: 'ready' }, 'month', now, prefs);
+
+  assert.equal(result.value, 2);
+});
+
+test('linked goals skip malformed preferred dates and fall back to the next valid timestamp', () => {
+  const result = calculateGoalMetric('won_leads', {
+    leads: [
+      { stage: 'Ganho', wonAt: 'not-a-date', updatedAt: '2026-10-01T12:00:00-03:00', createdAt: '2026-09-10' },
+      { stage: 'Ganho', wonAt: '2026-02-30', updatedAt: '2026-10-02T12:00:00-03:00', createdAt: '2026-09-10' },
+      { stage: 'Ganho', wonAt: 'not-a-date', updatedAt: 'also-not-a-date', createdAt: '2026-09-10' },
+    ],
+  }, { leads: 'ready' }, 'month', now, prefs);
+
+  assert.equal(result.value, 2);
+  assert.equal(isGoalDateInPeriod('2026-02-30', 'month', now, prefs), false);
+});
+
 test('hours goals fall back from null hours and minutes to stored timer seconds', () => {
   const result = calculateGoalMetric('registered_hours', {
     hours: [

@@ -11,6 +11,11 @@ test('report project metrics do not count archived, paused, or cancelled work as
 test('report project metrics recognize completed statuses with accents and legacy state fields', () => {
   assert.equal(isReportProjectCompleted({ status: 'Concluído' }), true);
   assert.equal(isReportProjectCompleted({ state: 'completed' }), true);
+  for (const status of ['Publicado', 'Publicada', 'published', 'Entregue', 'delivered']) {
+    assert.equal(isReportProjectCompleted({ status }), true, `${status} should count as completed`);
+    assert.equal(isReportProjectActive({ status }), false, `${status} should not remain active`);
+  }
+  assert.equal(isReportProjectCompleted({ state: 'Entregue' }), true);
   assert.equal(isReportProjectActive({ status: 'Aguardando cliente' }), true);
   assert.equal(isReportProjectActive({ status: 'Em andamento' }), true);
   assert.equal(isReportProjectActive({}), true);

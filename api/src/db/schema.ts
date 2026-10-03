@@ -82,7 +82,7 @@ export const billingOrders = pgTable('billing_orders', {
   paymentDetails: jsonb('payment_details').$type<Record<string, unknown>>().default({}).notNull(),
   dueAt: timestamp('due_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true, precision: 3 }).defaultNow().notNull(),
 }, (table) => [
   index('billing_orders_org_created_idx').on(table.organizationId, table.createdAt),
   index('billing_orders_pending_due_idx').on(table.status, table.dueAt),
@@ -149,7 +149,7 @@ export const billingSubscriptions = pgTable('billing_subscriptions', {
   endAt: timestamp('end_at', { withTimezone: true }),
   nextPaymentAt: timestamp('next_payment_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true, precision: 3 }).defaultNow().notNull(),
 }, (table) => [
   index('billing_subscriptions_org_created_idx').on(table.organizationId, table.createdAt),
   uniqueIndex('billing_subscriptions_org_request_key_unique').on(table.organizationId, table.requestIdempotencyKey),

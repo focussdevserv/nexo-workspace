@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeAuthEmail, passwordConfirmationMatches, prefillRecoveryEmail, readPasswordResetToken, readWorkspaceAccessMode, readWorkspaceInvite, shouldAutoEnterLocalDemo, workspaceAccessModeUrl } from './workspace-access-helpers.js';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { normalizeAuthEmail, passwordConfirmationMatches, prefillRecoveryEmail, readPasswordResetToken, readWorkspaceAccessMode, readWorkspaceInvite, shouldAutoEnterLocalDemo, stripWorkspaceAccessQueryTokens, workspaceAccessModeUrl } from './workspace-access-helpers.js';
 
 test('recovery pre-fills the email already entered on the login form', () => {
   assert.equal(prefillRecoveryEmail('  User@Example.com  '), 'User@Example.com');
@@ -21,6 +23,8 @@ test('explicit return to login suppresses local-demo autologin without disabling
   assert.equal(shouldAutoEnterLocalDemo({ requested: true }), true);
   assert.equal(shouldAutoEnterLocalDemo({ active: true, suppress: true }), false);
   assert.equal(shouldAutoEnterLocalDemo({ requested: true, active: true, suppress: true }), false);
+  const source = readFileSync(fileURLToPath(new URL('./WorkspaceAccess.jsx', import.meta.url)), 'utf8');
+  assert.match(source, /const returnToLogin = \(\) => \{ setSuppressDemoAutologin\(true\);/);
 });
 
 test('auth requests normalize e-mail case and surrounding whitespace', () => {
@@ -40,6 +44,15 @@ test('reads a reset token from the email link fragment so it can survive a page 
   assert.equal(readPasswordResetToken('#other=value&reset=token'), 'token');
   assert.equal(readPasswordResetToken('#reset='), '');
   assert.equal(readPasswordResetToken(undefined), '');
+});
+
+test('initial access URL cleanup removes query invite tokens but preserves one-time fragment tokens across refreshes', () => {
+  assert.equal(
+    stripWorkspaceAccessQueryTokens('https://focusshub.example/app?invite=invite-secret&tab=team#reset=reset-secret&section=auth'),
+    'https://focusshub.example/app?tab=team#reset=reset-secret&section=auth',
+  );
+  const source = readFileSync(fileURLToPath(new URL('./WorkspaceAccess.jsx', import.meta.url)), 'utf8');
+  assert.match(source, /stripWorkspaceAccessQueryTokens\(window\.location\.href\)/);
 });
 
 test('access mode follows browser history between login, recovery, and reset links', () => {

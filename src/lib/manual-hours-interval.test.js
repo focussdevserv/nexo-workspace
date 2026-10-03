@@ -29,3 +29,24 @@ test('rejects manual time entries that end in the future', () => {
   });
   assert.equal(buildManualHoursInterval('2026-10-03', '09:00', '10:00', now).seconds, 3600);
 });
+
+test('interprets manual work times in the workspace timezone instead of the browser timezone', () => {
+  const now = new Date('2026-10-03T18:00:00.000Z');
+  const result = buildManualHoursInterval('2026-10-03', '09:00', '10:30', now, 'America/Sao_Paulo');
+  assert.equal(result.startedAt, '2026-10-03T12:00:00.000Z');
+  assert.equal(result.endedAt, '2026-10-03T13:30:00.000Z');
+  assert.equal(result.seconds, 5400);
+});
+
+test('accepts workspace wall-clock dates that fall on the previous UTC calendar day', () => {
+  const now = new Date('2026-10-03T03:00:00.000Z');
+  const result = buildManualHoursInterval('2026-10-03', '00:30', '01:30', now, 'Asia/Tokyo');
+  assert.equal(result.startedAt, '2026-10-02T15:30:00.000Z');
+  assert.equal(result.endedAt, '2026-10-02T16:30:00.000Z');
+  assert.equal(result.seconds, 3600);
+});
+
+test('rejects a wall-clock time that does not exist because of a workspace daylight-saving transition', () => {
+  const result = buildManualHoursInterval('2026-03-08', '01:30', '02:30', new Date('2026-03-09T12:00:00.000Z'), 'America/New_York');
+  assert.match(result.error, /n[aã]o existe neste fuso hor[aá]rio/);
+});

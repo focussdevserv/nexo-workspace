@@ -26,7 +26,8 @@ import { buildClientFromLead, mergeLeadServiceIntoClient } from './crm/lead-conv
 import { teamAccessStatus } from './team/account-status.js';
 import { detachCatalogServiceReference } from './crm/service-reference.js';
 import { canChangeProjectArchiveState, isWorkspaceRequestAllowed, type WorkspaceRecordScope } from './security/authorization.js';
-import { billingClientIdsForWorkspaceScope, clientLinkedWorkspaceResources, recordMatchesWorkspaceScope, workspaceClientReferenceFields, workspaceProjectReferenceFields } from './security/record-scope.js';
+import { billingClientIdsForWorkspaceScope, clientLinkedWorkspaceResources, recordMatchesWorkspaceScope, rememberWorkspaceProjectClientLinks, workspaceClientReferenceFields, workspaceProjectClientLinksForScope, workspaceProjectReferenceFields } from './security/record-scope.js';
+import { authenticatedWorkspaceUserWithCurrentPermissions } from './security/authenticated-workspace-user.js';
 import { renderProposalEmail } from './email/proposal.js';
 import { buildGoogleRawMessage, decodeGoogleDriveUpload, decodeGoogleMailAttachments, googleMailAddresses, googleThreadBelongsToAllowedContacts, mapGoogleMailMessage } from './integrations/google-mail.js';
 import { classifyGoogleDriveListFailure, googleDriveFileMetadataUrl, googleDriveFilesListUrl, mapGoogleDriveFile, type GoogleDriveFile } from './integrations/google-drive.js';
@@ -71,10 +72,12 @@ import { isBillingOrderCancelable } from './billing/order-cancellation.js';
 import { billingProviderIdempotencyKey } from './billing/provider-idempotency.js';
 import { billingRequestFingerprint, billingRequestIdempotencyKey, decideBillingIdempotencyReplay } from './billing/request-idempotency.js';
 import { canTransitionBillingSubscription, normalizeBillingSubscriptionStatus } from './billing/subscription-transitions.js';
+import { confirmsSubscriptionStatus } from './billing/subscription-provider-confirmation.js';
 import { buildFinanceRecurrenceDates } from './integrations/finance-recurrence.js';
 import { financeEntryIdempotencyDecision, financeEntryRequestFingerprint } from './finance/entry-idempotency.js';
 import { buildWahaSendFilePayload, classifyWahaQrResponse, classifyWahaSessionReadiness } from './integrations/waha.js';
 import { claimWahaMessage, markWahaDeliveryUnknown, markWahaPreflightFailure } from './integrations/waha-send-claim.js';
+import { decideGmailDeliveryReservation, gmailDeliveryFingerprint, runGmailDeliveryAttempt, type GmailDeliveryRecord } from './integrations/gmail-delivery-idempotency.js';
 import { appendWahaIncomingMessage, applyWahaMessageAck } from './integrations/waha-webhook.js';
 import { clicksignBaseUrl, createClicksignEnvelope, getClicksignEnvelope, notifyClicksignEnvelope } from './integrations/clicksign.js';
 import { mapN8nCollections, n8nAutomationTemplates, buildN8nAutomationWorkflow, n8nApiKeyFailureMessage, n8nApiValidationMessage, n8nAutomationTaskClientReference, n8nProposalTaskMatchesSource, n8nWorkflowActionEndpoint, n8nWorkflowsEndpoint, type N8nAutomationTemplateId } from './integrations/n8n.js';
@@ -156,6 +159,15 @@ app.decorate('authenticate', async (request: FastifyRequest, reply: FastifyReply
     )).limit(1);
     if (!user || user.role !== request.user.role || !workspaceSessionVersionIsCurrent(request.user.sessionVersion, user.sessionVersion) || (user.role === 'owner' && (user.id !== ownerAccountId || user.email.toLowerCase() !== env.OWNER_EMAIL)) || (user.role !== 'owner' && user.inviteVersion < 1)) return reply.code(401).send({ error: 'unauthorized', message: 'Sessao invalida ou expirada.' });
     if (!isWorkspaceRequestAllowed(user.role, request.method, request.url, user.permissions)) return reply.code(403).send({ error: 'forbidden', message: 'Seu papel ou as permissoes deste modulo nao permitem esta acao. Solicite acesso a pessoa proprietaria do workspace.' });
+    request.user = authenticatedWorkspaceUserWithCurrentPermissions(request.user, user.permissions);
+    const scope = request.user.permissions?.scope;
+    if (scope?.mode === 'selected' && scope.projectIds.length) {
+      const assignedProjects = await db.select({ id: workspaceRecords.id, data: workspaceRecords.data }).from(workspaceRecords).where(and(
+        eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'projects'),
+        isNull(workspaceRecords.archivedAt), inArray(workspaceRecords.id, scope.projectIds),
+      ));
+      rememberWorkspaceProjectClientLinks(scope, assignedProjects);
+    }
     const sessionClaims = request.user as typeof request.user & { exp?: number; rememberMe?: boolean };
     if (shouldRenewPersistentWorkspaceSession(sessionClaims.rememberMe, sessionClaims.exp)) {
       const sessionPolicy = workspaceSessionPolicy(true);
@@ -1134,6 +1146,85 @@ async function gmailThreadIsInScope(organizationId: string, scope: WorkspaceReco
   return Boolean(participants && googleThreadBelongsToAllowedContacts(participants, allowedEmails, accountEmail));
 }
 
+const gmailDeliveryClaimResource = 'gmail-delivery-attempts';
+
+async function reserveGmailDeliveryClaim({ organizationId, actorUserId, idempotencyKey, fingerprint }: {
+  organizationId: string; actorUserId: string; idempotencyKey: string; fingerprint: string;
+}) {
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`gmail-delivery:${organizationId}:${idempotencyKey}`}, 0))`);
+    const [existing] = await tx.select({ id: workspaceRecords.id, data: workspaceRecords.data, requestHash: workspaceRecords.createRequestHash })
+      .from(workspaceRecords).where(and(
+        eq(workspaceRecords.organizationId, organizationId),
+        eq(workspaceRecords.resource, gmailDeliveryClaimResource),
+        eq(workspaceRecords.createIdempotencyKey, idempotencyKey),
+        isNull(workspaceRecords.archivedAt),
+      )).for('update').limit(1);
+    const now = new Date();
+    if (!existing) {
+      await tx.insert(workspaceRecords).values({
+        organizationId, resource: gmailDeliveryClaimResource, createIdempotencyKey: idempotencyKey,
+        createRequestHash: fingerprint, createdBy: actorUserId,
+        data: { state: 'sending', fingerprint, startedAt: now.toISOString(), attempts: 1 },
+      });
+      return { kind: 'claimed' as const };
+    }
+    if (existing.requestHash !== fingerprint) return { kind: 'conflict' as const };
+    const record = existing.data as unknown as GmailDeliveryRecord;
+    const decision = decideGmailDeliveryReservation(record, fingerprint, now);
+    if (decision.kind === 'claimed') {
+      await tx.update(workspaceRecords).set({
+        data: { ...existing.data, state: 'sending', startedAt: now.toISOString(), attempts: Math.max(0, Number(record.attempts) || 0) + 1 },
+        updatedAt: now,
+      }).where(and(eq(workspaceRecords.id, existing.id), eq(workspaceRecords.organizationId, organizationId)));
+      return decision;
+    }
+    if (decision.kind === 'unknown' && record.state === 'sending') {
+      await tx.update(workspaceRecords).set({ data: { ...existing.data, state: 'unknown' }, updatedAt: now })
+        .where(and(eq(workspaceRecords.id, existing.id), eq(workspaceRecords.organizationId, organizationId)));
+    }
+    return decision;
+  });
+}
+
+async function updateGmailDeliveryClaim(organizationId: string, idempotencyKey: string, update: (record: GmailDeliveryRecord) => GmailDeliveryRecord) {
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`gmail-delivery:${organizationId}:${idempotencyKey}`}, 0))`);
+    const [row] = await tx.select({ id: workspaceRecords.id, data: workspaceRecords.data }).from(workspaceRecords).where(and(
+      eq(workspaceRecords.organizationId, organizationId), eq(workspaceRecords.resource, gmailDeliveryClaimResource),
+      eq(workspaceRecords.createIdempotencyKey, idempotencyKey), isNull(workspaceRecords.archivedAt),
+    )).for('update').limit(1);
+    if (!row) throw new Error('gmail_delivery_claim_missing');
+    const current = row.data as unknown as GmailDeliveryRecord;
+    const next = update(current);
+    await tx.update(workspaceRecords).set({ data: next, updatedAt: new Date() }).where(and(
+      eq(workspaceRecords.id, row.id), eq(workspaceRecords.organizationId, organizationId),
+    ));
+  });
+}
+
+function gmailDeliveryAttemptCallbacks(organizationId: string, actorUserId: string, idempotencyKey: string, fingerprint: string) {
+  return {
+    reserve: () => reserveGmailDeliveryClaim({ organizationId, actorUserId, idempotencyKey, fingerprint }),
+    markRetryable: () => updateGmailDeliveryClaim(organizationId, idempotencyKey, (record) => record.state === 'sent' ? record : { ...record, state: 'retryable' }),
+    markUnknown: () => updateGmailDeliveryClaim(organizationId, idempotencyKey, (record) => record.state === 'sent' ? record : { ...record, state: 'unknown' }),
+    markSent: (messageId: string, threadId?: string) => updateGmailDeliveryClaim(organizationId, idempotencyKey, (record) => ({ ...record, state: 'sent', messageId, threadId })),
+  };
+}
+
+function sendGmailDeliveryAttemptFailure(reply: FastifyReply, result: Awaited<ReturnType<typeof runGmailDeliveryAttempt>>, description: string) {
+  if (result.kind === 'sending') return reply.code(202).send({ data: { status: 'sending' } });
+  if (result.kind === 'conflict') return reply.code(409).send({ error: 'gmail_idempotency_conflict', message: 'Esta chave de envio já foi usada para outro conteúdo. Atualize a caixa antes de iniciar uma nova tentativa.' });
+  if (result.kind === 'unknown') return reply.code(409).send({ error: 'gmail_delivery_unknown', message: 'O Gmail pode ter aceitado esta mensagem, mas não confirmou o resultado. A tentativa foi bloqueada para evitar duplicação. Confira manualmente a pasta Enviados; a ausência imediata não confirma que o Gmail não a recebeu.' });
+  if (result.kind === 'rejected') return reply.code(result.status === 403 ? 409 : 502).send({ error: result.status === 403 ? 'google_authorization_required' : 'gmail_send_failed', message: result.status === 403 ? 'Reconecte o Google Workspace para enviar e-mails.' : `O Gmail recusou a mensagem (HTTP ${result.status}).` });
+  if (result.kind === 'preflight_failed') {
+    const status = Number((result.error as { statusCode?: number } | null)?.statusCode);
+    if (status === 409 || status === 503) return reply.code(status).send({ error: 'google_authorization_required', message: 'Reconecte o Google Workspace para enviar e-mails.' });
+    if (status === 404) return reply.code(404).send({ error: 'not_found', message: 'A conversa não está disponível no escopo deste workspace.' });
+  }
+  return reply.code(502).send({ error: 'gmail_send_failed', message: `O Gmail não conseguiu enviar ${description}. Se o resultado ficou incerto, confira a pasta Enviados antes de tentar novamente.` });
+}
+
 app.get('/api/integrations/google/gmail', { preHandler: app.authenticate }, async (request, reply) => {
   const query = z.object({ q: z.string().trim().max(180).default('in:inbox OR in:sent'), maxResults: z.coerce.number().int().min(1).max(30).default(20) }).safeParse(request.query);
   if (!query.success) return reply.code(400).send({ error: 'validation_error', message: 'Invalid Gmail query.' });
@@ -1173,24 +1264,31 @@ app.get('/api/integrations/google/gmail', { preHandler: app.authenticate }, asyn
 app.post('/api/integrations/google/gmail/send', { preHandler: app.authenticate, bodyLimit: 12 * 1024 * 1024, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
   const body = parseBody(z.object({ to: z.string().trim().email().max(254), subject: z.string().trim().min(1).max(250), text: z.string().trim().min(1).max(20_000), attachments: gmailAttachmentSchema }), request.body, reply);
   if (!body) return;
+  const idempotencyKey = z.string().uuid().safeParse(request.headers['idempotency-key']);
+  if (!idempotencyKey.success) return reply.code(400).send({ error: 'validation_error', message: 'Envie uma chave Idempotency-Key UUID para este envio.' });
   let attachments;
   try { attachments = decodeGoogleMailAttachments(body.attachments); }
   catch { return reply.code(400).send({ error: 'gmail_attachment_invalid', message: 'Anexos invalidos ou acima do limite de 8 MiB.' }); }
   const scopedEmails = await gmailScopedContactEmails(request.user.organizationId, request.user.permissions?.scope);
   if (scopedEmails && !scopedEmails.has(body.to.toLocaleLowerCase('en-US'))) return reply.code(403).send({ error: 'record_scope_denied', message: 'O destinatario nao pertence aos clientes atribuidos ao seu escopo.' });
-  try {
-    const accessToken = await googleAccessToken(request.user.organizationId, request.user.sub);
-    const raw = buildGoogleRawMessage({ to: body.to, subject: body.subject, text: body.text, html: body.text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('\\n', '<br>'), attachments });
-    const response = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', { method: 'POST', headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ raw }), signal: AbortSignal.timeout(12_000) });
-    const result = await response.json().catch(() => ({})) as { id?: string; threadId?: string };
-    if (!response.ok || !result.id) return reply.code(response.status === 403 ? 409 : 502).send({ error: 'gmail_send_failed', message: 'Gmail did not accept this message.' });
-    await db.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'gmail_thread', action: 'message_sent', payload: { threadId: result.threadId || null, messageId: result.id, recipient: body.to } });
-    return reply.code(201).send({ data: { id: result.id, threadId: result.threadId, sent: true } });
-  } catch (error) {
-    const status = (error as { statusCode?: number }).statusCode;
-    if (status === 409 || status === 503) return reply.code(status).send({ error: 'google_authorization_required', message: 'Reconnect Google Workspace to send mail.' });
-    return reply.code(502).send({ error: 'gmail_send_failed', message: 'Gmail could not send this message.' });
-  }
+  const fingerprint = gmailDeliveryFingerprint({ operation: 'send', ...body });
+  const attempt = await runGmailDeliveryAttempt({
+    ...gmailDeliveryAttemptCallbacks(request.user.organizationId, request.user.sub, idempotencyKey.data, fingerprint),
+    prepare: async () => {
+      const accessToken = await googleAccessToken(request.user.organizationId, request.user.sub);
+      const raw = buildGoogleRawMessage({ to: body.to, subject: body.subject, text: body.text, html: body.text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('\\n', '<br>'), attachments });
+      return { accessToken, raw };
+    },
+    deliver: (prepared) => {
+      const { accessToken, raw } = prepared as { accessToken: string; raw: string };
+      return fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
+        method: 'POST', headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ raw }), signal: AbortSignal.timeout(12_000),
+      });
+    },
+  });
+  if (attempt.kind !== 'sent') return sendGmailDeliveryAttemptFailure(reply, attempt, 'esta mensagem');
+  await db.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'gmail_thread', action: 'message_sent', payload: { threadId: attempt.threadId || null, messageId: attempt.messageId, recipient: body.to } });
+  return reply.code(attempt.duplicate ? 200 : 201).send({ data: { id: attempt.messageId, threadId: attempt.threadId, sent: true, ...(attempt.duplicate ? { idempotent: true } : {}) } });
 });
 
 app.post('/api/integrations/google/gmail/:threadId/read', { preHandler: app.authenticate, config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request, reply) => {
@@ -1210,25 +1308,35 @@ app.post('/api/integrations/google/gmail/:threadId/reply', { preHandler: app.aut
   const body = parseBody(z.object({ to: z.string().trim().email().max(254), subject: z.string().trim().min(1).max(250), text: z.string().trim().min(1).max(20_000), attachments: gmailAttachmentSchema, inReplyTo: z.string().trim().max(998).optional(), references: z.string().trim().max(998).optional() }), request.body, reply);
   if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Invalid Gmail thread.' });
   if (!body) return;
+  const idempotencyKey = z.string().uuid().safeParse(request.headers['idempotency-key']);
+  if (!idempotencyKey.success) return reply.code(400).send({ error: 'validation_error', message: 'Envie uma chave Idempotency-Key UUID para esta resposta.' });
   let attachments;
   try { attachments = decodeGoogleMailAttachments(body.attachments); }
   catch { return reply.code(400).send({ error: 'gmail_attachment_invalid', message: 'Anexos invalidos ou acima do limite de 8 MiB.' }); }
   const scopedEmails = await gmailScopedContactEmails(request.user.organizationId, request.user.permissions?.scope);
   if (scopedEmails && !scopedEmails.has(body.to.toLocaleLowerCase('en-US'))) return reply.code(403).send({ error: 'record_scope_denied', message: 'O destinatario nao pertence aos clientes atribuidos ao seu escopo.' });
-  try {
-    const accessToken = await googleAccessToken(request.user.organizationId, request.user.sub);
-    if (!await gmailThreadIsInScope(request.user.organizationId, request.user.permissions?.scope, accessToken, params.data.threadId, (await getGoogleTokens(request.user.organizationId))?.email || '')) return reply.code(404).send({ error: 'not_found', message: 'Thread nao encontrado.' });
-    const raw = buildGoogleRawMessage({ to: body.to, subject: body.subject, text: body.text, html: body.text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('\n', '<br>'), inReplyTo: body.inReplyTo, references: body.references, attachments });
-    const response = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', { method: 'POST', headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ threadId: params.data.threadId, raw }), signal: AbortSignal.timeout(12_000) });
-    const result = await response.json().catch(() => ({})) as { id?: string; threadId?: string };
-    if (!response.ok || !result.id) return reply.code(response.status === 403 ? 409 : 502).send({ error: 'gmail_send_failed', message: 'Gmail did not accept this reply.' });
-    await db.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'gmail_thread', action: 'reply_sent', payload: { threadId: params.data.threadId, messageId: result.id } });
-    return reply.code(201).send({ data: { id: result.id, threadId: result.threadId || params.data.threadId, sent: true } });
-  } catch (error) {
-    const status = (error as { statusCode?: number }).statusCode;
-    if (status === 409 || status === 503) return reply.code(status).send({ error: 'google_authorization_required', message: 'Reconnect Google Workspace to send mail.' });
-    return reply.code(502).send({ error: 'gmail_send_failed', message: 'Gmail could not send this reply.' });
-  }
+  const fingerprint = gmailDeliveryFingerprint({ operation: 'reply', threadId: params.data.threadId, ...body });
+  const attempt = await runGmailDeliveryAttempt({
+    ...gmailDeliveryAttemptCallbacks(request.user.organizationId, request.user.sub, idempotencyKey.data, fingerprint),
+    prepare: async () => {
+      const accessToken = await googleAccessToken(request.user.organizationId, request.user.sub);
+      if (!await gmailThreadIsInScope(request.user.organizationId, request.user.permissions?.scope, accessToken, params.data.threadId, (await getGoogleTokens(request.user.organizationId))?.email || '')) {
+        throw Object.assign(new Error('Gmail thread not found.'), { statusCode: 404 });
+      }
+      const raw = buildGoogleRawMessage({ to: body.to, subject: body.subject, text: body.text, html: body.text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('\\n', '<br>'), inReplyTo: body.inReplyTo, references: body.references, attachments });
+      return { accessToken, raw };
+    },
+    deliver: (prepared) => {
+      const { accessToken, raw } = prepared as { accessToken: string; raw: string };
+      return fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
+        method: 'POST', headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ threadId: params.data.threadId, raw }), signal: AbortSignal.timeout(12_000),
+      });
+    },
+  });
+  if (attempt.kind !== 'sent') return sendGmailDeliveryAttemptFailure(reply, attempt, 'esta resposta');
+  await db.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'gmail_thread', action: 'reply_sent', payload: { threadId: attempt.threadId || params.data.threadId, messageId: attempt.messageId } });
+  return reply.code(attempt.duplicate ? 200 : 201).send({ data: { id: attempt.messageId, threadId: attempt.threadId || params.data.threadId, sent: true, ...(attempt.duplicate ? { idempotent: true } : {}) } });
 });
 
 app.get('/api/integrations/hostinger/inbox', { preHandler: app.authenticate }, async (request, reply) => {
@@ -2890,7 +2998,8 @@ app.post('/api/billing/orders/:id/cancel', { preHandler: app.authenticate, confi
     const [saved] = await db.update(billingOrders).set({
       status: providerStatus(details.status), statusDetail: details.statusDetail || 'canceled_by_workspace',
       paymentDetails: details, updatedAt: new Date(),
-    }).where(eq(billingOrders.id, order.id)).returning();
+    }).where(and(eq(billingOrders.id, order.id), eq(billingOrders.updatedAt, order.updatedAt))).returning();
+    if (!saved) return reply.code(409).send({ error: 'payment_changed_during_cancellation', message: 'A cobrança mudou enquanto o cancelamento era confirmado. Atualize o status para ver o estado mais recente.' });
     await db.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'billing_order', entityId: order.id, action: 'canceled', payload: { method: order.method, amount: order.amount } });
     return { data: saved };
   } catch {
@@ -3050,8 +3159,14 @@ app.patch('/api/billing/subscriptions/:id/status', { preHandler: app.authenticat
   if (!subscription.mpSubscriptionId) return reply.code(409).send({ error: 'subscription_not_started', message: 'A assinatura ainda não foi criada no Mercado Pago.' });
   if (!await isIntegrationEnabled(request.user.organizationId, 'mercadopago')) return reply.code(409).send({ error: 'integration_disconnected', message: 'Mercado Pago está desconectado no Focusshub.' });
   try {
-    await mercadoPago(request.user.organizationId, `/preapproval/${encodeURIComponent(subscription.mpSubscriptionId)}`, { method: 'PUT', body: JSON.stringify({ status: body.status }) });
-    const [saved] = await db.update(billingSubscriptions).set({ status: body.status, updatedAt: new Date() }).where(eq(billingSubscriptions.id, subscription.id)).returning();
+    const providerUpdate = await mercadoPago<Record<string, unknown>>(request.user.organizationId, `/preapproval/${encodeURIComponent(subscription.mpSubscriptionId)}`, { method: 'PUT', body: JSON.stringify({ status: body.status }) });
+    if (!confirmsSubscriptionStatus(providerUpdate, body.status)) {
+      return reply.code(502).send({ error: 'subscription_status_unconfirmed', message: 'O Mercado Pago não confirmou a alteração. O estado local foi mantido; atualize a assinatura antes de tentar novamente.' });
+    }
+    const [saved] = await db.update(billingSubscriptions).set({ status: body.status, updatedAt: new Date() }).where(and(
+      eq(billingSubscriptions.id, subscription.id), eq(billingSubscriptions.updatedAt, subscription.updatedAt),
+    )).returning();
+    if (!saved) return reply.code(409).send({ error: 'subscription_changed_during_update', message: 'A assinatura mudou enquanto a alteração era confirmada. Atualize o status para ver o estado mais recente.' });
     await db.insert(activityEvents).values({
       organizationId: request.user.organizationId, actorUserId: request.user.sub,
       entityType: 'billing_subscription', entityId: subscription.id, action: 'updated',
@@ -3286,21 +3401,47 @@ function workspaceRecordScopeWhere(resource: string, scope?: WorkspaceRecordScop
   const projectIds = scope.projectIds.map(String);
   const clientFields = [...workspaceClientReferenceFields];
   const projectFields = [...workspaceProjectReferenceFields];
+  const projectClientLinks = workspaceProjectClientLinksForScope(scope);
   const clientConditions = clientIds.flatMap((id) => clientFields.map((field) => sql`${workspaceRecords.data}->>${field} = ${id}`));
   const projectConditions = projectIds.flatMap((id) => projectFields.map((field) => sql`${workspaceRecords.data}->>${field} = ${id}`));
-  const scopedReferenceConditions = (fields: string[], ids: string[]) => fields.map((field) => {
+  const consistentReferenceConditions = (fields: string[]) => {
+    const references = fields.map((field) => sql`${workspaceRecords.data}->>${field}`);
+    if (!references.length) return [];
+    const canonicalReference = sql`coalesce(${sql.join(references.map((reference) => sql`nullif(${reference}, '')`), sql`, `)})`;
+    return references.map((reference) => or(isNull(reference), eq(reference, ''), eq(reference, canonicalReference))!);
+  };
+  const scopedReferenceConditions = (fields: string[], ids: string[], allowLinkedProjectClient = false) => fields.map((field) => {
     const reference = sql`${workspaceRecords.data}->>${field}`;
-    return or(isNull(reference), eq(reference, ''), ...(ids.length ? [inArray(reference, ids)] : []));
-  });
+    const allowed = [...(ids.length ? [inArray(reference, ids)] : [])];
+    if (allowLinkedProjectClient) {
+      for (const [projectId, clientId] of projectClientLinks) {
+        allowed.push(or(
+          ...projectFields.map((projectField) => and(
+            sql`${workspaceRecords.data}->>${projectField} = ${projectId}`,
+            eq(reference, clientId),
+          )),
+        )!);
+      }
+    }
+    return or(isNull(reference), eq(reference, ''), ...allowed);
+  }).concat(consistentReferenceConditions(fields));
   if (resource === 'clients') return clientIds.length ? inArray(workspaceRecords.id, clientIds) : sql`false`;
   if (resource === 'projects') return and(
     or(...(projectIds.length ? [inArray(workspaceRecords.id, projectIds)] : []), ...clientConditions) || sql`false`,
-    ...scopedReferenceConditions(clientFields, clientIds),
+    ...clientFields.map((field) => {
+      const reference = sql`${workspaceRecords.data}->>${field}`;
+      const allowed = [...(clientIds.length ? [inArray(reference, clientIds)] : [])];
+      for (const [projectId, clientId] of projectClientLinks) {
+        if (projectIds.includes(projectId)) allowed.push(and(eq(workspaceRecords.id, projectId), eq(reference, clientId))!);
+      }
+      return or(isNull(reference), eq(reference, ''), ...allowed);
+    }),
+    ...consistentReferenceConditions(clientFields),
     ...scopedReferenceConditions(projectFields, projectIds),
   );
   if (clientLinkedWorkspaceResources.includes(resource as typeof clientLinkedWorkspaceResources[number])) return and(
     or(...clientConditions, ...projectConditions) || sql`false`,
-    ...scopedReferenceConditions(clientFields, clientIds),
+    ...scopedReferenceConditions(clientFields, clientIds, true),
     ...scopedReferenceConditions(projectFields, projectIds),
   );
   return undefined;
@@ -4621,6 +4762,7 @@ app.delete('/api/workspace/clients/:id/portal-link', { preHandler: app.authentic
     eq(workspaceRecords.id, params.data.id), eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'clients'), isNull(workspaceRecords.archivedAt),
   )).limit(1);
   if (!client) return reply.code(404).send({ error: 'not_found', message: 'Cliente não encontrado.' });
+  if (!recordMatchesWorkspaceScope('clients', client.id, client.data as Record<string, unknown>, request.user.permissions?.scope)) return reply.code(404).send({ error: 'not_found', message: 'Cliente não encontrado.' });
   const data = client.data as Record<string, unknown>;
   const version = Number(data.portalTokenVersion ?? 0) + 1;
   await db.update(workspaceRecords).set({ data: { ...data, portalTokenVersion: version, portalTokenActive: false, portalTokenExpiresAt: null, portalTokenRevokedAt: new Date().toISOString() }, updatedAt: new Date() }).where(and(eq(workspaceRecords.id, client.id), eq(workspaceRecords.organizationId, request.user.organizationId)));
@@ -4640,6 +4782,7 @@ app.post('/api/workspace/clients/:id/portal-link', { preHandler: app.authenticat
     eq(workspaceRecords.id, params.data.id), eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'clients'), isNull(workspaceRecords.archivedAt),
   )).limit(1);
   if (!client) return reply.code(404).send({ error: 'not_found', message: 'Cliente não encontrado.' });
+  if (!recordMatchesWorkspaceScope('clients', client.id, client.data as Record<string, unknown>, request.user.permissions?.scope)) return reply.code(404).send({ error: 'not_found', message: 'Cliente não encontrado.' });
   const clientData = client.data as Record<string, unknown>;
   const version = Number(clientData.portalTokenVersion ?? 0) + 1;
   if (!z.string().email().safeParse(clientData.email).success) return reply.code(409).send({ error: 'portal_email_required', message: 'Cadastre um e-mail válido para o cliente antes de ativar o login verificado do portal.' });

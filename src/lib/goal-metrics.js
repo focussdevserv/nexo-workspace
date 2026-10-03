@@ -1,8 +1,19 @@
-import { calendarDateKeyForValue, calendarDateKeyInTimeZone, calendarDateInTimeZone, normalizeWeekStart, startOfCalendarWeek } from './calendar-preferences.js';
+import { calendarDateKeyForValue, calendarDateKeyInTimeZone, calendarDateInTimeZone, normalizeWeekStart, parseCalendarDateKey, startOfCalendarWeek } from './calendar-preferences.js';
 import { isReportableWorkRecord, parseReportAmount } from './reports.js';
+import { isReportProjectCompleted } from './report-project-status.js';
 
 const normalize = (value) => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
-const firstValue = (item, keys) => keys.map((key) => key.split('.').reduce((value, segment) => value?.[segment], item)).find((value) => value !== undefined && value !== null && value !== '');
+const isValidGoalDate = (value) => {
+  if (value === null || value === undefined || value === '') return false;
+  if (value instanceof Date) return !Number.isNaN(value.getTime());
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return Boolean(parseCalendarDateKey(value));
+  }
+  return !Number.isNaN(new Date(value).getTime());
+};
+const firstDateValue = (item, keys) => keys
+  .map((key) => key.split('.').reduce((value, segment) => value?.[segment], item))
+  .find(isValidGoalDate);
 const paidStatuses = new Set(['paid', 'processed', 'approved', 'paga', 'pago', 'recebida', 'received', 'conciliada', 'conciliado']);
 
 export const goalMetricDefinitions = {
@@ -14,6 +25,7 @@ export const goalMetricDefinitions = {
 };
 
 export function isGoalDateInPeriod(value, period, now = new Date(), { timeZone = 'America/Sao_Paulo', weekStart = 'monday' } = {}) {
+  if (!isValidGoalDate(value)) return false;
   const key = calendarDateKeyForValue(value, timeZone);
   if (!key) return false;
   const todayKey = calendarDateKeyInTimeZone(now, timeZone);
@@ -31,7 +43,7 @@ export function calculateGoalMetric(metric, data = {}, states = {}, period = 'mo
   const unavailable = dependencies.map((key) => states[key]).find((state) => state && state !== 'ready');
   if (unavailable) return { state: unavailable, value: null };
   const calendarPreferences = { ...preferences, timeZone: preferences.timeZone || preferences.timezone };
-  const inPeriod = (item, keys) => isGoalDateInPeriod(firstValue(item, keys), period, now, calendarPreferences);
+  const inPeriod = (item, keys) => isGoalDateInPeriod(firstDateValue(item, keys), period, now, calendarPreferences);
 
   if (metric === 'paid_revenue') {
     const orders = (data.orders || []).filter((item) => paidStatuses.has(normalize(item.status))
@@ -46,7 +58,7 @@ export function calculateGoalMetric(metric, data = {}, states = {}, period = 'mo
     return { state: 'ready', value: won.filter((item) => inPeriod(item, ['wonAt', 'won_at', 'closedAt', 'closed_at', 'updatedAt', 'updated_at', 'createdAt', 'created_at', 'date'])).length };
   }
   if (metric === 'completed_projects') {
-    const completed = (data.projects || []).filter((item) => ['concluido', 'completed', 'publicado', 'entregue'].includes(normalize(item.status)));
+    const completed = (data.projects || []).filter(isReportProjectCompleted);
     return { state: 'ready', value: completed.filter((item) => inPeriod(item, ['completedAt', 'completed_at', 'updatedAt', 'updated_at', 'createdAt', 'created_at'])).length };
   }
   if (metric === 'registered_hours') {

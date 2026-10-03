@@ -5,6 +5,8 @@ export const clientLinkedWorkspaceResources = [
   'tickets', 'inbox', 'site-assets', 'monitors', 'repositories', 'revenues', 'expenses', 'finance-transactions',
 ];
 const clientLinkedResources = new Set<string>(clientLinkedWorkspaceResources);
+type WorkspaceProjectLink = { id: string; data: Record<string, unknown> };
+const projectClientLinksByScope = new WeakMap<object, Map<string, string>>();
 // Keep these aliases aligned with workspaceRecordScopeWhere in server.ts.
 // Records are schemaless JSON, so older/imported rows may use snake_case or
 // company/customer terminology for the same tenant relationship.
@@ -18,17 +20,35 @@ export const workspaceProjectReferenceFields = [
   'project_id', 'source_project_id', 'workspace_project_id', 'project_record_id',
 ] as const;
 
+/** Keep only unambiguous, string-valued project → client links for selected projects. */
+export function selectedWorkspaceProjectClientLinks(scope: WorkspaceRecordScope | null | undefined, projects: WorkspaceProjectLink[]) {
+  const assignedProjects = new Set((scope?.projectIds || []).map(String));
+  const links = new Map<string, string>();
+  for (const project of projects) {
+    const id = String(project.id);
+    if (!assignedProjects.has(id)) continue;
+    const raw = workspaceClientReferenceFields.map((field) => project.data[field]).filter((value) => value !== undefined && value !== null && value !== '');
+    if (raw.length === 0 || raw.some((value) => typeof value !== 'string')) continue;
+    const values = new Set(raw as string[]);
+    if (values.size === 1) links.set(id, raw[0] as string);
+  }
+  return links;
+}
+
+/** Cache canonical links on the request's permission scope without serializing them back to the browser or database. */
+export function rememberWorkspaceProjectClientLinks(scope: WorkspaceRecordScope | null | undefined, projects: WorkspaceProjectLink[]) {
+  if (!scope || scope.mode !== 'selected') return;
+  projectClientLinksByScope.set(scope, selectedWorkspaceProjectClientLinks(scope, projects));
+}
+
+export function workspaceProjectClientLinksForScope(scope?: WorkspaceRecordScope | null) {
+  return scope && typeof scope === 'object' ? projectClientLinksByScope.get(scope) || new Map<string, string>() : new Map<string, string>();
+}
+
 export function billingClientIdsForWorkspaceScope(scope?: WorkspaceRecordScope | null, projects: Array<{ id: string; data: Record<string, unknown> }> = []) {
   if (!scope || scope.mode !== 'selected') return null;
   const clientIds = new Set(scope.clientIds.map(String));
-  const assignedProjects = new Set(scope.projectIds.map(String));
-  for (const project of projects) {
-    if (!assignedProjects.has(String(project.id))) continue;
-    for (const field of workspaceClientReferenceFields) {
-      const clientId = project.data[field];
-      if (typeof clientId === 'string' && clientId) clientIds.add(clientId);
-    }
-  }
+  for (const clientId of selectedWorkspaceProjectClientLinks(scope, projects).values()) clientIds.add(clientId);
   return [...clientIds];
 }
 
@@ -47,10 +67,18 @@ export function recordMatchesWorkspaceScope(resource: string, recordId: string, 
   // client's id must not widen a record's visibility. Reject malformed JSON
   // values too: PostgreSQL ->> coerces non-string JSON to text, so silently
   // ignoring them here would disagree with the scoped list predicate.
-  if (clientReferences.some((id) => typeof id !== 'string' || !clients.has(id))
+  if (clientReferences.some((id) => typeof id !== 'string')
     || projectReferences.some((id) => typeof id !== 'string' || !projects.has(id))) return false;
   const scopedClientReferences = clientReferences.filter((id): id is string => typeof id === 'string');
   const scopedProjectReferences = projectReferences.filter((id): id is string => typeof id === 'string');
+  const projectClientLinks = workspaceProjectClientLinksForScope(scope);
+  const projectReferencesForRecord = resource === 'projects' && projects.has(String(recordId))
+    ? [...scopedProjectReferences, String(recordId)]
+    : scopedProjectReferences;
+  if (new Set(scopedProjectReferences).size > 1 || new Set(scopedClientReferences).size > 1) return false;
+  const isAllowedClientReference = (clientId: string) => clients.has(clientId)
+    || projectReferencesForRecord.some((projectId) => projectClientLinks.get(projectId) === clientId);
+  if (scopedClientReferences.some((id) => !isAllowedClientReference(id))) return false;
   if (resource === 'projects') return projects.has(String(recordId)) || scopedClientReferences.some((id) => clients.has(id));
   return scopedClientReferences.some((id) => clients.has(id)) || scopedProjectReferences.some((id) => projects.has(id));
 }

@@ -5,7 +5,7 @@ import { apiRequest, fetchAllRecords, useWorkspaceRecords } from '../lib/workspa
 import { useWorkspacePreferences } from '../lib/workspace-preferences.js';
 import { formatWorkspaceCurrency, formatWorkspaceDateTime, formatWorkspaceTime } from '../lib/workspace-formatting.js';
 import { isLocalDemoActive } from '../lib/local-demo.js';
-import { acquireClientPortalActionAfterConfirmation, appendSentPortalMessage, canOfferClientPortalPaymentAction, canSendPortalMessage, canSubmitPortalApprovalDecision, copyClientPortalText, copyPortalLink, createClientPortalActionLock, portalLinkActionLabel, safeClientPortalHref, shouldConfirmPortalLinkRotation, splitClientPortalApprovals } from '../lib/client-portal-actions.js';
+import { acquireClientPortalActionAfterConfirmation, appendSentPortalMessage, canOfferClientPortalPaymentAction, canSendPortalMessage, canSubmitPortalApprovalDecision, copyClientPortalText, copyPortalLink, createClientPortalActionLock, isClientPortalRoutePending, isCurrentClientPortalSlug, portalLinkActionLabel, safeClientPortalHref, shouldConfirmPortalLinkRotation, splitClientPortalApprovals } from '../lib/client-portal-actions.js';
 import { recordBelongsToPortalClient } from '../lib/client-portal-scope.js';
 import { isApprovalPending } from '../lib/approval-status.js';
 import { buildClientPortalPaymentPreview } from '../lib/client-portal-payment-preview.js';
@@ -157,8 +157,11 @@ export function PublicClientPortal({ slug }) {
   const [verificationStep, setVerificationStep] = useState('identify');
   const [verificationBusy, setVerificationBusy] = useState(false);
   const [reloadVersion, setReloadVersion] = useState(0);
+  const [loadedSlug, setLoadedSlug] = useState('');
   const noticeTimer = useRef(null);
   const actionLock = useRef(createClientPortalActionLock());
+  const currentSlugRef = useRef(slug);
+  currentSlugRef.current = slug;
   useEffect(() => {
     setPortalSession({ slug, token: readClientPortalSession(getClientPortalSessionStorage(), slug) });
   }, [slug]);
@@ -172,34 +175,41 @@ export function PublicClientPortal({ slug }) {
     setLoading(true);
     setError('');
     setData(null);
+    setLoadedSlug('');
+    setRequiresVerification(false);
+    setIdentifier('');
+    setChallengeId('');
+    setVerificationCode('');
+    setVerificationStep('identify');
     setSentMessages([]);
     const headers = accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
     fetch(`/api/public/client-portal/${encodeURIComponent(slug)}`, { credentials: 'same-origin', headers, signal: controller.signal }).then(async (response) => {
       const payload = await response.json().catch(() => ({}));
-      if (response.status === 401 && payload.error === 'portal_verification_required') { if (active) { setRequiresVerification(true); setError(''); setData(null); } return; }
+      if (response.status === 401 && payload.error === 'portal_verification_required') { if (active) { setRequiresVerification(true); setAccessToken(''); setError(''); setData(null); setLoadedSlug(slug); } return; }
       if (!response.ok) throw new Error(payload.message || 'Este link do portal não é válido.');
-      if (active) { setData(payload.data); setError(''); setRequiresVerification(false); }
-    }).catch((err) => { if (active && err.name !== 'AbortError') { setError(err.message || 'Este link do portal não é válido.'); setData(null); } }).finally(() => { if (active) setLoading(false); });
+      if (active) { setData(payload.data); setError(''); setRequiresVerification(false); setLoadedSlug(slug); }
+    }).catch((err) => { if (active && err.name !== 'AbortError') { setError(err.message || 'Este link do portal não é válido.'); setData(null); setLoadedSlug(slug); } }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; controller.abort(); };
   }, [slug, accessToken, reloadVersion]);
   useEffect(() => () => window.clearTimeout(noticeTimer.current), []);
   const portalRequest = async (path, options = {}) => {
+    const requestSlug = slug;
     const response = await fetch(path, { ...options, credentials: 'same-origin', headers: { 'Content-Type': 'application/json', ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}), ...(options.headers || {}) } });
     const payload = await response.json().catch(() => ({}));
-    if (response.status === 401 && payload.error === 'portal_verification_required') { setRequiresVerification(true); setData(null); setAccessToken(''); }
+    if (response.status === 401 && payload.error === 'portal_verification_required' && isCurrentClientPortalSlug(requestSlug, currentSlugRef.current)) { setRequiresVerification(true); setData(null); setAccessToken(''); }
     if (!response.ok) throw new Error(payload.message || 'Não foi possível concluir a solicitação.');
     return payload;
   };
   const requestCode = async (event) => {
-    event.preventDefault(); if (!actionLock.current.acquire()) return; setVerificationBusy(true);
-    try { const result = await portalRequest(`/api/public/client-portal/${encodeURIComponent(slug)}/request-code`, { method: 'POST', body: JSON.stringify({ identifier }) }); setChallengeId(result.data.challengeId); setVerificationStep('code'); flash(`${result.data.message}`); }
-    catch (err) { flash(err.message || 'Não foi possível solicitar o código.'); }
+    event.preventDefault(); const requestSlug = slug; if (!actionLock.current.acquire()) return; setVerificationBusy(true);
+    try { const result = await portalRequest(`/api/public/client-portal/${encodeURIComponent(requestSlug)}/request-code`, { method: 'POST', body: JSON.stringify({ identifier }) }); if (!isCurrentClientPortalSlug(requestSlug, currentSlugRef.current)) return; setChallengeId(result.data.challengeId); setVerificationStep('code'); flash(`${result.data.message}`); }
+    catch (err) { if (isCurrentClientPortalSlug(requestSlug, currentSlugRef.current)) flash(err.message || 'Não foi possível solicitar o código.'); }
     finally { actionLock.current.release(); setVerificationBusy(false); }
   };
   const verifyCode = async (event) => {
-    event.preventDefault(); if (!actionLock.current.acquire()) return; setVerificationBusy(true);
-    try { const result = await portalRequest(`/api/public/client-portal/${encodeURIComponent(slug)}/verify-code`, { method: 'POST', body: JSON.stringify({ challengeId, code: verificationCode }) }); setAccessToken(result.data.accessToken); setVerificationCode(''); setError(''); setLoading(true); }
-    catch (err) { flash(err.message || 'Codigo incorreto ou expirado.'); }
+    event.preventDefault(); const requestSlug = slug; if (!actionLock.current.acquire()) return; setVerificationBusy(true);
+    try { const result = await portalRequest(`/api/public/client-portal/${encodeURIComponent(requestSlug)}/verify-code`, { method: 'POST', body: JSON.stringify({ challengeId, code: verificationCode }) }); if (!isCurrentClientPortalSlug(requestSlug, currentSlugRef.current)) return; setAccessToken(result.data.accessToken); setVerificationCode(''); setError(''); setLoading(true); }
+    catch (err) { if (isCurrentClientPortalSlug(requestSlug, currentSlugRef.current)) flash(err.message || 'Codigo incorreto ou expirado.'); }
     finally { actionLock.current.release(); setVerificationBusy(false); }
   };
   const client = data?.client;
@@ -211,28 +221,31 @@ export function PublicClientPortal({ slug }) {
   const sendMessage = async (event) => {
     event.preventDefault();
     if (!canSendPortalMessage(message, busy)) { flash('Escreva sua mensagem antes de enviar.'); return; }
+    const requestSlug = slug;
     if (!actionLock.current.acquire()) return;
     setBusy(true);
-    try { const result = await portalRequest(`/api/public/client-portal/${encodeURIComponent(slug)}/messages`, { method: 'POST', body: JSON.stringify({ message: message.trim() }) }); setSentMessages((current) => appendSentPortalMessage(current, message, result.data?.id)); setMessage(''); flash('Mensagem enviada para a equipe.'); }
-    catch (err) { flash(err.message || 'Não foi possível enviar sua mensagem.'); }
+    try { const result = await portalRequest(`/api/public/client-portal/${encodeURIComponent(requestSlug)}/messages`, { method: 'POST', body: JSON.stringify({ message: message.trim() }) }); if (!isCurrentClientPortalSlug(requestSlug, currentSlugRef.current)) return; setSentMessages((current) => appendSentPortalMessage(current, message, result.data?.id)); setMessage(''); flash('Mensagem enviada para a equipe.'); }
+    catch (err) { if (isCurrentClientPortalSlug(requestSlug, currentSlugRef.current)) flash(err.message || 'Não foi possível enviar sua mensagem.'); }
     finally { actionLock.current.release(); setBusy(false); }
   };
   const decide = async (approval, decision) => {
     if (decision === 'changes_requested' && String(approvalNotes[approval.id] || '').trim().length < 3) { flash('Escreva pelo menos 3 caracteres explicando o ajuste solicitado.'); return; }
+    const requestSlug = slug;
     if (!actionLock.current.acquire()) return;
     setBusy(true);
     try {
-      await portalRequest(`/api/public/client-portal/${encodeURIComponent(slug)}/approvals/${approval.id}`, { method: 'POST', body: JSON.stringify({ decision, comment: approvalNotes[approval.id] || '' }) });
+      await portalRequest(`/api/public/client-portal/${encodeURIComponent(requestSlug)}/approvals/${approval.id}`, { method: 'POST', body: JSON.stringify({ decision, comment: approvalNotes[approval.id] || '' }) });
+      if (!isCurrentClientPortalSlug(requestSlug, currentSlugRef.current)) return;
       const status = decision === 'approved' ? 'Aprovada' : 'Alterações solicitadas';
       setData((current) => current ? { ...current, approvals: (current.approvals || []).map((item) => item.id === approval.id ? { ...item, status, clientComment: approvalNotes[approval.id] || '' } : item) } : current);
       setApprovalNotes((notes) => ({ ...notes, [approval.id]: '' }));
       flash(decision === 'approved' ? 'Aprovação registrada.' : 'Pedido de alteração enviado.');
-      try { const fresh = await portalRequest(`/api/public/client-portal/${encodeURIComponent(slug)}`); setData(fresh.data); } catch { /* The saved decision stays visible; a later refresh can reconcile it. */ }
+      try { const fresh = await portalRequest(`/api/public/client-portal/${encodeURIComponent(requestSlug)}`); if (isCurrentClientPortalSlug(requestSlug, currentSlugRef.current)) setData(fresh.data); } catch { /* The saved decision stays visible; a later refresh can reconcile it. */ }
     }
-    catch (err) { flash(err.message || 'Não foi possível registrar sua resposta.'); }
+    catch (err) { if (isCurrentClientPortalSlug(requestSlug, currentSlugRef.current)) flash(err.message || 'Não foi possível registrar sua resposta.'); }
     finally { actionLock.current.release(); setBusy(false); }
   };
-  if (loading) return <main className="cp-empty-state cp-public-access-state"><h1>Carregando portal…</h1></main>;
+  if (isClientPortalRoutePending(loading, loadedSlug, slug)) return <main className="cp-empty-state cp-public-access-state"><h1>Carregando portal…</h1></main>;
   if (requiresVerification && !data) return <main className="cp-empty-state cp-public-access-state"><section className="cp-login-card"><span className="cp-overline">ACESSO SEGURO AO PORTAL</span><h1>Confirme sua identidade</h1>{verificationStep === 'identify' ? <form onSubmit={requestCode}><p>Informe o e-mail, CPF/CNPJ ou telefone cadastrado. O código será enviado ao e-mail da conta.</p><label>Identificador<input autoFocus={typeof window !== 'undefined' && window.matchMedia('(min-width: 641px)').matches} type="text" name="portalIdentifier" autoComplete="off" spellCheck={false} required minLength={3} value={identifier} onChange={(event) => setIdentifier(event.target.value)} placeholder="E-mail, CPF/CNPJ ou telefone" /></label><button type="submit" className="admin-primary" disabled={verificationBusy}>{verificationBusy ? 'Solicitando...' : 'Enviar c\u00f3digo por e-mail'}</button></form> : <form onSubmit={verifyCode}><p>Se os dados corresponderem, o c&#243;digo chegar&#225; ao e-mail cadastrado.{notice ? ` ${notice}` : ''}</p><label>Código de 6 dígitos<input autoFocus={typeof window !== 'undefined' && window.matchMedia('(min-width: 641px)').matches} type="text" name="verificationCode" autoComplete="one-time-code" inputMode="numeric" pattern="[0-9]{6}" maxLength={6} required value={verificationCode} onChange={(event) => setVerificationCode(event.target.value.replace(/\D/g, '').slice(0, 6))} /></label><button type="submit" className="admin-primary" disabled={verificationBusy || verificationCode.length !== 6}>{verificationBusy ? 'Verificando...' : 'Entrar no portal'}</button><button type="button" className="admin-secondary" disabled={verificationBusy} onClick={() => { setVerificationStep('identify'); setChallengeId(''); setVerificationCode(''); }}>Usar outro identificador</button></form>}</section>{notice && <div className="cp-toast" role="status">{notice}</div>}</main>;
   if (error || !client) return <main className="cp-empty-state cp-public-access-state"><section className="cp-login-card" role="alert"><h1>Portal indisponível</h1><p>{error || 'Este link não corresponde a um portal publicado.'}</p><button type="button" className="admin-secondary" onClick={() => setReloadVersion((version) => version + 1)}>Tentar novamente</button></section></main>;
   const { pending: pendingApprovals, history: approvalHistory } = splitClientPortalApprovals(data.approvals);

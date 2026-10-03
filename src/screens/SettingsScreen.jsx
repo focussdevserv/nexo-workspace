@@ -19,11 +19,12 @@ import { validateWorkspaceSettings } from '../lib/settings-validation.js';
 import { isBillingSettingAvailable } from '../lib/billing-setting-capabilities.js';
 import { isLocalDemoActive } from '../lib/local-demo.js';
 import { canUseWorkspaceBackup, workspaceBackupUnavailableReason } from '../lib/workspace-backup-access.js';
+import { normalizeNotificationPreferences } from '../lib/email-notification-consent.js';
 
 const defaults = {
   workspace: { agency: '', timezone: 'America/Sao_Paulo', weekStart: 'monday', currency: 'BRL', dateFormat: 'dd/MM/yyyy', language: 'pt-BR', fiscalName: '', document: '', email: '', phone: '', website: '', address: '', brandLogo: '' },
   preferences: { compact: false, darkMode: false, startPage: 'Meu Dia', showCompleted: false, confirmDelete: true },
-  notifications: { taskDue: true, overdue: true, newLead: true, proposal: true, payment: true, weekly: true, email: true, browser: false, whatsapp: false, quietHours: false, quietStart: '20:00', quietEnd: '08:00' },
+  notifications: { taskDue: true, overdue: true, newLead: true, proposal: true, payment: true, weekly: false, email: false, emailConsentVersion: 0, emailConsentAt: '', emailConsentAddress: '', browser: false, whatsapp: false, quietHours: false, quietStart: '20:00', quietEnd: '08:00' },
   billing: { defaultDueDays: '7', reminderDays: '3, 1, 0, -3', lateFee: '2', interest: '1', pix: true, boleto: true, card: true, autoRenew: true },
 };
 const sections = [
@@ -64,7 +65,11 @@ export default function SettingsScreen({ notify, navigationContext = null, onNav
   useEffect(() => {
     const hydration = resolveSettingsHydration({ defaults, savedRecord: savedSettings, loading: settingsLoading, error: settingsLoadError, dirty });
     if (!hydration) return;
-    setSettings(hydration.settings);
+    const hydratedSettings = {
+      ...hydration.settings,
+      notifications: normalizeNotificationPreferences(hydration.settings.notifications, isOwner ? currentUser?.email || '' : hydration.settings.notifications.emailConsentAddress || ''),
+    };
+    setSettings(hydratedSettings);
     setSavedAt(hydration.savedAt);
     setDirty(false);
     rememberWorkspaceThemePreference(hydration.settings.preferences.darkMode);
@@ -159,7 +164,11 @@ export default function SettingsScreen({ notify, navigationContext = null, onNav
       if (!canWriteSettings) throw new Error('Seu perfil não pode importar configurações neste workspace.');
       if (file.size > 2 * 1024 * 1024) throw new Error('O arquivo excede o limite de 2 MB.');
       const payload = JSON.parse(await file.text());
-      const imported = normalizeImportedSettings(payload, defaults);
+      const importedSettings = normalizeImportedSettings(payload, defaults);
+      const imported = {
+        ...importedSettings,
+        notifications: normalizeNotificationPreferences(importedSettings.notifications, isOwner ? currentUser?.email || '' : importedSettings.notifications.emailConsentAddress || ''),
+      };
       if (!confirmSettingsImport({ dirty, confirmReplace: (message) => window.confirm(message) })) return;
       setSettings(imported);
       setSaveError('');
@@ -269,8 +278,8 @@ export default function SettingsScreen({ notify, navigationContext = null, onNav
       </>}
 
       {active === 'notifications' && <>
-        <SettingsCard title="Alertas do workspace" description="A central registra atualizações. Com o navegador autorizado, avisos de prazo, leads, propostas e pagamentos aparecem enquanto o app estiver aberto." icon={Bell}><SettingToggle title="Tarefas próximas do prazo" detail="Notifica no navegador quando uma tarefa aberta vence hoje ou amanhã." value={settings.notifications.taskDue} onChange={(v) => update('notifications', 'taskDue', v)} /><SettingToggle title="Tarefas atrasadas" detail="Notifica uma vez por prazo de tarefa atrasada." value={settings.notifications.overdue} onChange={(v) => update('notifications', 'overdue', v)} /><SettingToggle title="Novo lead recebido" detail="Notifica quando um novo lead é registrado no workspace." value={settings.notifications.newLead} onChange={(v) => update('notifications', 'newLead', v)} /><SettingToggle title="Proposta visualizada ou aceita" detail="Notifica atualizações registradas em propostas." value={settings.notifications.proposal} onChange={(v) => update('notifications', 'proposal', v)} /><SettingToggle title="Pagamento recebido ou vencido" detail="Notifica atualizações registradas em cobranças e assinaturas." value={settings.notifications.payment} onChange={(v) => update('notifications', 'payment', v)} /></SettingsCard>
-        <SettingsCard title="Canais e frequência" description="Alertas no navegador funcionam enquanto o Focusshub estiver aberto. Envio automático por e-mail e WhatsApp ainda não está conectado." icon={Mail}><SettingToggle title="Resumo semanal por e-mail" detail="Preferência salva; envio semanal ainda não está configurado." value={settings.notifications.weekly} onChange={(v) => update('notifications', 'weekly', v)} /><SettingToggle title="Notificações por e-mail" detail="Preferência salva; envio de alertas por e-mail ainda não está configurado." value={settings.notifications.email} onChange={(v) => update('notifications', 'email', v)} /><SettingToggle title="Notificações no navegador" detail="Pede permissão e envia um teste. Com a opção salva, os alertas acima aparecem neste navegador." value={settings.notifications.browser} onChange={toggleBrowserNotifications} /><SettingToggle title="Avisos pelo WhatsApp" detail="Preferência salva; envio via Evolution/WAHA ainda não está configurado." value={settings.notifications.whatsapp} onChange={(v) => update('notifications', 'whatsapp', v)} /><SettingToggle title="Horário silencioso" detail="Silencia os alertas no navegador durante a faixa definida abaixo." value={settings.notifications.quietHours} onChange={(v) => update('notifications', 'quietHours', v)} />{settings.notifications.quietHours && <div className="settings-fields settings-hours"><Field label="Início"><input type="time" value={settings.notifications.quietStart} onChange={(e) => update('notifications', 'quietStart', e.target.value)} /></Field><Field label="Fim"><input type="time" value={settings.notifications.quietEnd} onChange={(e) => update('notifications', 'quietEnd', e.target.value)} /></Field></div>}</SettingsCard>
+        <SettingsCard title="Alertas do workspace" description="Estas categorias controlam os avisos do navegador, quando ele está autorizado e ativo. Elas não ativam o envio de e-mail." icon={Bell}><SettingToggle title="Tarefas próximas do prazo" detail="Notifica no navegador quando uma tarefa aberta vence hoje ou amanhã." value={settings.notifications.taskDue} onChange={(v) => update('notifications', 'taskDue', v)} /><SettingToggle title="Tarefas atrasadas" detail="Notifica uma vez por prazo de tarefa atrasada." value={settings.notifications.overdue} onChange={(v) => update('notifications', 'overdue', v)} /><SettingToggle title="Novo lead recebido" detail="Notifica quando um novo lead é registrado no workspace." value={settings.notifications.newLead} onChange={(v) => update('notifications', 'newLead', v)} /><SettingToggle title="Proposta visualizada ou aceita" detail="Notifica atualizações registradas em propostas." value={settings.notifications.proposal} onChange={(v) => update('notifications', 'proposal', v)} /><SettingToggle title="Pagamento recebido ou vencido" detail="Notifica atualizações registradas em cobranças e assinaturas." value={settings.notifications.payment} onChange={(v) => update('notifications', 'payment', v)} /></SettingsCard>
+        <SettingsCard title="Canais e frequência" description="Os alertas do navegador funcionam. O Focusshub ainda não envia notificações por e-mail, resumos semanais ou avisos automáticos pelo WhatsApp." icon={Mail}><SettingUnavailable title="Notificações por e-mail" detail="Indisponível: o envio automático de alertas por e-mail ainda não está conectado. As preferências antigas permanecem desligadas." /><SettingUnavailable title="Resumo semanal por e-mail" detail="Indisponível: o Focusshub ainda não gera nem envia um resumo semanal." /><SettingToggle title="Notificações no navegador" detail="Pede permissão e envia um teste. Com a opção salva, os alertas acima aparecem neste navegador." value={settings.notifications.browser} onChange={toggleBrowserNotifications} /><SettingUnavailable title="Avisos pelo WhatsApp" detail="Indisponível: alertas automáticos pelo WhatsApp ainda não estão conectados." /><SettingToggle title="Horário silencioso" detail="Silencia os alertas no navegador durante a faixa definida abaixo." value={settings.notifications.quietHours} onChange={(v) => update('notifications', 'quietHours', v)} />{settings.notifications.quietHours && <div className="settings-fields settings-hours"><Field label="Início"><input type="time" value={settings.notifications.quietStart} onChange={(e) => update('notifications', 'quietStart', e.target.value)} /></Field><Field label="Fim"><input type="time" value={settings.notifications.quietEnd} onChange={(e) => update('notifications', 'quietEnd', e.target.value)} /></Field></div>}</SettingsCard>
       </>}
 
       {active === 'team' && <>
@@ -305,4 +314,5 @@ export default function SettingsScreen({ notify, navigationContext = null, onNav
 
 function SettingsCard({ title, description, icon: Icon, children }) { return <section className="settings-card"><header><span className="settings-card-icon"><Icon size={17} /></span><div><h3>{title}</h3><p>{description}</p></div></header><div className="settings-card-body">{children}</div></section>; }
 function Field({ label, children, wide = false }) { return <label className={`settings-field ${wide ? 'wide' : ''}`}><span>{label}</span>{children}</label>; }
-function SettingToggle({ title, detail, value, onChange }) { return <div className="settings-toggle-row"><span><b>{title}</b><small>{detail}</small></span><button type="button" role="switch" aria-checked={value} aria-label={`${title}: ${value ? 'ativado' : 'desativado'}`} className={`settings-switch ${value ? 'on' : ''}`} onClick={() => onChange(!value)}><i /></button></div>; }
+function SettingToggle({ title, detail, value, onChange, disabled = false }) { return <div className="settings-toggle-row"><span><b>{title}</b><small>{detail}</small></span><button type="button" role="switch" aria-checked={value} aria-label={`${title}: ${value ? 'ativado' : 'desativado'}`} className={`settings-switch ${value ? 'on' : ''}`} disabled={disabled} onClick={() => onChange(!value)}><i /></button></div>; }
+function SettingUnavailable({ title, detail }) { return <div className="settings-toggle-row settings-unavailable" role="status"><span><b>{title}</b><small>{detail}</small></span><span className="settings-unavailable-badge">Indisponível</span></div>; }

@@ -21,3 +21,15 @@ test('keeps undated leads available through an explicit filter', () => {
   assert.deepEqual(filterLeadsByPeriod(leads, 'undated', now).map((lead) => lead.id), ['undated']);
   assert.equal(filterLeadsByPeriod(leads, 'all', now), leads);
 });
+
+test('falls back to a valid legacy date when createdAt aliases are malformed', () => {
+  const legacyLead = {
+    id: 'legacy',
+    createdAt: 'not-a-date',
+    created_at: '',
+    date: '2026-09-28T10:00:00Z',
+  };
+
+  assert.deepEqual(filterLeadsByPeriod([legacyLead], 'last7', now), [legacyLead]);
+  assert.deepEqual(filterLeadsByPeriod([legacyLead], 'undated', now), []);
+});

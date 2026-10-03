@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { canCreateWorkRecord, canSelectWorkspaceFileUpload, projectStatusFilters, shouldShowProjectKanbanEmpty } from './work-screen-actions.js';
+import { canCreateWorkRecord, canSelectWorkspaceFileUpload, projectMatchesStatusFilter, projectStatusFilters, shouldShowProjectKanbanEmpty } from './work-screen-actions.js';
 
 test('collection create actions wait for load and stay disabled after load errors', () => {
   const screens = ['agenda', 'tarefas', 'projetos', 'arquivos', 'aprovacoes'];
@@ -25,6 +25,21 @@ test('project status filters include every Kanban stage', () => {
   for (const stage of ['A fazer', 'Em andamento', 'Aguardando cliente', 'Concluído', 'Arquivado']) {
     assert.ok(projectStatusFilters.includes(stage), `missing filter for ${stage}`);
   }
+});
+
+test('project status filters include legacy completed aliases and keep archived projects out of Todos', () => {
+  for (const status of ['Concluído', 'Concluida', 'completed', 'complete', 'done']) {
+    const project = { status };
+    assert.equal(projectMatchesStatusFilter(project, 'Concluído'), true, `${status} should appear as completed`);
+    assert.equal(projectMatchesStatusFilter(project, 'Todos'), true, `${status} should appear in Todos`);
+  }
+  for (const status of ['Arquivado', 'archived']) {
+    const project = { status };
+    assert.equal(projectMatchesStatusFilter(project, 'Arquivado'), true, `${status} should appear in Arquivado`);
+    assert.equal(projectMatchesStatusFilter(project, 'Todos'), false, `${status} should not appear in Todos`);
+  }
+  assert.equal(projectMatchesStatusFilter({ status: 'active' }, 'Em andamento'), true);
+  assert.equal(projectMatchesStatusFilter({ status: 'pending' }, 'A fazer'), true);
 });
 
 test('Kanban empty state follows visible projects and waits for a successful load', () => {

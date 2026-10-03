@@ -27,6 +27,7 @@ function moduleForPath(path: string): PermissionModule | null {
   if (path.startsWith('/api/integrations/google/calendar/')) return 'delivery';
   if (path.startsWith('/api/integrations/google/gmail') || path === '/api/integrations/google/drive/files'
     || path.startsWith('/api/integrations/google/drive/upload') || /^\/api\/integrations\/google\/drive\/[^/]+\/metadata$/.test(path)
+    || /^\/api\/integrations\/google\/drive\/[^/]+\/share-for-portal$/.test(path)
     || path.startsWith('/api/integrations/waha/')
     || path === '/api/integrations/hostinger/inbox' || path === '/api/integrations/hostinger/send'
     || /^\/api\/integrations\/hostinger\/[^/]+\/read$/.test(path)) return 'support';
@@ -94,6 +95,10 @@ export function isWorkspaceRequestAllowed(role: WorkspaceRole, method: string, r
   if (/^\/api\/integrations\/[^/]+\/(?:test|connection)$/.test(path)
     || path.startsWith('/api/integrations/google/authorize') || path === '/api/integrations/google/disconnect'
     || (path.startsWith('/api/integrations/waha/sessions') && !(verb === 'GET' && path === '/api/integrations/waha/sessions'))) return false;
+
+  // Portal sharing exposes a Drive file externally, so member grants cannot
+  // turn it into a general support-module action.
+  if (/^\/api\/integrations\/google\/drive\/[^/]+\/share-for-portal$/.test(path) && role === 'member') return false;
 
   const module = moduleForPath(path);
   const level = verb === 'GET' || verb === 'HEAD' ? 'read' : verb === 'DELETE' ? 'delete' : 'write';

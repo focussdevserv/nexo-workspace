@@ -1,8 +1,10 @@
 function leadDate(lead) {
-  const value = lead?.createdAt || lead?.created_at || lead?.date;
-  if (typeof value !== 'string' && !(value instanceof Date)) return null;
-  const timestamp = new Date(value).getTime();
-  return Number.isFinite(timestamp) ? timestamp : null;
+  for (const value of [lead?.createdAt, lead?.created_at, lead?.date]) {
+    if (typeof value !== 'string' && !(value instanceof Date)) continue;
+    const timestamp = new Date(value).getTime();
+    if (Number.isFinite(timestamp)) return timestamp;
+  }
+  return null;
 }
 
 export function filterLeadsByPeriod(leads, period, now = new Date()) {

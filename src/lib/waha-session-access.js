@@ -38,3 +38,11 @@ export function wahaSessionStatusSummary(sessions, unavailable = false) {
     needsAction: String(sessions.filter((item) => item.status !== 'WORKING').length),
   };
 }
+
+/** Keep the last known session list during a temporary status outage. */
+export function preserveWahaSessionsOnRefreshError(sessions, error) {
+  return {
+    sessions: Array.isArray(sessions) ? sessions : [],
+    error: error?.message || 'Não foi possível consultar as sessões WhatsApp.',
+  };
+}

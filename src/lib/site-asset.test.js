@@ -68,8 +68,8 @@ test('all site schedule controls are disabled while any schedule mutation is in 
 
 test('site asset URLs must match the public monitor supported HTTP rules', () => {
   const client = { id: 'client-1', name: 'Cliente Exemplo' };
-  for (const url of ['ftp://cliente.example', 'https://user:secret@cliente.example', 'https://cliente.example:8443', 'http://localhost', 'http://127.0.0.1', 'http://127.1', 'http://10.0.0.5', 'http://172.20.0.1', 'http://192.168.1.25', 'http://169.254.1.1', 'http://100.64.0.1', 'http://192.0.2.12', 'http://198.51.100.7', 'http://203.0.113.8', 'http://[::1]', 'http://[fc00::1]', 'http://[fe80::1]', 'http://[ff02::1]']) {
-    assert.throws(() => buildSiteAssetPayload({ name: 'Site', url }, client), /URL|dominios publicos/i, url);
+  for (const url of ['ftp://cliente.example', 'https://user:secret@cliente.example', 'https://cliente.example:8443', 'http://localhost', 'http://127.0.0.1', 'http://127.1', 'http://10.0.0.5', 'http://172.20.0.1', 'http://192.168.1.25', 'http://169.254.1.1', 'http://100.64.0.1', 'http://192.0.2.12', 'http://198.51.100.7', 'http://203.0.113.8', 'http://[::1]', 'http://[fc00::1]', 'http://[fe80::1]', 'http://[ff02::1]', 'https://[2606:4700:4700::1111]']) {
+    assert.throws(() => buildSiteAssetPayload({ name: 'Site', url }, client), /URL|dominios publicos|IPv4 publicos/i, url);
   }
   assert.equal(buildSiteAssetPayload({ name: 'Site', url: 'https://203.0.114.8' }, client).url, 'https://203.0.114.8/');
 });

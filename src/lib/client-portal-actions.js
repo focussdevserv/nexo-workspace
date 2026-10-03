@@ -27,6 +27,14 @@ export function canSendPortalMessage(message, busy = false) {
   return !busy && String(message || '').trim().length > 0;
 }
 
+export function isClientPortalRoutePending(loading, loadedSlug, currentSlug) {
+  return loading || loadedSlug !== currentSlug;
+}
+
+export function isCurrentClientPortalSlug(requestSlug, currentSlug) {
+  return requestSlug === currentSlug;
+}
+
 /** Payment instructions are actionable only while the invoice remains payable. */
 export function canOfferClientPortalPaymentAction(status) {
   return ['pending', 'overdue'].includes(normalizePaymentStatus(status));

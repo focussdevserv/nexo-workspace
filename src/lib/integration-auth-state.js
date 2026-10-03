@@ -95,6 +95,11 @@ export function canManageIntegrationSettings(role) {
   return role === 'owner';
 }
 
+/** Do not mutate a provider using cached state when its latest status is unknown. */
+export function integrationConnectionChangeDisabled({ canManage, changing = false, loading = false, error = false } = {}) {
+  return !canManage || changing || loading || error;
+}
+
 /** Describe the actual credential flow so token-only providers are never presented as OAuth logins. */
 export function integrationCredentialFlow(name) {
   const oauthProvider = oauthIntegrationProvider(name);

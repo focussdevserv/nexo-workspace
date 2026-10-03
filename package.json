@@ -9,6 +9,7 @@
     "build": "vite build",
     "lint": "eslint src --ext .js,.jsx",
     "test": "node scripts/run-frontend-tests.mjs && npm --prefix api test",
+    "validate:screens": "node scripts/validate-screen-render.mjs",
     "preview": "vite preview --host 0.0.0.0",
     "api:dev": "npm --prefix api run dev",
     "api:build": "npm --prefix api run build"

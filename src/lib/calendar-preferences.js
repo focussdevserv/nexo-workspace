@@ -32,6 +32,20 @@ export function calendarDateKeyInTimeZone(instant, timeZone = DEFAULT_CALENDAR_T
   return `${get('year')}-${get('month')}-${get('day')}`;
 }
 
+/** Parse a YYYY-MM-DD calendar key without JavaScript's 1900 remapping for years 0001–0099. */
+export function parseCalendarDateKey(value) {
+  if (typeof value !== 'string') return null;
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return null;
+  const [, year, month, day] = match.map(Number);
+  const date = new Date(0);
+  date.setUTCHours(0, 0, 0, 0);
+  date.setUTCFullYear(year, month - 1, day);
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
+    ? date
+    : null;
+}
+
 export function calendarTimeInTimeZone(instant, timeZone = DEFAULT_CALENDAR_TIME_ZONE) {
   const parts = new Intl.DateTimeFormat('en-GB', {
     timeZone: normalizeCalendarTimeZone(timeZone), hour: '2-digit', minute: '2-digit', hourCycle: 'h23',

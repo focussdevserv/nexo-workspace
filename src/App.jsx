@@ -7,10 +7,12 @@ import {
   LogOut, Mail, MessageCircle, Menu, MoreVertical, Paperclip, Phone, Plus, RefreshCw, Search, Send,
   Settings, Sparkles, Sun, Moon, Users, Video, X,
 } from 'lucide-react';
-const CommercialScreen = lazy(() => import('./screens/CommercialScreens.jsx'));
-const WorkScreen = lazy(() => import('./screens/WorkScreens.jsx'));
-const ServiceScreen = lazy(() => import('./screens/ServiceScreens.jsx'));
-const AdminScreen = lazy(() => import('./screens/AdminScreens.jsx'));
+const lazyWorkspaceModule = createRetryableLazyModuleRegistry(lazy, {
+  commercial: () => import('./screens/CommercialScreens.jsx'),
+  work: () => import('./screens/WorkScreens.jsx'),
+  service: () => import('./screens/ServiceScreens.jsx'),
+  admin: () => import('./screens/AdminScreens.jsx'),
+});
 import { PublicClientPortal } from './screens/ClientPortalScreens.jsx';
 import WorkspaceAccess from './screens/WorkspaceAccess.jsx';
 import PublicLegalPage from './screens/PublicLegalPages.jsx';
@@ -31,6 +33,7 @@ import { filterDashboardTasks } from './lib/dashboard-task-filter.js';
 import { filterDashboardActiveProjects } from './lib/dashboard-active-projects.js';
 import { dashboardMetricPresentation } from './lib/dashboard-metric-presentation.js';
 import { dashboardBillingMetrics } from './lib/dashboard-billing-metrics.js';
+import { dashboardPendingProposalCount } from './lib/dashboard-pending-proposals.js';
 import { selectDashboardHighlightedEvent } from './lib/dashboard-highlighted-event.js';
 import { dashboardEventsForDate } from './lib/dashboard-events-for-date.js';
 import { dashboardInboxConversations } from './lib/dashboard-inbox.js';
@@ -44,6 +47,7 @@ import { logoutWorkspace } from './lib/workspace-session.js';
 import { shouldInterceptWorkspaceLink } from './lib/workspace-navigation-link.js';
 import { roleCanOpenWorkspacePage as roleCanOpenPage } from './lib/workspace-page-access.js';
 import { workspaceQuickSearchResults } from './lib/workspace-quick-search.js';
+import { createRetryableLazyModuleRegistry } from './lib/retryable-lazy-module.js';
 import './screens/forms-polish.css';
 import './screens/buttons-polish.css';
 import './screens/onboarding.css';
@@ -55,11 +59,10 @@ const workPages = new Set(['Agenda', 'Tarefas', 'Aprovações', 'Projetos', 'Hor
 const servicePages = new Set(['Financeiro', 'Receitas', 'Despesas', 'Contas', 'Cobranças', 'Assinaturas', 'Caixa de entrada', 'WhatsApp', 'Tickets', 'Sites', 'Domínios', 'Hospedagens', 'Monitoramento', 'Integrações', 'Automações']);
 const adminPages = new Set(['Equipe', 'Relatórios', 'Metas', 'Configurações', 'Portal do cliente', 'Repositórios']);
 
-function ModuleScreen({ page, navigationContext, onNavigationContextConsumed }) {
-  if (commercialPages.has(page)) return <Suspense fallback={<ModuleLoading />}><CommercialScreen key={page} page={page} navigationContext={navigationContext} onNavigationContextConsumed={onNavigationContextConsumed} /></Suspense>;
-  if (workPages.has(page)) return <Suspense fallback={<ModuleLoading />}><WorkScreen key={page} page={page} navigationContext={navigationContext} onNavigationContextConsumed={onNavigationContextConsumed} /></Suspense>;
-  if (servicePages.has(page)) return <Suspense fallback={<ModuleLoading />}><ServiceScreen key={page} page={page} navigationContext={navigationContext} onNavigationContextConsumed={onNavigationContextConsumed} /></Suspense>;
-  if (adminPages.has(page)) return <Suspense fallback={<ModuleLoading />}><AdminScreen key={page} page={page} navigationContext={navigationContext} onNavigationContextConsumed={onNavigationContextConsumed} /></Suspense>;
+function ModuleScreen({ page, navigationContext, onNavigationContextConsumed, moduleRetryAttempt = 0 }) {
+  const moduleName = commercialPages.has(page) ? 'commercial' : workPages.has(page) ? 'work' : servicePages.has(page) ? 'service' : adminPages.has(page) ? 'admin' : null;
+  const Screen = useMemo(() => moduleName ? lazyWorkspaceModule(moduleName, moduleRetryAttempt) : null, [moduleName, moduleRetryAttempt]);
+  if (Screen) return <Suspense fallback={<ModuleLoading />}><Screen key={page} page={page} navigationContext={navigationContext} onNavigationContextConsumed={onNavigationContextConsumed} /></Suspense>;
   return <div className="module-screen-shell"><header className="module-page-header"><div><span className="eyebrow">FOCUSSHUB · WORKSPACE</span><h1>{page}</h1><p>Organize esta área da sua agência em um só lugar.</p></div></header></div>;
 }
 
@@ -131,14 +134,14 @@ function recoverFromStaleModuleAssets(error) {
   }
 }
 
-function ModuleErrorFallback({ resetError }) {
+function ModuleErrorFallback({ onRetry }) {
   return <section className="module-load-error" role="alert">
     <span className="module-error-mark" aria-hidden="true">!</span>
     <span className="eyebrow">FOCUSSHUB · MÓDULO</span>
     <h2>Não foi possível abrir esta tela</h2>
     <p>O restante do workspace continua disponível. Tente novamente ou abra outra área pelo menu.</p>
     <div className="module-error-actions">
-      <button className="primary-button" type="button" onClick={resetError}>Tentar novamente</button>
+      <button className="primary-button" type="button" onClick={onRetry}>Tentar novamente</button>
       <button className="module-error-reload" type="button" onClick={() => window.location.reload()}>Atualizar aplicativo</button>
     </div>
   </section>;
@@ -254,6 +257,7 @@ function WorkspaceShell() {
       return roleCanOpenPage(role, startPage, user?.permissions) ? startPage : 'Meu Dia';
     } catch { return 'Meu Dia'; }
   });
+  const [moduleRetryAttempt, setModuleRetryAttempt] = useState(0);
   const previousDashboardPage = useRef(activeNav);
   const pageTitle = activeNav;
   useEffect(() => {
@@ -318,6 +322,7 @@ function WorkspaceShell() {
   const highlightedTodayEventState = selectDashboardHighlightedEvent(todayEvents, { now: new Date(), timeZone: preferences.timezone });
   const highlightedTodayEvent = highlightedTodayEventState.event;
   const dashboardInbox = dashboardInboxConversations(dashboardRecords.inbox, 3);
+  const pendingProposalCount = dashboardPendingProposalCount(dashboardRecords.proposals);
   const { overdueBills, upcomingAmount } = dashboardBillingMetrics(dashboardBills, {
     today: todayIso,
     through: nextMonthIso,
@@ -806,10 +811,10 @@ function WorkspaceShell() {
 
           {dashboardLayout.alerts && <section className={`bottom-alerts ${chatOpen ? '' : 'chat-closed'}`}>
             {currentUser?.role !== 'member' && <button className="alert-card" onClick={() => { navigateToPage('Cobranças', { filter: 'overdue' }); }}><span className="alert-icon red-bg"><CircleDollarSign size={18} /></span><span><b>Cobranças vencidas</b><small>{dashboardRestricted('bills') ? 'Seu perfil não tem acesso ao Financeiro' : overdueBills.length ? `${overdueBills.length} aguardando pagamento` : 'Nenhuma cobrança vencida'}</small></span><span className="alert-count red-count">{dashboardRestricted('bills') ? '—' : overdueBills.length}</span><ChevronRight size={17} /></button>}
-            {currentUser?.role !== 'member' && <button className="alert-card" onClick={() => navigateToPage('Propostas')}><span className="alert-icon blue-bg"><FileText size={18} /></span><span><b>Propostas pendentes</b><small>{dashboardRestricted('proposals') ? 'Seu perfil não tem leitura de CRM' : dashboardRecords.proposals.filter((item) => !['Aprovada', 'Recusada', 'accepted', 'rejected'].includes(item.status)).length ? 'Aguardando retorno de clientes' : 'Nenhuma proposta pendente'}</small></span><span className="alert-count blue-count">{dashboardRestricted('proposals') ? '—' : dashboardRecords.proposals.filter((item) => !['Aprovada', 'Recusada', 'accepted', 'rejected'].includes(item.status)).length}</span><ChevronRight size={17} /></button>}
+            {currentUser?.role !== 'member' && <button className="alert-card" onClick={() => navigateToPage('Propostas')}><span className="alert-icon blue-bg"><FileText size={18} /></span><span><b>Propostas pendentes</b><small>{dashboardRestricted('proposals') ? 'Seu perfil não tem leitura de CRM' : pendingProposalCount ? 'Aguardando retorno de clientes' : 'Nenhuma proposta pendente'}</small></span><span className="alert-count blue-count">{dashboardRestricted('proposals') ? '—' : pendingProposalCount}</span><ChevronRight size={17} /></button>}
             <button className="alert-card" onClick={() => navigateToPage('Agenda')}><span className="alert-icon blue-bg"><CalendarDays size={18} /></span><span><b>Eventos de hoje</b><small>{dashboardRestricted('events') ? 'Seu perfil não tem leitura da Agenda' : todayEvents.length ? `${todayEvents.length} compromisso${todayEvents.length === 1 ? '' : 's'} na agenda` : 'Nenhum compromisso agendado'}</small></span><span className="alert-count blue-count">{dashboardRestricted('events') ? '—' : todayEvents.length}</span><ChevronRight size={17} /></button>
           </section>}
-          </main> : <Sentry.ErrorBoundary fallback={ModuleErrorFallback} onError={recoverFromStaleModuleAssets} key={activeNav}><ModuleScreen page={activeNav} navigationContext={navigationContext} onNavigationContextConsumed={() => setNavigationContext(null)} /></Sentry.ErrorBoundary>}
+          </main> : <Sentry.ErrorBoundary fallback={({ resetError }) => <ModuleErrorFallback onRetry={() => { setModuleRetryAttempt((attempt) => attempt + 1); resetError(); }} />} onError={recoverFromStaleModuleAssets} key={`${activeNav}:${moduleRetryAttempt}`}><ModuleScreen page={activeNav} moduleRetryAttempt={moduleRetryAttempt} navigationContext={navigationContext} onNavigationContextConsumed={() => setNavigationContext(null)} /></Sentry.ErrorBoundary>}
         </div>
       </section>
       {toast && <div className="toast" role="status"><Check size={16} />{toast}</div>}

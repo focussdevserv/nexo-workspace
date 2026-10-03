@@ -38,3 +38,12 @@ test('revoked sessions stay invalid after a suspended account is reactivated', a
   assert.match(acceptInviteHandler, /permissions:\s*users\.permissions,\s*sessionVersion:\s*users\.sessionVersion/);
   assert.match(acceptInviteHandler, /sessionVersion:\s*activated\.sessionVersion/);
 });
+
+test('owner can revoke an unaccepted invitation without issuing a replacement link', async () => {
+  const source = await readFile(new URL('../src/server.ts', import.meta.url), 'utf8');
+  const deactivateHandler = source.slice(source.indexOf("app.post('/api/team/users/:id/deactivate'"), source.indexOf("app.post('/api/auth/accept-invite'"));
+  assert.match(deactivateHandler, /if \(request\.user\.role !== 'owner'\)/);
+  assert.match(deactivateHandler, /inviteVersion:\s*sql`\$\{users\.inviteVersion\}\s*\+\s*1`/);
+  assert.match(deactivateHandler, /sessionVersion:\s*sql`\$\{users\.sessionVersion\}\s*\+\s*1`/);
+  assert.doesNotMatch(deactivateHandler, /eq\(users\.active,\s*true\)/, 'inactive pending accounts must also be revocable');
+});

@@ -1,6 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeRepositoryActivity, repositoryActivityIdentityChanged, safeRepositoryExternalUrl } from './repository-activity.js';
+import { normalizeRepositoryActivity, repositoryActivityDisplayState, repositoryActivityIdentityChanged, safeRepositoryExternalUrl } from './repository-activity.js';
+
+test('a failed refresh keeps the last successful repository activity visible as stale', () => {
+  assert.deepEqual(repositoryActivityDisplayState({ activity: { latestCommit: { sha: 'abc' } }, error: 'GitHub indisponível' }), {
+    hasActivity: true, hasError: true, stale: true, showEmptyHint: false,
+  });
+  assert.deepEqual(repositoryActivityDisplayState({ error: 'GitHub indisponível' }), {
+    hasActivity: false, hasError: true, stale: false, showEmptyHint: false,
+  });
+  assert.deepEqual(repositoryActivityDisplayState(), {
+    hasActivity: false, hasError: false, stale: false, showEmptyHint: true,
+  });
+});
 
 test('invalidates cached activity only when an edit changes repository identity', () => {
   const original = { owner: 'Acme', name: 'site', project: 'Old project', branch: 'main' };

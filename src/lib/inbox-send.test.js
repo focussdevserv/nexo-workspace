@@ -8,6 +8,10 @@ test('requires a recipient for real WhatsApp but allows simulation without perso
   assert.equal(whatsappSendPreflight({ sessionId: '', chatId: '', localDemo: true }), 'session');
 });
 
+test('blocks WhatsApp delivery while the session state is unavailable', () => {
+  assert.equal(whatsappSendPreflight({ sessionId: 'cached-session', chatId: '5511999999999@c.us', sessionError: 'WAHA offline' }), 'session_unavailable');
+});
+
 test('a successful delivery clears the composer even when inbox refresh fails', async () => {
   let sends = 0;
   let clears = 0;

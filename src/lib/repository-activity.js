@@ -1,5 +1,15 @@
 const asText = (value) => typeof value === 'string' ? value : '';
 
+/** Keep the last successful snapshot visible when a later refresh fails. */
+export function repositoryActivityDisplayState({ activity = null, error = '' } = {}) {
+  return {
+    hasActivity: Boolean(activity),
+    hasError: Boolean(error),
+    stale: Boolean(activity && error),
+    showEmptyHint: !activity && !error,
+  };
+}
+
 /** Cached GitHub activity belongs to a repository identity, not the workspace record ID. */
 export function repositoryActivityIdentityChanged(previous, next) {
   const identity = (repository) => [repository?.owner, repository?.name]

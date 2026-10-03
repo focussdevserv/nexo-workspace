@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { clearClientPortalSession, getClientPortalSessionStorage, readClientPortalSession, writeClientPortalSession } from './client-portal-session.js';
+
+const portalScreenSource = readFileSync(fileURLToPath(new URL('../screens/ClientPortalScreens.jsx', import.meta.url)), 'utf8');
 
 function memoryStorage() {
   const entries = new Map();
@@ -33,6 +37,16 @@ test('client portal session is cleared on sign out and malformed stored state is
   storage.setItem('focusshub.client-portal.session.link-a', '{bad json');
   assert.equal(readClientPortalSession(storage, 'link-a', 1001), '');
   assert.equal(storage.getItem('focusshub.client-portal.session.link-a'), null);
+});
+
+test('a server-rejected portal session is cleared before the identity form is shown', () => {
+  const verificationRequired = portalScreenSource.match(/if \(response\.status === 401 && payload\.error === 'portal_verification_required'\) \{ if \(active\) \{([^}]+)\}/)?.[1] || '';
+  assert.match(verificationRequired, /setRequiresVerification\(true\)/);
+  assert.match(verificationRequired, /setAccessToken\(''\)/);
+  const storage = memoryStorage();
+  writeClientPortalSession(storage, 'link-a', 'rejected-session', 1000);
+  clearClientPortalSession(storage, 'link-a');
+  assert.equal(readClientPortalSession(storage, 'link-a', 1001), '');
 });
 
 test('storage restrictions do not prevent the public portal from loading', () => {

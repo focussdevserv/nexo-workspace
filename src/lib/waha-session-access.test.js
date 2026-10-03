@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { canManageWahaSessions, canOfferWahaConnectAction, canShowWahaQr, wahaIntegrationAvailability, wahaQrSessionMessage, wahaSessionStatusLabel, wahaSessionStatusSummary } from './waha-session-access.js';
+import { canManageWahaSessions, canOfferWahaConnectAction, canShowWahaQr, preserveWahaSessionsOnRefreshError, wahaIntegrationAvailability, wahaQrSessionMessage, wahaSessionStatusLabel, wahaSessionStatusSummary } from './waha-session-access.js';
 
 test('WAHA readiness prevents session requests until configured and enabled', () => {
   assert.deepEqual(wahaIntegrationAvailability([]), { state: 'not_configured', message: 'Configure o WAHA em Integrações antes de adicionar números.' });
@@ -38,4 +38,15 @@ test('WAHA outages replace cached connection states with an explicit unavailable
   assert.deepEqual(wahaSessionStatusSummary(sessions, true), { connected: '—', needsAction: '—' });
   assert.equal(wahaSessionStatusLabel('WORKING'), 'Conectado');
   assert.deepEqual(wahaSessionStatusSummary(sessions), { connected: '1', needsAction: '1' });
+});
+
+test('a temporary WAHA refresh error preserves known sessions and exposes an error', () => {
+  const sessions = [{ id: 'session-1', status: 'WORKING' }];
+  const state = preserveWahaSessionsOnRefreshError(sessions, new Error('WAHA temporariamente indisponível'));
+  assert.equal(state.sessions, sessions);
+  assert.equal(state.error, 'WAHA temporariamente indisponível');
+  assert.deepEqual(preserveWahaSessionsOnRefreshError(null, null), {
+    sessions: [],
+    error: 'Não foi possível consultar as sessões WhatsApp.',
+  });
 });

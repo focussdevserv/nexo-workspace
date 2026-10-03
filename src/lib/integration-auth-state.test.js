@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
-import { canAuthorizeOAuthIntegrations, canManageIntegrationSettings, googleAuthorizationButtonState, googleReauthorizationButtonState, integrationCredentialFlow, integrationOAuthRedirectUri, integrationStatusLabel, integrationStatusTone, mercadoPagoAuthorizationButtonState, navigateToOAuthConsent, oauthAccountIsConfigured, oauthIntegrationProviders } from './integration-auth-state.js';
+import { canAuthorizeOAuthIntegrations, canManageIntegrationSettings, googleAuthorizationButtonState, googleReauthorizationButtonState, integrationConnectionChangeDisabled, integrationCredentialFlow, integrationOAuthRedirectUri, integrationStatusLabel, integrationStatusTone, mercadoPagoAuthorizationButtonState, navigateToOAuthConsent, oauthAccountIsConfigured, oauthIntegrationProviders } from './integration-auth-state.js';
 
 test('every OAuth provider declared by the API has a consent CTA route and a registered callback', () => {
   const server = readFileSync(new URL('../../api/src/server.ts', import.meta.url), 'utf8');
@@ -36,6 +36,14 @@ test('only the workspace owner can change provider settings or run connection te
   for (const role of ['admin', 'member', 'viewer', '', undefined, null]) {
     assert.equal(canManageIntegrationSettings(role), false);
   }
+});
+
+test('blocks connection toggles while provider status is loading or failed', () => {
+  assert.equal(integrationConnectionChangeDisabled({ canManage: true }), false);
+  assert.equal(integrationConnectionChangeDisabled({ canManage: true, loading: true }), true);
+  assert.equal(integrationConnectionChangeDisabled({ canManage: true, error: true }), true);
+  assert.equal(integrationConnectionChangeDisabled({ canManage: true, changing: true }), true);
+  assert.equal(integrationConnectionChangeDisabled({ canManage: false }), true);
 });
 
 test('shows provider authorization only for implemented OAuth providers', () => {

@@ -15,9 +15,11 @@ import { canSimulateSubscriptionAuthorization } from '../lib/subscription-demo.j
 import { formatPaymentDate } from '../lib/payment-date-display.js';
 import { canCancelPaymentOrder, canCancelSubscription, normalizePaymentStatus } from '../lib/payment-status.js';
 import { copyPaymentText } from '../lib/copy-payment-text.js';
+import { paymentResultInstructionKind } from '../lib/payment-result-instructions.js';
 import { createBillingRequestUuid, reuseBillingRequestKey } from '../lib/billing-request-idempotency.js';
-import { paymentCancellationError, subscriptionCancellationError } from '../lib/payment-cancellation.js';
+import { paymentCancellationError, subscriptionCancellationError, subscriptionStatusChangeError } from '../lib/payment-cancellation.js';
 import { paymentFrequencyLabel } from '../lib/payment-frequency.js';
+import { subscriptionCycleChoice, subscriptionCycleFromChoice, subscriptionCyclePayload } from '../lib/subscription-cycle.js';
 import { recurringBillingEnabled } from '../lib/billing-preferences.js';
 import { matchesPaymentSearch } from '../lib/payment-search.js';
 import { subscriptionStatusUrl } from '../lib/subscription-status-url.js';
@@ -235,7 +237,7 @@ export function PaymentConsole({ kind = 'orders', notify = () => {}, navigationC
     setBusy(true); setError('');
     try {
       const payload = creatingSubscription
-        ? { clientName: form.clientName, payerEmail: form.payerEmail, description: form.description, amount: Number(form.amount), ...(form.clientId ? { workspaceClientId: form.clientId } : {}), frequency: form.frequency, frequencyInterval: Number(form.frequencyInterval), ...buildSubscriptionSchedule(form.startDate, form.endDate) }
+        ? { clientName: form.clientName, payerEmail: form.payerEmail, description: form.description, amount: Number(form.amount), ...(form.clientId ? { workspaceClientId: form.clientId } : {}), ...subscriptionCyclePayload(form.frequency, form.frequencyInterval), ...buildSubscriptionSchedule(form.startDate, form.endDate) }
         : { clientName: form.clientName, payerEmail: form.payerEmail, description: form.description, amount: Number(form.amount), ...(form.clientId ? { workspaceClientId: form.clientId } : {}), method: form.method, ...(['pix', 'boleto'].includes(form.method) ? { dueDate: form.dueDate } : {}), ...(form.method === 'boleto' ? { identificationType: form.identificationType, identificationNumber: form.identificationNumber, address: { zipCode: form.address.zipCode, streetName: form.address.streetName, streetNumber: form.address.streetNumber, neighborhood: form.address.neighborhood, city: form.address.city, state: form.address.state } } : {}) };
       const operation = creatingSubscription ? 'subscriptions' : 'orders';
       const response = await request(creatingSubscription ? '/api/billing/subscriptions' : endpoint, { method: 'POST', headers: { 'Idempotency-Key': billingRequestKey(operation, payload) }, body: JSON.stringify(payload) });
@@ -271,24 +273,32 @@ export function PaymentConsole({ kind = 'orders', notify = () => {}, navigationC
       if (cancellationError) throw new Error(cancellationError);
       notify('Assinatura cancelada no Mercado Pago.');
     }
-    catch (err) { setError(err.message); }
+    catch (err) { await refresh(); setError(err.message); }
     finally { setSubscriptionBusyId(''); }
   };
   const toggleSubscription = async (item) => {
     const status = normalizePaymentStatus(item.status) === 'paused' ? 'authorized' : 'paused';
     setSubscriptionBusyId(item.id);
-    try { await request(subscriptionStatusUrl(item.id), { method: 'PATCH', body: JSON.stringify({ status }) }); await refresh(); notify(status === 'paused' ? 'Assinatura pausada.' : 'Assinatura retomada.'); }
-    catch (err) { setError(err.message); }
+    try {
+      const response = await request(subscriptionStatusUrl(item.id), { method: 'PATCH', body: JSON.stringify({ status }) });
+      const statusChangeError = subscriptionStatusChangeError(response, item.id, status);
+      if (statusChangeError) throw new Error(statusChangeError);
+      await refresh();
+      notify(status === 'paused' ? 'Assinatura pausada.' : 'Assinatura retomada.');
+    }
+    catch (err) { await refresh(); setError(err.message); }
     finally { setSubscriptionBusyId(''); }
   };
   const simulateSubscriptionAuthorization = async (item) => {
     if (!canSimulateSubscriptionAuthorization(item, demoMode)) return;
     setSubscriptionBusyId(item.id);
     try {
-      await request(subscriptionStatusUrl(item.id), { method: 'PATCH', body: JSON.stringify({ status: 'authorized' }) });
+      const response = await request(subscriptionStatusUrl(item.id), { method: 'PATCH', body: JSON.stringify({ status: 'authorized' }) });
+      const statusChangeError = subscriptionStatusChangeError(response, item.id, 'authorized');
+      if (statusChangeError) throw new Error(statusChangeError);
       await refresh();
       notify('Autorização simulada apenas neste navegador. Nenhum pagamento real foi iniciado.');
-    } catch (err) { setError(err.message); }
+    } catch (err) { await refresh(); setError(err.message); }
     finally { setSubscriptionBusyId(''); }
   };
   const cancelOrder = async (item) => {
@@ -301,7 +311,7 @@ export function PaymentConsole({ kind = 'orders', notify = () => {}, navigationC
       if (response.data) setItems((current) => replacePaymentRecord(current, response.data));
       await refresh();
       notify(demoMode ? 'Cobrança fictícia cancelada neste navegador.' : 'Cancelamento confirmado pelo Mercado Pago.');
-    } catch (err) { setError(err.message || 'Não foi possível confirmar o cancelamento.'); }
+    } catch (err) { await refresh(); setError(err.message || 'Não foi possível confirmar o cancelamento.'); }
     finally { setCancelingId(''); }
   };
   const refreshOrder = async (item) => {
@@ -320,13 +330,14 @@ export function PaymentConsole({ kind = 'orders', notify = () => {}, navigationC
   if (!token) return <PaymentAccess onConnected={setToken} />;
   if (result) {
     const details = result.paymentDetails || {};
+    const paymentInstructionKind = paymentResultInstructionKind(result);
     const resultIsSubscription = result.isSubscription ?? subscriptionMode;
     const resultStatus = normalizePaymentStatus(result.status);
     return <section className="pay-result"><button className="pay-back" onClick={() => setResult(null)}>← Voltar ao financeiro</button><span className="pay-access-icon success"><CheckCircle2 size={21} /></span><span className="pay-eyebrow">{resultIsSubscription ? 'ASSINATURA CRIADA' : 'COBRANÇA CRIADA'}</span><h2>{result.clientName} · {money(result.amount, preferences)}</h2><p>{result.description}</p><span className={`pay-status status-${resultStatus}`}>{labels[resultStatus] || result.status}</span>
       {resultIsSubscription && result.checkoutUrl && <div className="pay-result-action"><p>O cliente precisa confirmar o meio de pagamento no Mercado Pago. Depois da autorização, a renovação será automática.</p><a className="ns-primary" href={result.checkoutUrl} target="_blank" rel="noreferrer">Abrir autorização <ExternalLink size={15} /></a><button className="ns-secondary" onClick={() => copy(result.checkoutUrl)}><Copy size={14} />Copiar link</button></div>}
-      {!resultIsSubscription && details.pixQrCodeBase64 && <div className="pay-pix"><img width={190} height={190} alt="QR Code Pix" src={`data:image/png;base64,${details.pixQrCodeBase64}`} /><span>Escaneie o QR Code ou use Pix Copia e Cola.</span><button className="ns-secondary" onClick={() => copy(details.pixCode)}><Copy size={14} />Copiar Pix Copia e Cola</button></div>}
+      {!resultIsSubscription && paymentInstructionKind === 'pix' && <div className="pay-pix">{details.pixQrCodeBase64 && <img width={190} height={190} alt="QR Code Pix" src={`data:image/png;base64,${details.pixQrCodeBase64}`} />}<span>{details.pixQrCodeBase64 ? (details.pixCode ? 'Escaneie o QR Code ou use Pix Copia e Cola.' : 'Escaneie o QR Code para pagar.') : 'Use o Pix Copia e Cola para concluir o pagamento.'}</span>{details.pixCode && <button className="ns-secondary" onClick={() => copy(details.pixCode)}><Copy size={14} />Copiar Pix Copia e Cola</button>}</div>}
       {!resultIsSubscription && details.ticketUrl && <div className="pay-result-action"><a className="ns-primary" href={details.ticketUrl} target="_blank" rel="noreferrer">Abrir boleto <ExternalLink size={15} /></a>{details.digitableLine && <button className="ns-secondary" onClick={() => copy(details.digitableLine)}><Copy size={14} />Copiar linha digitável</button>}</div>}
-      {!resultIsSubscription && !details.pixQrCodeBase64 && !details.ticketUrl && <p className="pay-result-action">Resultado do cartão: {labels[result.status] || result.status}. A confirmação final virá pelo webhook.</p>}
+      {!resultIsSubscription && paymentInstructionKind === 'card' && <p className="pay-result-action">Resultado do cart&atilde;o: {labels[result.status] || result.status}. A confirma&ccedil;&atilde;o final vir&aacute; pelo webhook.</p>}{!resultIsSubscription && paymentInstructionKind === 'unavailable' && <p className="pay-result-action" role="status">O provedor n&atilde;o retornou instru&ccedil;&otilde;es para esta cobran&ccedil;a. Volte ao financeiro e atualize o registro antes de orientar o pagamento.</p>}
       {result.followupWarning && <p className="pay-error" role="alert">{result.followupWarning}</p>}
       {resultIsSubscription && !subscriptionMode && <button className="ns-secondary" onClick={() => { setResult(null); window.dispatchEvent(new CustomEvent('nexo:navigate', { detail: 'Assinaturas' })); }}>Ver assinaturas</button>}<button className="ns-secondary" onClick={() => { setResult(null); resetForm(); }}>Fechar</button></section>;
   }
@@ -366,7 +377,8 @@ export function PaymentConsole({ kind = 'orders', notify = () => {}, navigationC
     {modal && <div className="ns-integration-modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) setModal(false); }}><form ref={paymentModalRef} className="ns-integration-modal pay-create-modal" role="dialog" aria-modal="true" aria-labelledby="payment-create-title" aria-busy={busy} onSubmit={submit}><header><span className="ns-integration-logo mercado">{subscriptionMode ? <RefreshCw size={18} /> : <CreditCard size={18} />}</span><div><h2 id="payment-create-title">{subscriptionMode ? 'Nova assinatura recorrente' : 'Nova cobrança'}</h2><p>{subscriptionMode ? 'O cliente autoriza o método no Mercado Pago.' : 'Selecione como o cliente pagará.'}</p></div><button type="button" aria-label="Fechar" disabled={busy} onClick={() => setModal(false)}><X size={17} /></button></header><div className="ns-integration-fields pay-fields"><label>Cliente cadastrado<select value={form.clientId} onChange={(event) => { const client = clients.find((item) => String(item.id) === String(event.target.value)); setForm((current) => ({ ...current, clientId: client?.id || '', clientName: client?.name || '', payerEmail: client?.email || current.payerEmail })); }}><option value="">Selecionar cliente (opcional)</option>{clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}</select></label><label>Nome do cliente<input required value={form.clientName} onChange={(e) => setForm((current) => ({ ...current, clientId: '', clientName: e.target.value }))} /></label><label>E-mail do pagador<input required type="email" value={form.payerEmail} onChange={(e) => setForm((current) => updatePaymentField(current, 'payerEmail', e.target.value))} /></label><label>Descrição<input required value={form.description} onChange={(e) => setForm((current) => updatePaymentField(current, 'description', e.target.value))} /></label><label>Valor (R$)<input required type="number" min="0.01" step="0.01" value={form.amount} onChange={(e) => setForm((current) => updatePaymentField(current, 'amount', e.target.value))} /></label>
       {!subscriptionMode && <label className="pay-field-wide">Tipo de cobrança<select value={form.billingType} onChange={(event) => setForm((current) => updatePaymentField(current, 'billingType', event.target.value))}><option value="single">Cobrança única</option><option value="recurring" disabled={!subscriptionsEnabled}>Recorrência automática{!subscriptionsEnabled ? ' · desativada nas configurações' : ''}</option></select>{!subscriptionsEnabled && <small className="pay-hint">Novas assinaturas recorrentes estão desativadas nas Configurações financeiras.</small>}</label>}
       {creatingSubscription ? <>
-        <label>Frequência<select value={form.frequency + ':' + form.frequencyInterval} onChange={(event) => { const [frequency, frequencyInterval] = event.target.value.split(':'); setForm((current) => ({ ...current, frequency, frequencyInterval: Number(frequencyInterval) })); }}><option value="months:1">Mensal</option><option value="months:3">Trimestral</option><option value="months:6">Semestral</option><option value="months:12">Anual</option><option value="days:7">Semanal</option></select></label>
+        <label>Frequ&ecirc;ncia<select aria-label="Frequ&ecirc;ncia da cobran&ccedil;a" value={subscriptionCycleChoice(form.frequency, form.frequencyInterval)} onChange={(event) => setForm((current) => ({ ...current, ...subscriptionCycleFromChoice(event.target.value, current) }))}><option value="months:1">Mensal</option><option value="months:3">Trimestral</option><option value="months:6">Semestral</option><option value="months:12">Anual</option><option value="days:7">Semanal</option><option value="custom">Personalizar frequ&ecirc;ncia</option></select></label>
+        {subscriptionCycleChoice(form.frequency, form.frequencyInterval) === 'custom' && <><label>Intervalo<input aria-label="Intervalo entre cobran&ccedil;as" type="number" required min="1" max="24" step="1" value={form.frequencyInterval} onChange={(event) => setForm((current) => updatePaymentField(current, 'frequencyInterval', event.target.value))} /><small className="pay-hint">Escolha de 1 a 24 per&iacute;odos.</small></label><label>Unidade<select aria-label="Unidade da frequ&ecirc;ncia" value={form.frequency} onChange={(event) => setForm((current) => ({ ...current, frequency: event.target.value }))}><option value="months">Meses</option><option value="days">Dias</option></select></label></>}
         <label>Primeira cobrança<input type="date" required min={dateAfterDays(1)} value={form.startDate} onChange={(event) => setForm((current) => updatePaymentField(current, 'startDate', event.target.value))} /><small className="pay-hint">A recorrência começa nesta data, após o cliente autorizar.</small></label>
         <label>Encerrar recorrência em (opcional)<input type="date" min={minimumSubscriptionEndDate(form.startDate)} value={form.endDate} onChange={(event) => setForm((current) => updatePaymentField(current, 'endDate', event.target.value))} /><small className="pay-hint">Deixe em branco para manter a assinatura sem data final.</small></label>
         <p className="pay-hint wide">O cliente receberá um link para autorizar a recorrência no Mercado Pago.</p>

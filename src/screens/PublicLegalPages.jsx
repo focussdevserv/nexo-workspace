@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { ArrowLeft, ShieldCheck } from 'lucide-react';
+import { getPublicLegalPageMetadata } from '../lib/public-legal-page.js';
 import './public-legal.css';
 
 const privacySections = [
@@ -22,9 +23,15 @@ const termsSections = [
 export default function PublicLegalPage({ type }) {
   const privacy = type === 'privacy';
   const title = privacy ? 'Política de Privacidade' : 'Termos de Uso';
+  const metadata = getPublicLegalPageMetadata(type);
   const sections = privacy ? privacySections : termsSections;
+  useEffect(() => {
+    document.title = metadata.title;
+    const description = document.querySelector('meta[name="description"]');
+    if (description) description.setAttribute('content', metadata.description);
+  }, [metadata]);
   return <main className="legal-page">
     <header className="legal-header"><a className="legal-brand" href="/"><span><ShieldCheck size={19} /></span><b>Focusshub</b><small>WORKSPACE</small></a><a className="legal-back" href="/app/integracoes"><ArrowLeft size={15} />Voltar ao workspace</a></header>
-    <article className="legal-document"><span className="legal-kicker">FOCUSS DEV · FOCUSSHUB WORKSPACE</span><h1>{title}</h1><p className="legal-updated">Atualizado em 24 de setembro de 2026</p><p className="legal-intro">Esta página explica as condições aplicáveis ao Focusshub Workspace e, na Política de Privacidade, como os dados são tratados quando o serviço é utilizado.</p>{sections.map(([heading, body]) => <section key={heading}><h2>{heading}</h2><p>{body}</p></section>)}<footer>Contato: <a href="mailto:contato@focussdev.art">contato@focussdev.art</a></footer><nav className="legal-links"><a href="/privacy">Política de Privacidade</a><a href="/terms">Termos de Uso</a></nav></article>
+    <article className="legal-document"><span className="legal-kicker">FOCUSS DEV · FOCUSSHUB WORKSPACE</span><h1>{title}</h1><p className="legal-updated">Atualizado em <time dateTime="2026-09-24">24 de setembro de 2026</time></p><p className="legal-intro">Esta página explica as condições aplicáveis ao Focusshub Workspace e, na Política de Privacidade, como os dados são tratados quando o serviço é utilizado.</p>{sections.map(([heading, body]) => <section key={heading}><h2>{heading}</h2><p>{body}</p></section>)}<footer>Contato: <a href="mailto:contato@focussdev.art">contato@focussdev.art</a></footer><nav className="legal-links" aria-label="Documentos legais"><a href="/privacy">Política de Privacidade</a><a href="/terms">Termos de Uso</a></nav></article>
   </main>;
 }

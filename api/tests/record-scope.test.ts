@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { billingClientIdsForWorkspaceScope, recordMatchesWorkspaceScope } from '../src/security/record-scope.ts';
+import { billingClientIdsForWorkspaceScope, recordMatchesWorkspaceScope, rememberWorkspaceProjectClientLinks, selectedWorkspaceProjectClientLinks } from '../src/security/record-scope.ts';
 
 const scope = { mode: 'selected' as const, clientIds: ['client-a'], projectIds: ['project-b'] };
 
@@ -61,4 +62,38 @@ test('billing scope includes assigned clients and clients attached to assigned p
   ]), ['client-a', 'client-from-project']);
   assert.deepEqual(billingClientIdsForWorkspaceScope({ ...scope, clientIds: [], projectIds: [] }, []), []);
   assert.equal(billingClientIdsForWorkspaceScope({ ...scope, mode: 'all' }, []), null);
+  assert.deepEqual(billingClientIdsForWorkspaceScope({ ...scope, clientIds: [], projectIds: ['project-b'] }, [
+    { id: 'project-b', data: { clientId: 'client-b', company_id: 'foreign-client' } },
+  ]), []);
+});
+
+test('selected project scope inherits only its canonical client link for projects and linked records', () => {
+  const projectScope = { mode: 'selected' as const, clientIds: [], projectIds: ['project-b'] };
+  const links = [{ id: 'project-b', data: { clientId: 'client-b' } }, { id: 'project-x', data: { clientId: 'client-x' } }];
+  assert.deepEqual([...selectedWorkspaceProjectClientLinks(projectScope, links)], [['project-b', 'client-b']]);
+  rememberWorkspaceProjectClientLinks(projectScope, links);
+  assert.equal(recordMatchesWorkspaceScope('projects', 'project-b', { clientId: 'client-b' }, projectScope), true);
+  assert.equal(recordMatchesWorkspaceScope('files', 'file-b', { projectId: 'project-b', clientId: 'client-b' }, projectScope), true);
+  assert.equal(recordMatchesWorkspaceScope('tasks', 'task-b', { projectId: 'project-b', clientId: 'client-x' }, projectScope), false);
+  assert.equal(recordMatchesWorkspaceScope('tasks', 'task-x', { projectId: 'project-x', clientId: 'client-b' }, projectScope), false);
+});
+
+test('ambiguous and malformed project-to-client aliases never create inherited access', () => {
+  const projectScope = { mode: 'selected' as const, clientIds: [], projectIds: ['project-b'] };
+  const projects = [
+    { id: 'project-b', data: { clientId: 'client-b', company_id: 'client-x' } },
+    { id: 'project-b', data: { clientId: { id: 'client-b' } } },
+  ];
+  assert.deepEqual([...selectedWorkspaceProjectClientLinks(projectScope, projects)], []);
+  rememberWorkspaceProjectClientLinks(projectScope, projects);
+  assert.equal(recordMatchesWorkspaceScope('files', 'file-b', { projectId: 'project-b', clientId: 'client-b' }, projectScope), false);
+});
+
+test('the SQL list predicate rejects conflicting legacy aliases just like record-level scope checks', async () => {
+  const server = await readFile(new URL('../src/server.ts', import.meta.url), 'utf8');
+  const predicate = server.match(/function workspaceRecordScopeWhere\([\s\S]*?\n\}/)?.[0] || '';
+  assert.match(predicate, /consistentReferenceConditions\(clientFields\)/);
+  assert.match(predicate, /scopedReferenceConditions\(projectFields, projectIds\)/);
+  assert.match(predicate, /canonicalReference = sql`coalesce/);
+  assert.match(predicate, /eq\(reference, canonicalReference\)/);
 });

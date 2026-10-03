@@ -4,7 +4,10 @@ const normalizeStatus = (value) => String(value || '')
   .trim()
   .toLowerCase();
 
-const completedStatuses = new Set(['concluido', 'concluida', 'completed', 'complete', 'done']);
+const completedStatuses = new Set([
+  'concluido', 'concluida', 'completed', 'complete', 'done',
+  'publicado', 'publicada', 'published', 'entregue', 'delivered',
+]);
 const inactiveStatuses = new Set([
   ...completedStatuses,
   'arquivado', 'archived', 'cancelado', 'cancelada', 'cancelled', 'canceled',

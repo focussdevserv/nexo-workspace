@@ -1,5 +1,6 @@
 /** Deliver once, clear the composer, then refresh without treating refresh errors as send failures. */
-export function whatsappSendPreflight({ sessionId, chatId, localDemo = false }) {
+export function whatsappSendPreflight({ sessionId, chatId, localDemo = false, sessionError = '' }) {
+  if (sessionError) return 'session_unavailable';
   if (!sessionId) return 'session';
   if (!localDemo && !chatId) return 'recipient';
   return null;

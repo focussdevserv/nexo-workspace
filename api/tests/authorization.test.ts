@@ -87,6 +87,9 @@ test('Google Drive file browsing and metadata edits follow support permissions',
   assert.equal(isWorkspaceRequestAllowed('member', 'PATCH', '/api/integrations/google/drive/file-123/metadata', { support: { read: true, write: false } }), false);
   assert.equal(isWorkspaceRequestAllowed('admin', 'GET', '/api/integrations/google/drive/files', { support: { read: false, write: false } }), false);
   assert.equal(isWorkspaceRequestAllowed('member', 'POST', '/api/integrations/google/drive/file-123/share-for-portal', { support: { read: true, write: true } }), false);
+  assert.equal(isWorkspaceRequestAllowed('admin', 'POST', '/api/integrations/google/drive/file-123/share-for-portal', { support: { read: true, write: false } }), false);
+  assert.equal(isWorkspaceRequestAllowed('admin', 'POST', '/api/integrations/google/drive/file-123/share-for-portal', { support: { read: true, write: true } }), true);
+  assert.equal(isWorkspaceRequestAllowed('admin', 'DELETE', '/api/integrations/google/drive/file-123/share-for-portal', { support: { read: true, write: true, delete: false } }), false);
 });
 
 test('members cannot access billing, settings, identity, or integration controls', () => {

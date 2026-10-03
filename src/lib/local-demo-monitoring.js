@@ -36,6 +36,35 @@ export function getLocalDemoSiteHistory(store, assetId) {
   return Array.isArray(history) ? history.slice(0, 50) : [];
 }
 
+/** Persist a monitor schedule in the browser-only demo store without contacting a provider. */
+export function configureLocalDemoSiteSchedule(store, assetId, configuration, now = new Date()) {
+  const id = String(assetId ?? '');
+  if (!id || !(store['site-assets'] || []).some((asset) => String(asset.id) === id)) {
+    throw new Error('Ativo não encontrado na demonstração local.');
+  }
+  const { enabled, intervalMinutes } = configuration || {};
+  if (typeof enabled !== 'boolean' || ![5, 15, 30, 60].includes(Number(intervalMinutes))) {
+    throw new Error('Informe um intervalo válido para o monitoramento.');
+  }
+  const monitors = Array.isArray(store.monitors) ? store.monitors : [];
+  const linked = monitors.filter((monitor) => String(monitor.siteAssetId ?? '') === id);
+  const canonical = linked.find((monitor) => monitor.enabled === true) || linked[0];
+  const savedAt = now.toISOString();
+  const schedule = {
+    ...canonical,
+    id: canonical?.id || `demo-site-monitor-${id}`,
+    siteAssetId: id,
+    name: String(store['site-assets'].find((asset) => String(asset.id) === id)?.name || ''),
+    intervalMinutes: Number(intervalMinutes),
+    enabled,
+    nextCheckAt: enabled ? new Date(now.getTime() + Number(intervalMinutes) * 60_000).toISOString() : null,
+    updatedAt: savedAt,
+    demoTag: 'DEMONSTRAÇÃO LOCAL · SEM CONSULTA EXTERNA',
+  };
+  store.monitors = [schedule, ...monitors.filter((monitor) => String(monitor.siteAssetId ?? '') !== id)];
+  return { siteAssetId: id, schedules: [schedule], enabled, intervalMinutes: Number(intervalMinutes) };
+}
+
 export function removeLocalDemoSiteAsset(store, assetId) {
   const id = String(assetId ?? '');
   if (!id) return false;

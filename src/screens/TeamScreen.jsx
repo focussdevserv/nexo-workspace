@@ -12,7 +12,8 @@ import { formatWorkspaceDateTime } from '../lib/workspace-formatting.js';
 import { effectiveModulePermissionDraft, permissionDraftForAccount, permissionsPayload, setModulePermissionMode, setModulePermissionValue, validatePermissionDraft } from '../lib/team-permissions.js';
 import { shouldCloseTeamDialog } from '../lib/team-dialog.js';
 import { confirmDiscardTeamPermissionDraft, teamPermissionDraftHasChanges } from '../lib/team-permission-draft.js';
-import { resolveTeamInviteLink } from '../lib/team-invite-link.js';
+import { reconcileTeamInviteLink, resolveTeamInviteLink } from '../lib/team-invite-link.js';
+import { missingTeamScopeSelections, removeMissingTeamScopeSelections } from '../lib/team-scope-selections.js';
 import './team.css';
 
 const accessModules = [
@@ -129,7 +130,9 @@ function TeamAccessPanel({ notify, onAccountCountChange }) {
       ]);
       if (!refreshRequests.current.isCurrent(requestId)) return;
       if (accountsResult.status === 'rejected') throw accountsResult.reason;
-      setAccounts(accountsResult.value.data || []);
+      const nextAccounts = accountsResult.value.data || [];
+      setAccounts(nextAccounts);
+      setInviteLink((current) => reconcileTeamInviteLink(current, nextAccounts));
       const clients = clientsResult.status === 'fulfilled' ? clientsResult.value : [];
       const projects = projectsResult.status === 'fulfilled' ? projectsResult.value : [];
       setScopeSources({ clients, projects });
@@ -167,9 +170,13 @@ function TeamAccessPanel({ notify, onAccountCountChange }) {
     finally { setBusy(false); }
   };
   const deactivate = async (account) => {
-    if (!window.confirm(`Suspender o acesso de ${account.name}? A sessao sera bloqueada imediatamente.`)) return;
+    const revokeInvite = account.accessStatus === 'invite_pending';
+    const confirmation = revokeInvite
+      ? `Revogar o convite de ${account.name}? O link deixa de funcionar imediatamente.`
+      : `Suspender o acesso de ${account.name}? A sessao sera bloqueada imediatamente.`;
+    if (!window.confirm(confirmation)) return;
     setBusy(true); setError('');
-    try { await apiRequest(`/api/team/users/${encodeURIComponent(account.id)}/deactivate`, { method: 'POST', body: '{}' }); await refresh(); notify(`Acesso de ${account.name} suspenso.`); }
+    try { await apiRequest(`/api/team/users/${encodeURIComponent(account.id)}/deactivate`, { method: 'POST', body: '{}' }); setInviteLink((current) => reconcileTeamInviteLink(current, [{ email: account.email, active: false, accessStatus: 'suspended' }])); await refresh(); notify(revokeInvite ? `Convite de ${account.name} revogado.` : `Acesso de ${account.name} suspenso.`); }
     catch (err) { setError(err.message || 'Nao foi possivel suspender este acesso.'); }
     finally { setBusy(false); }
   };
@@ -213,6 +220,10 @@ function TeamAccessPanel({ notify, onAccountCountChange }) {
   const savePermissions = async (account) => {
     if (!permissionDraft || busy) return;
     if (scopeError && permissionDraft.scope?.mode === 'selected') { setError('Atualize os clientes e projetos antes de salvar um escopo selecionado.'); return; }
+    const unavailableScope = permissionDraft.scope?.mode === 'selected'
+      ? missingTeamScopeSelections(permissionDraft.scope, scopeSources.clients, scopeSources.projects)
+      : { clientIds: [], projectIds: [] };
+    if (unavailableScope.clientIds.length || unavailableScope.projectIds.length) { setError('Remova os vínculos indisponíveis ou atualize as listas antes de salvar o escopo.'); return; }
     const validationError = validatePermissionDraft(permissionDraft, accessModules.map(([key]) => key));
     if (validationError) { setError(validationError); return; }
     setBusy(true); setError('');
@@ -236,6 +247,10 @@ function TeamAccessPanel({ notify, onAccountCountChange }) {
       : '';
     return { status, label: labels[status] || labels.inactive, deadline };
   };
+  const missingScope = permissionDraft?.scope?.mode === 'selected' && !scopeError
+    ? missingTeamScopeSelections(permissionDraft.scope, scopeSources.clients, scopeSources.projects)
+    : { clientIds: [], projectIds: [] };
+  const hasMissingScope = missingScope.clientIds.length > 0 || missingScope.projectIds.length > 0;
   return <section className="team-access-panel"><header><div><span className="admin-eyebrow">CONTAS E PERMISSOES</span><h2>Acesso ao Focusshub</h2><p>Convites expiram em 48 horas. O link e exibido aqui para voce compartilhar; nenhum e-mail e enviado automaticamente. Contas inativas precisam de um novo convite para recuperar acesso.</p></div><button type="button" className="admin-secondary" onClick={refresh} disabled={loading || busy || editingPermissions !== null}>{loading ? 'Atualizando...' : 'Atualizar lista'}</button></header>
     <form ref={inviteFormRef} className="team-invite-form" onSubmit={createInvite}><label>Nome<input required minLength="2" maxLength="120" value={draft.name} onChange={(event) => { setDraft({ ...draft, name: event.target.value }); setInviteNotice(''); }} /></label><label>E-mail<input required type="email" value={draft.email} onChange={(event) => { setDraft({ ...draft, email: event.target.value }); setInviteNotice(''); }} /></label><label>Papel<select value={draft.role} onChange={(event) => { setDraft({ ...draft, role: event.target.value }); setInviteNotice(''); }}><option value="member">Membro - entrega e atendimento</option><option value="admin">Administrador - operacao da agencia</option></select></label><button type="submit" className="admin-primary" disabled={busy || loading || Boolean(listError)}><Plus size={14} />{busy ? 'Criando...' : 'Criar convite'}</button></form>
     <p className="team-role-note">O papel é definido na criação do convite e não pode ser trocado nesta tela depois que a conta é ativada. Para alterar, suspenda a conta e gere um novo convite com o papel correto.</p>
@@ -246,10 +261,10 @@ function TeamAccessPanel({ notify, onAccountCountChange }) {
     {listError && <p className="team-access-error" role="alert">{listError}<button type="button" disabled={loading || busy} onClick={refresh}>Tentar novamente</button></p>}
     {loading && <p className="team-empty" role="status">Carregando contas de acesso...</p>}
     {!loading && !listError && <div className="team-account-list"><div className="team-account-list-head"><span>Conta</span><span>Papel</span><span>Acesso</span><span>Acoes</span></div>{accounts.map((account) => <React.Fragment key={account.id}>
-      <div className="team-account-row"><span><b>{account.name}</b><small>{account.email}</small></span><span>{account.role === 'owner' ? 'Proprietario' : account.role === 'admin' ? 'Administrador' : 'Membro'}</span>{(() => { const access = accountStatusPresentation(account); return <span className={`team-account-state ${access.status}`}><b>{access.label}</b>{access.deadline && <small>{access.deadline}</small>}</span>; })()}<span>{account.role !== 'owner' && <><button type="button" aria-expanded={editingPermissions === account.id} disabled={busy} onClick={() => togglePermissions(account)}>{editingPermissions === account.id ? 'Fechar permissoes' : 'Permissoes'}</button>{account.active ? <button type="button" aria-label={'Suspender acesso de ' + account.name} disabled={busy || editingPermissions !== null} onClick={() => deactivate(account)}><UserMinus size={15} />Suspender</button> : <button type="button" aria-label={'Gerar novo convite para ' + account.name} disabled={busy || editingPermissions !== null} onClick={() => renewInvite(account)}><Plus size={14} />Novo link</button>}</>}</span></div>
+      <div className="team-account-row"><span><b>{account.name}</b><small>{account.email}</small></span><span>{account.role === 'owner' ? 'Proprietario' : account.role === 'admin' ? 'Administrador' : 'Membro'}</span>{(() => { const access = accountStatusPresentation(account); return <span className={`team-account-state ${access.status}`}><b>{access.label}</b>{access.deadline && <small>{access.deadline}</small>}</span>; })()}<span>{account.role !== 'owner' && <><button type="button" aria-expanded={editingPermissions === account.id} disabled={busy} onClick={() => togglePermissions(account)}>{editingPermissions === account.id ? 'Fechar permissoes' : 'Permissoes'}</button>{account.active ? <button type="button" aria-label={'Suspender acesso de ' + account.name} disabled={busy || editingPermissions !== null} onClick={() => deactivate(account)}><UserMinus size={15} />Suspender</button> : <>{account.accessStatus === 'invite_pending' && <button type="button" aria-label={'Revogar convite de ' + account.name} disabled={busy || editingPermissions !== null} onClick={() => deactivate(account)}><UserMinus size={15} />Revogar convite</button>}<button type="button" aria-label={'Gerar novo convite para ' + account.name} disabled={busy || editingPermissions !== null} onClick={() => renewInvite(account)}><Plus size={14} />Novo link</button></>}</>}</span></div>
       {editingPermissions === account.id && permissionDraft && <div className="team-permission-editor"><h3>Permissoes de {account.name}</h3><p>Defina leitura, edicao e exclusao por modulo.</p>{permissionDraftDirty && <p className="team-scope-hint" role="status">Alterações de permissões ainda não salvas. Salve para aplicar ou cancele para descartar.</p>}
         <label className="team-record-scope">Escopo dos registros<select disabled={busy} value={permissionDraft.scope?.mode || 'all'} onChange={(event) => setPermissionDraft((current) => ({ ...current, scope: { ...(current.scope || { clientIds: [], projectIds: [] }), mode: event.target.value } }))}><option value="all">Todos os registros permitidos pelos modulos</option><option value="selected">Somente clientes e projetos selecionados</option></select></label>
-        {permissionDraft.scope?.mode === 'selected' && <><p className="team-scope-hint">Registros vinculados por ID ficam visiveis; registros sem vinculo nao aparecem.</p><div className="team-scope-selects"><label>Clientes<select multiple size="6" disabled={busy || Boolean(scopeError)} value={permissionDraft.scope.clientIds || []} onChange={(event) => setPermissionDraft((current) => ({ ...current, scope: { ...current.scope, clientIds: [...event.target.selectedOptions].map((option) => option.value) } }))}>{scopeSources.clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}</select></label><label>Projetos<select multiple size="6" disabled={busy || Boolean(scopeError)} value={permissionDraft.scope.projectIds || []} onChange={(event) => setPermissionDraft((current) => ({ ...current, scope: { ...current.scope, projectIds: [...event.target.selectedOptions].map((option) => option.value) } }))}>{scopeSources.projects.map((project) => <option key={project.id} value={project.id}>{project.name || project.title}</option>)}</select></label></div></>}
+        {permissionDraft.scope?.mode === 'selected' && <><p className="team-scope-hint">Registros vinculados por ID ficam visiveis; registros sem vinculo nao aparecem.</p>{hasMissingScope && <div className="team-scope-empty-warning" role="alert"><span>{missingScope.clientIds.length + missingScope.projectIds.length} vínculo(s) selecionado(s) não aparecem nas listas atuais. Remova os vínculos indisponíveis ou atualize as listas antes de salvar.</span><button type="button" disabled={busy} onClick={() => setPermissionDraft((current) => ({ ...current, scope: removeMissingTeamScopeSelections(current.scope, missingTeamScopeSelections(current.scope, scopeSources.clients, scopeSources.projects)) }))}>Remover vínculos indisponíveis</button></div>}<div className="team-scope-selects"><label>Clientes<select multiple size="6" disabled={busy || Boolean(scopeError)} value={permissionDraft.scope.clientIds || []} onChange={(event) => setPermissionDraft((current) => ({ ...current, scope: { ...current.scope, clientIds: [...event.target.selectedOptions].map((option) => option.value) } }))}>{scopeSources.clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}</select></label><label>Projetos<select multiple size="6" disabled={busy || Boolean(scopeError)} value={permissionDraft.scope.projectIds || []} onChange={(event) => setPermissionDraft((current) => ({ ...current, scope: { ...current.scope, projectIds: [...event.target.selectedOptions].map((option) => option.value) } }))}>{scopeSources.projects.map((project) => <option key={project.id} value={project.id}>{project.name || project.title}</option>)}</select></label></div></>}
         {scopeError && permissionDraft.scope?.mode === 'selected' && <p className="team-scope-empty-warning" role="status">Atualize clientes e projetos antes de escolher registros.</p>}
         <div className="team-permission-grid">{accessModules.map(([key, label]) => {
           const inherited = permissionDraft[key] === null;
@@ -262,7 +277,7 @@ function TeamAccessPanel({ notify, onAccountCountChange }) {
             {inherited ? <><small>Padrão herdado de {account.role === 'admin' ? 'administrador' : 'membro'}. Acesso que varia por tela aparece parcialmente marcado.</small><button type="button" className="team-permission-reset" disabled={busy} onClick={() => setPermissionDraft((current) => setModulePermissionMode(current, key, 'blocked'))}>Bloquear acesso herdado</button></> : <button type="button" className="team-permission-reset" disabled={busy} onClick={() => setPermissionDraft((current) => setModulePermissionMode(current, key, 'inherited'))}>Usar padrão do papel</button>}
           </div>;
         })}</div>
-        <div className="team-permission-actions"><button type="button" className="admin-secondary" disabled={busy} onClick={discardPermissionEdits}>Cancelar</button><button type="button" className="admin-primary" disabled={busy || !permissionDraftDirty || Boolean(scopeError && permissionDraft.scope?.mode === 'selected')} onClick={() => savePermissions(account)}>{busy ? 'Salvando...' : 'Salvar permissoes'}</button></div>
+        <div className="team-permission-actions"><button type="button" className="admin-secondary" disabled={busy} onClick={discardPermissionEdits}>Cancelar</button><button type="button" className="admin-primary" disabled={busy || !permissionDraftDirty || hasMissingScope || Boolean(scopeError && permissionDraft.scope?.mode === 'selected')} onClick={() => savePermissions(account)}>{busy ? 'Salvando...' : 'Salvar permissoes'}</button></div>
       </div>}
     </React.Fragment>)}{!accounts.length && <p className="team-empty">Nenhuma conta encontrada.</p>}</div>}
   </section>;

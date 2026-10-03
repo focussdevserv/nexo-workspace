@@ -1,6 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { acquireClientPortalActionAfterConfirmation, appendSentPortalMessage, canOfferClientPortalPaymentAction, canSendPortalMessage, canSubmitPortalApprovalDecision, copyClientPortalText, copyPortalLink, createClientPortalActionLock, portalLinkActionLabel, safeClientPortalHref, shouldConfirmPortalLinkRotation, splitClientPortalApprovals } from './client-portal-actions.js';
+import { acquireClientPortalActionAfterConfirmation, appendSentPortalMessage, canOfferClientPortalPaymentAction, canSendPortalMessage, canSubmitPortalApprovalDecision, copyClientPortalText, copyPortalLink, createClientPortalActionLock, isClientPortalRoutePending, isCurrentClientPortalSlug, portalLinkActionLabel, safeClientPortalHref, shouldConfirmPortalLinkRotation, splitClientPortalApprovals } from './client-portal-actions.js';
+
+test('a changed portal token never displays data loaded for the previous client', () => {
+  assert.equal(isClientPortalRoutePending(false, '/portal/token-a', '/portal/token-b'), true);
+  assert.equal(isClientPortalRoutePending(false, '/portal/token-a', '/portal/token-a'), false);
+  assert.equal(isClientPortalRoutePending(true, '/portal/token-a', '/portal/token-a'), true);
+});
+
+test('responses from a previous portal token cannot update the current portal screen', () => {
+  assert.equal(isCurrentClientPortalSlug('/portal/token-a', '/portal/token-a'), true);
+  assert.equal(isCurrentClientPortalSlug('/portal/token-a', '/portal/token-b'), false);
+});
 
 test('client portal payment actions are available only for payable invoices', () => {
   for (const status of ['pending', 'Aguardando pagamento', 'overdue', 'Vencida']) assert.equal(canOfferClientPortalPaymentAction(status), true, status);

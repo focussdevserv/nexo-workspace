@@ -66,3 +66,13 @@ export function stripWorkspaceAccessTokens(href) {
   }
   return url.toString();
 }
+
+// Query invite tokens are sent with the initial document request, so remove
+// them from the address bar once React has captured them. Fragment tokens are
+// never sent to the server and must remain available while a one-time form is
+// open so a refresh does not strand the user halfway through account setup.
+export function stripWorkspaceAccessQueryTokens(href) {
+  const url = new URL(href);
+  url.searchParams.delete('invite');
+  return url.toString();
+}

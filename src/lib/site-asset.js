@@ -12,6 +12,11 @@ export function buildSiteAssetPayload(draft, client) {
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || !url.hostname || (url.port && !['80', '443'].includes(url.port))) {
     throw new Error('Use uma URL HTTP/HTTPS publica, sem credenciais nem porta personalizada.');
   }
+  // The server monitor currently pins DNS resolution to public IPv4 addresses.
+  // Reject IPv6 literals at entry instead of saving a target that can never be checked.
+  if (url.hostname.includes(':')) {
+    throw new Error('O monitoramento ainda aceita enderecos IPv4 publicos, nao enderecos IPv6 diretos.');
+  }
   if (isNonPublicHost(url.hostname)) {
     throw new Error('O monitoramento aceita somente dominios publicos.');
   }

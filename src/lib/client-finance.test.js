@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { advanceClientInstallmentProgress, buildClientFinanceHistory, clientBillingRecordState, clientFinanceDateKey, clientFinanceDraftForCreate, clientFinanceDueDateLabel, clientFinanceEditPatch, clientFinanceFailedResources, clientFinanceFilterCounts, clientFinanceFilterForPage, clientFinanceLegacyClientValue, clientFinanceOpenBillingCount, clientFinanceScheduleForCreate, isClientFinanceCancelled, isClientFinanceSettled, manualFinanceSettlementPatch, normalizeClientSubscriptionTerms, prepareClientContractTrackingPatch, prepareClientServiceChargeUpdate, resolveClientInstallmentRequest, safeClientFinanceExternalHref } from './client-finance.js';
+import { advanceClientInstallmentProgress, buildClientFinanceHistory, clientBillingRecordState, clientFinanceDateKey, clientFinanceDraftForCreate, clientFinanceDueDateLabel, clientFinanceEditPatch, clientFinanceFailedResources, clientFinanceFilterCounts, clientFinanceFilterForPage, clientFinanceLegacyClientValue, clientFinanceOpenBillingCount, clientFinanceResourceLabels, clientFinanceScheduleForCreate, isClientFinanceCancelled, isClientFinanceSettled, manualFinanceSettlementPatch, mergeClientFinanceRecordUpdate, normalizeClientSubscriptionTerms, prepareClientContractTrackingPatch, prepareClientServiceChargeUpdate, resolveClientInstallmentRequest, safeClientFinanceExternalHref } from './client-finance.js';
 import { belongsToClient } from '../data/client-link.js';
 
 test('client finance shortcuts map to an in-profile filter', () => {
@@ -64,6 +64,13 @@ test('every new client finance action starts with a fresh recurring schedule', a
 test('client profile shows billing deadlines in the workspace timezone', () => {
   assert.equal(clientFinanceDueDateLabel('2026-10-04T02:59:59.000Z'), '03/10/2026');
   assert.equal(clientFinanceDueDateLabel('invalid'), '');
+});
+
+test('client profile preserves a date-only billing deadline as its selected calendar day', () => {
+  assert.equal(clientFinanceDueDateLabel('2026-10-03'), '03/10/2026');
+  assert.equal(clientFinanceDueDateLabel('2026-02-30'), '');
+  assert.equal(clientFinanceDueDateLabel('0001-01-01'), '01/01/0001');
+  assert.equal(clientFinanceDueDateLabel('0099-12-31'), '31/12/0099');
 });
 
 test('client billing links allow only credential-free HTTP or HTTPS URLs', () => {
@@ -214,6 +221,23 @@ test('editing a pending client finance record does not silently mark it paid', (
   assert.equal(explicitSettlement.status, 'Recebida');
   assert.equal(explicitSettlement.settledAt, now.toISOString());
   assert.equal(explicitSettlement.paidAt, now.toISOString());
+});
+
+test('manual finance update refreshes the visible row when API ID types differ', () => {
+  const original = { id: 42, status: 'Pendente', amount: 100 };
+  const other = { id: 43, status: 'Pendente' };
+  const updated = mergeClientFinanceRecordUpdate([original, other], '42', row => ({ ...row, status: 'Recebida' }));
+
+  assert.deepEqual(updated, [{ ...original, status: 'Recebida' }, other]);
+  assert.equal(original.status, 'Pendente', 'the cached row remains immutable');
+  const unchanged = [original];
+  assert.equal(mergeClientFinanceRecordUpdate(unchanged, undefined, () => ({})), unchanged);
+});
+
+test('client financial load errors use clear Portuguese resource names', () => {
+  assert.equal(clientFinanceResourceLabels(['billing', 'subscriptions', 'contracts', 'revenues', 'expenses']), 'cobranças, assinaturas, contratos, receitas, despesas');
+  assert.equal(clientFinanceResourceLabels(['unknown']), 'unknown');
+  assert.equal(clientFinanceResourceLabels(null), '');
 });
 
 test('failed client finance edits keep the editor open for correction or retry', async () => {

@@ -48,5 +48,5 @@ test('finance request identifiers are stored in dedicated nullable workspace col
   assert.match(migration, /ADD COLUMN IF NOT EXISTS create_idempotency_key text/);
   assert.match(migration, /ADD COLUMN IF NOT EXISTS create_request_hash text/);
   assert.match(migration, /UNIQUE INDEX IF NOT EXISTS workspace_records_org_resource_create_key_unique/);
-  assert.deepEqual(journal.entries.at(-1), { idx: 13, version: '7', when: 1791045600000, tag: '0013_workspace_record_idempotency', breakpoints: true });
+  assert.ok(journal.entries.some((entry) => entry.idx === 13 && entry.tag === '0013_workspace_record_idempotency'));
 });

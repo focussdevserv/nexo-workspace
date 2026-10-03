@@ -135,6 +135,21 @@ test('records with no date are excluded instead of being treated as epoch dated'
   assert.equal(inPeriod({}, 'year', new Date(2026, 9, 2), 'created'), false);
 });
 
+test('report dates fall back to a valid legacy timestamp when the preferred field is malformed', () => {
+  const order = { status: 'paid', paidAt: 'not-a-date', updatedAt: '2026-10-01T12:00:00Z' };
+  assert.equal(dateOf(order, 'paid').toISOString(), '2026-10-01T12:00:00.000Z');
+  assert.equal(inPeriod(order, 'month', new Date('2026-10-02T12:00:00Z'), 'paid'), true);
+  assert.equal(inPeriod({ date: '2026-02-30', updatedAt: '2026-10-01T12:00:00Z' }, 'month', new Date('2026-10-02T12:00:00Z')), true);
+});
+
+test('report date validation preserves historical ISO years instead of falling through', () => {
+  for (const date of ['0001-01-01', '0099-12-31']) {
+    const parsed = dateOf({ date, createdAt: '2026-10-01' });
+    assert.equal(parsed.getFullYear(), Number(date.slice(0, 4)));
+    assert.equal(inPeriod({ date, createdAt: '2026-10-01' }, 'month', new Date('2026-10-02T12:00:00Z')), false);
+  }
+});
+
 test('report source state distinguishes missing permission from a failed request', () => {
   assert.equal(reportSourceState('orders', ['orders'], ['orders']), 'restricted');
   assert.equal(reportSourceState('orders', [], ['orders']), 'failed');
@@ -196,6 +211,7 @@ test('project reports count legacy duration fields and retain fractional hours',
   assert.equal(reportHours({ seconds: 1800 }), 0.5);
   assert.equal(reportHours({ hours: 2.25, minutes: 45 }), 2.25);
   assert.equal(formatReportHours(0), '0h');
+  assert.equal(formatReportHours(10 / 3600), '<1min');
   assert.equal(formatReportHours(0.75), '45min');
   assert.equal(formatReportHours(1.5), '1h 30min');
 });
@@ -260,6 +276,22 @@ test('monthly report chart groups receipts into calendar weeks instead of one mi
   assert.match(buckets[0].label, /^01/);
 });
 
+test('monthly report chart follows the workspace week start across week and month boundaries', () => {
+  const now = new Date('2026-10-10T12:00:00');
+  const rows = [
+    { createdAt: '2026-10-03', amount: 10 },
+    { createdAt: '2026-10-04', amount: 40 },
+    { createdAt: '2026-10-05', amount: 50 },
+  ];
+  const monday = buildChartBuckets('month', now, rows, (row) => row.amount, 'created', { timezone: 'UTC', weekStart: 'monday' });
+  const sunday = buildChartBuckets('month', now, rows, (row) => row.amount, 'created', { timezone: 'UTC', weekStart: 'sunday' });
+
+  assert.deepEqual(monday.slice(0, 2).map(({ value }) => value), [50, 50]);
+  assert.deepEqual(sunday.slice(0, 2).map(({ value }) => value), [10, 90]);
+  assert.match(monday[0].label, /^01/);
+  assert.match(sunday[0].label, /^01/);
+});
+
 test('project report lists dated tasks and work-hour records alongside projects', () => {
   const now = new Date(2026, 9, 2, 12);
   const rows = buildProjectReportRows(
@@ -275,7 +307,7 @@ test('project report lists dated tasks and work-hour records alongside projects'
 
   assert.deepEqual(rows.map(([name]) => name), ['Revisar página', 'Implementação', 'Site Aurora']);
   assert.deepEqual(rows[0], ['Revisar página', 'Tarefa · Site Aurora', 'Pendente', '02/10/2026']);
-  assert.deepEqual(rows[1], ['Implementação', 'Horas · Site Aurora', '2.5h · completed', '01/10/2026']);
+  assert.deepEqual(rows[1], ['Implementação', 'Horas · Site Aurora', '2h 30min · completed', '01/10/2026']);
   assert.equal(rows.some(([name]) => name === 'Tarefa antiga'), false);
 });
 

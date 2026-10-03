@@ -1,5 +1,6 @@
 import { isFinanceReceivableStatusOpen } from './finance-receivable-status.js';
 import { canCancelPaymentOrder, normalizePaymentStatus } from './payment-status.js';
+import { parseCalendarDateKey } from './calendar-preferences.js';
 
 const settledStatuses = new Set(['recebida', 'recebido', 'paga', 'pago', 'paid', 'received', 'settled']);
 const cancelledStatuses = new Set(['cancelada', 'cancelado', 'cancelled', 'canceled', 'estornada', 'refunded']);
@@ -9,6 +10,13 @@ export function clientFinanceDateKey(date = new Date()) {
 }
 
 export function clientFinanceDueDateLabel(value) {
+  if (typeof value === 'string') {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      if (!parseCalendarDateKey(value)) return '';
+      const [year, month, day] = value.split('-');
+      return `${day}/${month}/${year}`;
+    }
+  }
   const date = new Date(value);
   if (!value || Number.isNaN(date.getTime())) return '';
   return new Intl.DateTimeFormat('pt-BR', {
@@ -145,6 +153,19 @@ export function clientFinanceFailedResources(filter, errors = {}) {
     .filter((resource) => Boolean(errors[resource]));
 }
 
+export function clientFinanceResourceLabels(resources = []) {
+  const labels = {
+    billing: 'cobranças',
+    subscriptions: 'assinaturas',
+    contracts: 'contratos',
+    revenues: 'receitas',
+    expenses: 'despesas',
+  };
+  return (Array.isArray(resources) ? resources : [])
+    .map((resource) => labels[resource] || String(resource))
+    .join(', ');
+}
+
 export function clientFinanceFilterCounts({ contracts = [], subscriptions = [], billing = [], revenues = [], expenses = [], plannedCharges = [] }) {
   const planned = Array.isArray(plannedCharges) ? plannedCharges : [];
   return {
@@ -228,6 +249,13 @@ export function isClientFinanceCancelled(record) {
 
 export function clientFinanceOpenBillingCount(billing = []) {
   return billing.filter((item) => isFinanceReceivableStatusOpen(item?.status)).length;
+}
+
+/** Merge a saved finance row into the client-profile cache across API ID types. */
+export function mergeClientFinanceRecordUpdate(rows, recordId, update) {
+  if (!Array.isArray(rows) || recordId === undefined || recordId === null || typeof update !== 'function') return rows;
+  const key = String(recordId);
+  return rows.map((row) => row && String(row.id) === key ? update(row) : row);
 }
 
 export function manualFinanceSettlementPatch(record, now = new Date()) {

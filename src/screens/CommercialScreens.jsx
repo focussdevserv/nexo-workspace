@@ -29,7 +29,7 @@ import { splitInstallmentAmounts } from "../lib/installment-plan.js";
 import { clientMonthlyRevenue, clientMonthlyRevenueLabel, parseDisplayAmount, recurringMonthlyAmount } from "../lib/client-billing-summary.js";
 import { downloadCsvFile, recordsToCsv } from "../lib/csv.js";
 import { isLocalDemoActive } from "../lib/local-demo.js";
-import { advanceClientInstallmentProgress, buildClientFinanceHistory, clientBillingRecordState, clientFinanceDateKey, clientFinanceDraftForCreate, clientFinanceDueDateLabel, clientFinanceEditPatch, clientFinanceFailedResources, clientFinanceFilterCounts, clientFinanceFilterForPage, clientFinanceLegacyClientValue, clientFinanceOpenBillingCount, isClientFinanceCancelled, isClientFinanceSettled, manualFinanceSettlementPatch, normalizeClientSubscriptionTerms, prepareClientContractTrackingPatch, prepareClientServiceChargeUpdate, resolveClientInstallmentRequest, safeClientFinanceExternalHref } from "../lib/client-finance.js";
+import { advanceClientInstallmentProgress, buildClientFinanceHistory, clientBillingRecordState, clientFinanceDateKey, clientFinanceDraftForCreate, clientFinanceDueDateLabel, clientFinanceEditPatch, clientFinanceFailedResources, clientFinanceFilterCounts, clientFinanceFilterForPage, clientFinanceLegacyClientValue, clientFinanceOpenBillingCount, clientFinanceResourceLabels, isClientFinanceCancelled, isClientFinanceSettled, manualFinanceSettlementPatch, mergeClientFinanceRecordUpdate, normalizeClientSubscriptionTerms, prepareClientContractTrackingPatch, prepareClientServiceChargeUpdate, resolveClientInstallmentRequest, safeClientFinanceExternalHref } from "../lib/client-finance.js";
 import { clientContactActions } from "../lib/client-contact-actions.js";
 import { removeClientContact } from "../lib/client-contact-records.js";
 import { presentClientContact } from "../lib/client-contact-presentation.js";
@@ -50,6 +50,8 @@ import { createServiceProjectOnce } from "../lib/service-project-creation.js";
 import { resolveLeadNavigation } from "../lib/lead-navigation-context.js";
 import { resolveClientBillingCancellation } from "../lib/client-billing-cancellation.js";
 import { clientProfileSelectionKey } from "../lib/client-profile-selection.js";
+import { belongsToClientProfileRecord } from "../lib/client-profile-record-scope.js";
+import { commercialRecordTargetMatches } from "../lib/commercial-record-target.js";
 import { countActiveWorkProjects, isWorkProjectActive } from "../lib/work-project-activity.js";
 const datasets = {
   leads: [],
@@ -988,13 +990,20 @@ export default function CommercialScreen({
   };
   const updateCommercialRecord = async (record, patch) => {
     if (key === "leads") return updateLead(record, patch);
-    const rowKey = String(record.id || record.title || record.name);
+    const matchingIndexes = commercialRecordTargetMatches(records[recordType] || [], record);
+    if (matchingIndexes.length !== 1) {
+      notify(matchingIndexes.length > 1
+        ? "Não foi possível identificar este registro com segurança: há registros sem identificador com o mesmo nome. Atualize a lista e diferencie os registros antes de editar."
+        : "Este registro não está mais na lista. Atualize os dados antes de editar.");
+      return false;
+    }
+    const targetIndex = matchingIndexes[0];
     const nextContacts = key === "empresas" && patch.name !== undefined
       ? synchronizeCompanyContactNames(record, patch.name, records.contacts || [], records.companies || [])
       : records.contacts;
     const next = {
       ...records,
-      [recordType]: (records[recordType] || []).map(item => String(item.id || item.title || item.name) === rowKey ? {
+      [recordType]: (records[recordType] || []).map((item, index) => index === targetIndex ? {
         ...item,
         ...patch
       } : item)
@@ -1010,6 +1019,14 @@ export default function CommercialScreen({
     }
   };
   const deleteCommercialRecord = async record => {
+    const matchingIndexes = commercialRecordTargetMatches(records[recordType] || [], record);
+    if (matchingIndexes.length !== 1) {
+      notify(matchingIndexes.length > 1
+        ? "Não foi possível identificar este registro com segurança: há registros sem identificador com o mesmo nome. Atualize a lista e diferencie os registros antes de excluir."
+        : "Este registro não está mais na lista. Atualize os dados antes de excluir.");
+      return false;
+    }
+    const targetIndex = matchingIndexes[0];
     if (key === "propostas") {
       const blockReason = proposalDeletionBlockReason(record, {
         contracts: records.contracts || [],
@@ -1028,7 +1045,7 @@ export default function CommercialScreen({
       const nextContacts = key === "empresas" ? unlinkCompanyContacts(record, records.contacts || []) : records.contacts;
       const nextRecords = {
         ...records,
-        [recordType]: (records[recordType] || []).filter(item => String(item.id || item.title || item.name) !== String(record.id || record.title || record.name))
+        [recordType]: (records[recordType] || []).filter((_, index) => index !== targetIndex)
       };
       if (nextContacts !== records.contacts) nextRecords.contacts = nextContacts;
       await persistRecords({
@@ -1613,18 +1630,18 @@ function ClientProfileModal({
     };
   }, [initialClient.id]);
   const clientDefaultDueDays = Math.min(30, Math.max(1, Number((related.settings || []).find(item => item.key === "workspace-preferences")?.settings?.billing?.defaultDueDays) || 7));
-  const projects = (related.projects || []).filter(item => belongsToClient(item, client, item.client));
-  const tasks = (related.tasks || []).filter(item => belongsToClient(item, client, item.client));
-  const billing = (related.billing || []).filter(item => belongsToClient(item, client, item.clientName || item.client));
-  const revenues = (related.revenues || []).filter(item => belongsToClient(item, client, clientFinanceLegacyClientValue("revenues", item)));
-  const expenses = (related.expenses || []).filter(item => belongsToClient(item, client, clientFinanceLegacyClientValue("expenses", item)));
-  const contracts = (related.contracts || []).filter(item => belongsToClient(item, client, item.client));
-  const subscriptions = (related.subscriptions || []).filter(item => belongsToClient(item, client, item.clientName || item.client));
-  const messages = (related.inbox || []).filter(item => belongsToClient(item, client, item.company));
-  const files = (related.files || []).filter(item => belongsToClient(item, client, item.client));
-  const tickets = (related.tickets || []).filter(item => belongsToClient(item, client, item.client));
-  const approvals = (related.approvals || []).filter(item => belongsToClient(item, client, item.client));
-  const activity = (related.events || []).filter(item => belongsToClient(item, client, item.client));
+  const projects = (related.projects || []).filter(item => belongsToClientProfileRecord(item, client, item.client));
+  const tasks = (related.tasks || []).filter(item => belongsToClientProfileRecord(item, client, item.client));
+  const billing = (related.billing || []).filter(item => belongsToClientProfileRecord(item, client, item.clientName || item.client));
+  const revenues = (related.revenues || []).filter(item => belongsToClientProfileRecord(item, client, clientFinanceLegacyClientValue("revenues", item)));
+  const expenses = (related.expenses || []).filter(item => belongsToClientProfileRecord(item, client, clientFinanceLegacyClientValue("expenses", item)));
+  const contracts = (related.contracts || []).filter(item => belongsToClientProfileRecord(item, client, item.client));
+  const subscriptions = (related.subscriptions || []).filter(item => belongsToClientProfileRecord(item, client, item.clientName || item.client));
+  const messages = (related.inbox || []).filter(item => belongsToClientProfileRecord(item, client, item.company));
+  const files = (related.files || []).filter(item => belongsToClientProfileRecord(item, client, item.client));
+  const tickets = (related.tickets || []).filter(item => belongsToClientProfileRecord(item, client, item.client));
+  const approvals = (related.approvals || []).filter(item => belongsToClientProfileRecord(item, client, item.client));
+  const activity = (related.events || []).filter(item => belongsToClientProfileRecord(item, client, item.client));
   const notes = Array.isArray(client.notes) ? client.notes : [];
   const contactActions = clientContactActions(client.email, client.phone);
   const openTab = (page, context = null) => {
@@ -2091,10 +2108,10 @@ function ClientProfileModal({
       });
       setRelated(current => ({
         ...current,
-        [resource]: (current[resource] || []).map(row => row.id === item.id ? {
+        [resource]: mergeClientFinanceRecordUpdate(current[resource] || [], item.id, row => ({
           ...row,
           ...(result.data || patch)
-        } : row)
+        }))
       }));
       onAction("Movimentação financeira atualizada.");
       return true;
@@ -2335,13 +2352,7 @@ function ClientProfileModal({
                 clientName: client.name,
                 action: "create",
                 intentId: crypto.randomUUID()
-              })}>Nova despesa</button></div>{relatedLoading && <p role="status">Carregando movimentações financeiras...</p>}{financeFailedResources.length > 0 && <div role="alert" className="com-client-finance-load-error"><span>Falha ao carregar: {financeFailedResources.map(resource => ({
-                  billing: "billing",
-                  subscriptions: "subscriptions",
-                  contracts: "contracts",
-                  revenues: "revenues",
-                  expenses: "expenses"
-                })[resource]).join(", ")}. Os resultados podem estar incompletos.</span><button type="button" className="com-secondary" disabled={financeRetrying} onClick={retryClientFinance}>{financeRetrying ? "Tentando novamente..." : "Tentar novamente"}</button></div>}{plannedCharges.map((charge, index) => ({
+              })}>Nova despesa</button></div>{relatedLoading && <p role="status">Carregando movimentações financeiras...</p>}{financeFailedResources.length > 0 && <div role="alert" className="com-client-finance-load-error"><span>Falha ao carregar: {clientFinanceResourceLabels(financeFailedResources)}. Os resultados podem estar incompletos.</span><button type="button" className="com-secondary" disabled={financeRetrying} onClick={retryClientFinance}>{financeRetrying ? "Tentando novamente..." : "Tentar novamente"}</button></div>}{plannedCharges.map((charge, index) => ({
               charge,
               index
             })).filter(({

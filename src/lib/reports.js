@@ -1,5 +1,5 @@
 import { formatWorkspaceDate } from './workspace-formatting.js';
-import { calendarDateKeyForValue, calendarDateInTimeZone, normalizeCalendarTimeZone } from './calendar-preferences.js';
+import { calendarDateKeyForValue, calendarDateInTimeZone, normalizeCalendarTimeZone, normalizeWeekStart, parseCalendarDateKey, startOfCalendarWeek } from './calendar-preferences.js';
 import { isReportProjectCompleted } from './report-project-status.js';
 const reportDateValue = (item, field = 'default') => {
   const candidates = field === 'created' ? [item.createdAt, item.created_at, item.date, item.updatedAt, item.updated_at]
@@ -10,7 +10,15 @@ const reportDateValue = (item, field = 'default') => {
         : field === 'work' ? [item.startedAt, item.started_at, item.endedAt, item.ended_at, item.createdAt, item.created_at, item.date]
           : field === 'task' ? [item.due, item.dueAt, item.due_at, item.createdAt, item.created_at, item.date, item.updatedAt, item.updated_at]
             : [item.date, item.createdAt, item.created_at, item.paidAt, item.paid_at, item.updatedAt, item.updated_at, item.dueAt, item.due_at];
-  return candidates.find((candidate) => candidate !== null && candidate !== undefined && candidate !== '');
+  return candidates.find(isValidReportDateValue);
+};
+const isValidReportDateValue = (value) => {
+  if (value === null || value === undefined || value === '') return false;
+  if (value instanceof Date) return !Number.isNaN(value.getTime());
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return Boolean(parseCalendarDateKey(value));
+  }
+  return !Number.isNaN(new Date(value).getTime());
 };
 export const dateOf = (item, field = 'default') => {
   const candidates = field === 'created' ? [item.createdAt, item.created_at, item.date, item.updatedAt, item.updated_at]
@@ -21,7 +29,7 @@ export const dateOf = (item, field = 'default') => {
           : field === 'work' ? [item.startedAt, item.started_at, item.endedAt, item.ended_at, item.createdAt, item.created_at, item.date]
             : field === 'task' ? [item.due, item.dueAt, item.due_at, item.createdAt, item.created_at, item.date, item.updatedAt, item.updated_at]
             : [item.date, item.createdAt, item.created_at, item.paidAt, item.paid_at, item.updatedAt, item.updated_at, item.dueAt, item.due_at];
-  const value = candidates.find((candidate) => candidate !== null && candidate !== undefined && candidate !== '');
+  const value = candidates.find(isValidReportDateValue);
   if (value instanceof Date) return new Date(value.getTime());
   if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) return new Date(`${value}T00:00:00`);
   return value === undefined ? new Date(Number.NaN) : new Date(value);
@@ -160,8 +168,10 @@ export function isReportableWorkRecord(item = {}) {
 }
 
 export function formatReportHours(value) {
-  const totalMinutes = Math.max(0, Math.round((Number(value) || 0) * 60));
-  if (!totalMinutes) return '0h';
+  const totalSeconds = Math.max(0, Math.round((Number(value) || 0) * 3600));
+  if (!totalSeconds) return '0h';
+  const totalMinutes = Math.round(totalSeconds / 60);
+  if (!totalMinutes) return '<1min';
   const hours = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
   if (!hours) return `${minutes}min`;
@@ -198,7 +208,7 @@ export function buildProjectReportRows(projects = [], tasks = [], hours = [], pe
     ]),
     ...hours.filter((item) => isReportableWorkRecord(item) && inPeriod(item, periodId, now, 'work', preferences)).map((item) => [
       item.title || item.project || 'Registro de horas', `Horas · ${item.project || item.client || 'Projeto não informado'}`,
-      `${reportHours(item)}h · ${item.status || 'Registradas'}`, reportDateLabel(item.date || item.startedAt || item.started_at || item.createdAt || item.created_at, preferences),
+      `${formatReportHours(reportHours(item))} · ${item.status || 'Registradas'}`, reportDateLabel(item.date || item.startedAt || item.started_at || item.createdAt || item.created_at, preferences),
       dateOf(item, 'work').getTime(),
     ]),
   ];
@@ -208,21 +218,30 @@ export function buildProjectReportRows(projects = [], tasks = [], hours = [], pe
 export function buildChartBuckets(periodId, now, rows, valueOf, dateField = 'default', preferences = {}) {
   const timeZone = reportTimeZone(preferences);
   const today = calendarDateInTimeZone(now, timeZone);
+  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
   const starts = periodId === 'year'
     ? Array.from({ length: 12 }, (_, index) => new Date(today.getFullYear(), index, 1))
     : periodId === 'quarter'
       ? Array.from({ length: 13 }, (_, index) => new Date(today.getFullYear(), today.getMonth(), today.getDate() - 89 + index * 7))
-      : Array.from({ length: Math.ceil(new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate() / 7) }, (_, index) => new Date(today.getFullYear(), today.getMonth(), 1 + index * 7));
+      : (() => {
+        const firstWeek = startOfCalendarWeek(monthStart, normalizeWeekStart(preferences.weekStart));
+        const lastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+        const weeks = [];
+        for (let start = firstWeek; start <= lastDay; start = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 7)) weeks.push(start);
+        return weeks;
+      })();
   const endOfToday = dateKeyFromCalendarDate(today);
+  const firstPeriodKey = dateKeyFromCalendarDate(periodStart(periodId, now, preferences));
   return starts.map((start, index) => {
-    const startKey = dateKeyFromCalendarDate(start);
+    const rawStartKey = dateKeyFromCalendarDate(start);
+    const startKey = rawStartKey < firstPeriodKey ? firstPeriodKey : rawStartKey;
     const end = periodId === 'year'
       ? new Date(start.getFullYear(), start.getMonth() + 1, 1)
       : new Date(start.getFullYear(), start.getMonth(), start.getDate() + 7);
     const endKey = dateKeyFromCalendarDate(end);
     const value = rows.filter((row) => {
       const key = reportDateKey(reportDateValue(row, dateField), timeZone);
-      return key >= startKey && key < endKey && key <= endOfToday;
+      return key >= firstPeriodKey && key >= rawStartKey && key < endKey && key <= endOfToday;
     }).reduce((sum, row) => sum + valueOf(row), 0);
     const label = periodId !== 'year'
       ? formatWorkspaceDate(startKey, preferences, { day: '2-digit', month: 'short' }).replace('.', '')
