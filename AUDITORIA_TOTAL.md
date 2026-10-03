@@ -547,3 +547,13 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - **Validação automatizada:** 555 testes do frontend e 221 testes da API passaram; `npm run lint`, `npm run build`, `npm run api:build` e `git diff --check` passaram.
 - **Navegador em demonstração local:** navegação pelos 29 destinos do menu preservou os títulos de página e não mostrou overflow horizontal ou tela de erro. A tela de Sites carregou os quatro indicadores e sete registros fictícios. A tela de CRM foi conferida após aguardar sua montagem; nenhum registro real ou serviço externo foi alterado.
 - **Publicação:** commit `4a8c7ab7b2f5cccd8f974a5ce894554d8db6df77` enviado e confirmado pelo workflow `37097914180`. Health da API `ok`, banco conectado, manifest web e revisão da API iguais ao commit; HTML e bundle HTTP 200; endpoints privados sem sessão HTTP 401.
+
+## Onda 8 - Relatorios, metas, portal e importacao de configuracoes - 03/10/2026
+
+- **Relatorios:** receitas recebidas passam a ser filtradas e agrupadas pela data de liquidacao; o grafico usa a mesma data e o mesmo conjunto de recebimentos do KPI. Corrigida divergencia reproduzida no modo demo (KPI R$ 4.800,00 e grafico R$ 3.000,00); ambos agora mostram R$ 4.800,00.
+- **Metas:** receita recebida vem dos registros financeiros acessiveis, sem somar metas monetarias manuais como se fossem pagamentos; progresso ignora metas sem alvo positivo e o dialogo se ajusta a telas menores.
+- **Portal do cliente:** acoes assincronas impedem duplo envio; controles ficam bloqueados durante mutacoes, cancelar rotacao de link nao trava o portal e links externos passam por validacao de protocolo.
+- **Configuracoes:** corrigida a mensagem com caracteres corrompidos na confirmacao de importacao e atualizado seu teste.
+- **Validacao:** 563 testes frontend e 221 testes API passaram; lint, build web, build TypeScript da API e `git diff --check` passaram. No navegador local, KPI e grafico coincidiram em R$ 4.800,00, a tabela mostrou movimentos do periodo, console sem erros e sem overflow horizontal a 390 px.
+- **Publicacao:** commit `1a3d29001e23b350597655ae56f9b922cbb15377` publicado e confirmado pelo manifesto web e pela API; banco conectado, HTML e bundle HTTP 200, rota protegida sem sessao HTTP 401.
+- **Limites desta rodada:** a validacao foi direcionada aos modulos alterados e nao equivale a certificacao ponta a ponta de todos os provedores, credenciais ou configuracoes de producao.
