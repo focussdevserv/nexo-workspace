@@ -26,7 +26,7 @@ import { classifyWorkspaceFile, matchesWorkspaceFileFilter } from '../lib/file-c
 import { buildLinkedDriveFileRecord, fileAssociationDraft, resolveFileAssociation } from '../lib/file-association.js';
 import { formatDriveFileSize } from '../lib/drive-file-presentation.js';
 import { resolveFileUploadScopeLink } from '../lib/file-upload-scope.js';
-import { formatHoursEntryEnd, hoursDateRange, hoursEntryLocalDate } from '../lib/hours-entry-date.js';
+import { formatHoursEntryEnd, hoursDateRange, hoursEntryIsInDateRange } from '../lib/hours-entry-date.js';
 import { hoursEntryDurationInput, updateHoursEntryDuration } from '../lib/hours-entry-duration.js';
 import { buildManualHoursInterval } from '../lib/manual-hours-interval.js';
 import { calendarDateInTimeZone, calendarTimeZoneLabel, calendarWeekdayLabels, startOfCalendarWeek } from '../lib/calendar-preferences.js';
@@ -537,8 +537,7 @@ function WorkScreen({ page, navigationContext = null, onNavigationContextConsume
   const [hoursFrom, hoursTo] = hoursDateRange(hoursPeriod, new Date(), preferences.timezone, preferences.weekStart);
   const completedHours = hours.filter((item) => {
     if (item.status !== 'completed') return false;
-    const entryDate = hoursEntryLocalDate(item, preferences.timezone);
-    return !entryDate || (entryDate >= hoursFrom && entryDate <= hoursTo);
+    return hoursEntryIsInDateRange(item, preferences.timezone, hoursFrom, hoursTo);
   });
   const visibleHours = completedHours.filter((item) => `${item.project || ''} ${item.client || ''} ${item.title || ''}`.toLocaleLowerCase('pt-BR').includes(hoursQuery.toLocaleLowerCase('pt-BR')));
   const visibleApprovals = approvals.filter((item) => matchesWorkSearch([item.title, item.project, item.client, item.reviewer, item.status], approvalQuery));

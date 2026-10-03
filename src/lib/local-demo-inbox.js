@@ -9,9 +9,17 @@ const demoSession = {
 
 export function handleLocalDemoInboxRequest(store, pathname, method, body = {}, now = new Date()) {
   if (pathname === '/api/integrations/status' && method === 'GET') {
+    const providers = [
+      ['Mercado Pago', 'mercadopago'], ['Evolution API', 'evolution'], ['WAHA', 'waha'], ['Resend', 'resend'],
+      ['Hostinger E-mail', 'hostinger'], ['Google Workspace', 'google'], ['Clicksign', 'clicksign'],
+      ['GitHub', 'github'], ['n8n', 'n8n'], ['Sentry', 'sentry'],
+    ];
     return {
       changed: false,
-      response: { data: [{ name: 'WAHA', provider: 'waha', configured: true, enabled: true, demo: true }] },
+      response: { data: providers.map(([name, provider]) => ({
+        name, provider, configured: false, enabled: false, demo: true,
+        ...(provider === 'waha' ? { lastTestStatus: 'demo', lastTestMessage: 'Sessão simulada; nenhuma conta WhatsApp foi conectada.' } : {}),
+      })) },
     };
   }
 

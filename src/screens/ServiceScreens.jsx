@@ -693,7 +693,10 @@ function Inbox({ notify, forceWhatsapp = false, navigationContext = null, onNavi
         onSent: () => { setDraft(''); setAttachment(null); },
         refresh: refreshMessages,
       });
-      notify(result.refreshed ? (attachment ? 'Arquivo enviado pelo WhatsApp.' : 'Mensagem enviada pelo WhatsApp.') : 'Mensagem enviada pelo WhatsApp, mas a conversa não atualizou. Atualize para conferir.');
+      const deliveryMessage = result.simulated
+        ? (attachment ? 'Anexo simulado localmente; nada foi enviado ao WhatsApp.' : 'Mensagem simulada localmente; nada foi enviado ao WhatsApp.')
+        : attachment ? 'Arquivo enviado pelo WhatsApp.' : 'Mensagem enviada pelo WhatsApp.';
+      notify(result.refreshed ? deliveryMessage : `${deliveryMessage} A conversa não atualizou. Atualize para conferir.`);
     } catch (error) { notify(error.message || 'Não foi possível enviar a mensagem pelo WhatsApp.'); }
     finally { setSending(false); }
   };
@@ -1014,6 +1017,7 @@ function integrationAuthSummary(name) {
 }
 
 function Integrations({ notify }) {
+  const localDemo = isLocalDemoActive();
   const currentRole = (() => { try { return JSON.parse(sessionStorage.getItem('nexo.api.user') || 'null')?.role || ''; } catch { return ''; } })();
   const canAuthorizeOAuth = canAuthorizeOAuthIntegrations(currentRole);
   const [integrationStatus, setIntegrationStatus] = useState({});
@@ -1105,6 +1109,7 @@ function Integrations({ notify }) {
   }, [configuring?.name]);
   const testConnection = async () => {
     if (!configuring) return;
+    if (localDemo) { setTestResult({ status: 'demo', message: 'Testes externos estão desativados no modo de demonstração. Nenhuma integração foi chamada.' }); return; }
     if (statusFetchError) { setTestResult({ status: 'error', message: 'Atualize o status das integrações antes de testar, para confirmar se o serviço está ativo.' }); return; }
     if (integrationStatus[configuring.name]?.configured && integrationStatus[configuring.name]?.enabled === false) { setTestResult({ status: 'disconnected', message: 'Reative esta integração no Focusshub antes de testar a conexão.' }); return; }
     setTesting(true); setTestResult(null);
@@ -1122,6 +1127,7 @@ function Integrations({ notify }) {
   };
   const loadGithubActivity = async (event) => {
     event.preventDefault();
+    if (localDemo) { setGithubActivityError('Consulta ao GitHub desativada na demonstração local.'); return; }
     const owner = githubOwner.trim();
     const repo = githubRepo.trim();
     const request = startGithubActivityRequest(githubActivityRequests.current, owner, repo, integrationStatus.GitHub);
@@ -1140,7 +1146,7 @@ function Integrations({ notify }) {
     } finally { if (githubActivityRequests.current.isCurrent(requestId)) setGithubActivityLoading(false); }
   };
   const connectHostinger = async (event) => {
-    event.preventDefault(); setTesting(true); setTestResult(null);
+    event.preventDefault(); if (localDemo) { setTestResult({ status: 'demo', message: 'Conexão de e-mail desativada na demonstração local.' }); return; } setTesting(true); setTestResult(null);
     try {
       const result = await apiRequest('/api/integrations/hostinger/configure', { method: 'POST', body: JSON.stringify({ email: hostingerEmail, password: hostingerPassword }) });
       setHostingerPassword(''); await refreshStatus();
@@ -1149,15 +1155,17 @@ function Integrations({ notify }) {
     finally { setTesting(false); }
   };
   const removeHostinger = async () => {
+    if (localDemo) { notify('Alterações reais de integrações ficam desativadas na demonstração local.'); return; }
     if (!window.confirm('Remover a caixa postal e apagar a senha criptografada deste workspace?')) return;
     setTesting(true);
     try { await apiRequest('/api/integrations/hostinger/connection', { method: 'DELETE' }); await refreshStatus(); setHostingerEmail(''); setHostingerPassword(''); setTestResult(null); notify('Caixa postal Hostinger removida.'); }
     catch (error) { setTestResult({ status: 'error', message: error.message || 'Nao foi possivel remover a caixa postal.' }); }
     finally { setTesting(false); }
   };
-  const authorizeGoogle = () => { window.location.assign('/api/integrations/google/authorize'); };
-  const authorizeMercadoPago = () => { window.location.assign('/api/integrations/mercadopago/authorize'); };
+  const authorizeGoogle = () => { if (localDemo) { notify('A autorização Google fica desativada na demonstração local.'); return; } window.location.assign('/api/integrations/google/authorize'); };
+  const authorizeMercadoPago = () => { if (localDemo) { notify('A autorização Mercado Pago fica desativada na demonstração local.'); return; } window.location.assign('/api/integrations/mercadopago/authorize'); };
   const disconnectMercadoPago = async () => {
+    if (localDemo) { notify('Alterações reais de integrações ficam desativadas na demonstração local.'); return; }
     if (!window.confirm('Desconectar a conta Mercado Pago deste workspace? As cobranças existentes continuam registradas, mas não poderão ser sincronizadas.')) return;
     setTesting(true); setTestResult(null);
     try {
@@ -1169,6 +1177,7 @@ function Integrations({ notify }) {
     finally { setTesting(false); }
   };
   const disconnectGoogle = async () => {
+    if (localDemo) { notify('Alterações reais de integrações ficam desativadas na demonstração local.'); return; }
     if (!window.confirm('Desconectar a conta Google? O Focusshub revogará o acesso e removerá os tokens salvos.')) return;
     setTesting(true); setTestResult(null);
     try {
@@ -1180,6 +1189,7 @@ function Integrations({ notify }) {
     finally { setTesting(false); }
   };
   const changeConnection = async (item, enabled) => {
+    if (localDemo) { notify('Alterações reais de integrações ficam desativadas na demonstração local.'); return; }
     if (!enabled) {
       const details = item.name === 'WAHA'
         ? 'Isso pausa as sessões WhatsApp ativas. A chave continuará guardada no Coolify.'
@@ -1196,6 +1206,7 @@ function Integrations({ notify }) {
   };
   const connectionLabel = (item) => {
     const state = integrationStatus[item.name];
+    if (state?.demo) return item.name === 'WAHA' ? 'Sessão simulada' : 'Indisponível na demonstração';
     const unavailableLabel = integrationStatusLabel(state, { loading: statusLoading, error: Boolean(statusFetchError) });
     if (unavailableLabel) return unavailableLabel;
     if (item.name === 'Mercado Pago' && state.oauthAvailable && !state.configured) return 'Autorização necessária';
@@ -1214,7 +1225,7 @@ function Integrations({ notify }) {
     if (state.lastTestStatus === 'error') return 'Falha no último teste';
     return 'Credenciais configuradas · testar';
   };
-  const connectionTone = (item) => integrationStatusTone(integrationStatus[item.name], { loading: statusLoading, error: Boolean(statusFetchError) });
+  const connectionTone = (item) => integrationStatus[item.name]?.demo ? 'pending' : integrationStatusTone(integrationStatus[item.name], { loading: statusLoading, error: Boolean(statusFetchError) });
   const providerCategory = (name) => name === 'Mercado Pago' ? 'Pagamentos' : ['Evolution API', 'WAHA'].includes(name) ? 'WhatsApp' : ['Resend', 'Hostinger E-mail'].includes(name) ? 'E-mail' : name === 'Google Workspace' ? 'Produtividade' : name === 'Clicksign' ? 'Documentos' : name === 'GitHub' ? 'Desenvolvimento' : name === 'n8n' ? 'Automações' : 'Monitoramento';
   const visible = integrations.filter((item) => filter === 'Todas' || providerCategory(item.name) === filter);
   const exportIntegrationStatus = () => {
@@ -1234,6 +1245,7 @@ function Integrations({ notify }) {
     return !state?.configured || !state?.enabled || state.lastTestStatus !== 'connected';
   }).length;
   return <>
+    {localDemo && <div className="ns-info-note" role="status"><ShieldCheck size={17} /><span>Modo de demonstração ativo: os estados abaixo são simulados. Autorizações, testes e alterações reais ficam desativados.</span></div>}
     <section className="integration-overview" aria-label="Resumo das integrações"><div className="integration-overview-copy"><span className="integration-overview-icon"><Link2 size={19}/></span><div><span className="integration-eyebrow">CONEXÕES DO WORKSPACE</span><h2>Status da plataforma</h2><p>Conecte serviços e confira o estado reportado pela VPS. Segredos permanecem no servidor.</p></div><button className="ns-integration-refresh" type="button" onClick={() => refreshStatus()} disabled={statusLoading}><RefreshCw size={15} className={statusLoading ? 'ns-spinning' : ''}/>Atualizar status</button></div><div className="integration-overview-stats"><article><span>Conectadas</span><b>{statusLoading ? '—' : connectedCount}</b><small>confirmadas em teste</small></article><article><span>Configuradas</span><b>{statusLoading ? '—' : configuredCount}</b><small>com credenciais no servidor</small></article><article className={attentionCount ? 'has-attention' : ''}><span>Precisam de atenção</span><b>{statusLoading ? '—' : attentionCount}</b><small>sem conexão confirmada</small></article></div></section>
     {statusFetchError && <div className="dashboard-data-error" role="alert"><span>O status das integrações não foi confirmado. Autorização e testes ficam suspensos até a API responder. {statusFetchError}</span><button type="button" disabled={statusLoading} onClick={() => refreshStatus()}><RefreshCw size={14} className={statusLoading ? 'ns-spinning' : ''}/>Tentar novamente</button></div>}
     <div className="ns-integration-filters" role="group" aria-label="Filtrar integracoes">{categories.map((item) => <button type="button" aria-pressed={filter === item} className={filter === item ? 'active' : ''} key={item} onClick={() => setFilter(item)}>{item}</button>)}<button type="button" className="ns-secondary" onClick={exportIntegrationStatus} disabled={statusLoading}><Download size={14} />Exportar status</button></div>

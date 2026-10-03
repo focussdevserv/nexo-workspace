@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { formatHoursEntryEnd, hoursDateRange, hoursEntryLocalDate } from './hours-entry-date.js';
+import { formatHoursEntryEnd, hoursDateRange, hoursEntryIsInDateRange, hoursEntryLocalDate } from './hours-entry-date.js';
 
 test('classifies timestamped hours in the workspace timezone, independent of browser timezone', () => {
   assert.equal(hoursEntryLocalDate({ endedAt: '2026-10-03T02:00:00.000Z' }, 'America/Sao_Paulo'), '2026-10-02');
@@ -19,6 +19,13 @@ test('hours date ranges follow the workspace calendar near UTC midnight', () => 
   assert.deepEqual(hoursDateRange('Semana passada', instant, 'America/Sao_Paulo'), ['2026-09-21', '2026-09-27']);
   assert.deepEqual(hoursDateRange('Este mês', instant, 'America/Sao_Paulo'), ['2026-10-01', '2026-10-01']);
   assert.deepEqual(hoursDateRange('Esta semana', instant, 'Asia/Tokyo'), ['2026-09-28', '2026-10-02']);
+});
+
+test('excludes completed entries without a usable date from period views', () => {
+  const range = ['2026-10-01', '2026-10-03'];
+  assert.equal(hoursEntryIsInDateRange({ endedAt: '2026-10-02T15:00:00.000Z' }, 'America/Sao_Paulo', ...range), true);
+  assert.equal(hoursEntryIsInDateRange({ endedAt: 'invalid' }, 'America/Sao_Paulo', ...range), false);
+  assert.equal(hoursEntryIsInDateRange({}, 'America/Sao_Paulo', ...range), false);
 });
 
 test('hours date ranges honor a Sunday workspace week start', () => {

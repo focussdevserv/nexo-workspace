@@ -11,6 +11,11 @@ export function hoursEntryLocalDate(item, timeZone) {
   return calendarDateKeyInTimeZone(date, timeZone);
 }
 
+export function hoursEntryIsInDateRange(item, timeZone, from, to) {
+  const entryDate = hoursEntryLocalDate(item, timeZone);
+  return Boolean(entryDate && entryDate >= from && entryDate <= to);
+}
+
 function addDays(date, amount) {
   const next = new Date(date);
   next.setUTCDate(next.getUTCDate() + amount);

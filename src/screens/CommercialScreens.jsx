@@ -25,7 +25,7 @@ import { splitInstallmentAmounts } from "../lib/installment-plan.js";
 import { clientMonthlyRevenue, clientMonthlyRevenueLabel, parseDisplayAmount, recurringMonthlyAmount } from "../lib/client-billing-summary.js";
 import { downloadCsvFile, recordsToCsv } from "../lib/csv.js";
 import { isLocalDemoActive } from "../lib/local-demo.js";
-import { buildClientFinanceHistory, clientFinanceDateKey, clientFinanceDueDateLabel, clientFinanceEditPatch, clientFinanceFailedResources, clientFinanceFilterCounts, clientFinanceFilterForPage, clientFinanceLegacyClientValue, clientFinanceOpenBillingCount, isClientFinanceCancelled, isClientFinanceSettled, manualFinanceSettlementPatch, normalizeClientSubscriptionTerms, prepareClientContractTrackingPatch, prepareClientServiceChargeUpdate, safeClientFinanceExternalHref } from "../lib/client-finance.js";
+import { advanceClientInstallmentProgress, buildClientFinanceHistory, clientFinanceDateKey, clientFinanceDueDateLabel, clientFinanceEditPatch, clientFinanceFailedResources, clientFinanceFilterCounts, clientFinanceFilterForPage, clientFinanceLegacyClientValue, clientFinanceOpenBillingCount, isClientFinanceCancelled, isClientFinanceSettled, manualFinanceSettlementPatch, normalizeClientSubscriptionTerms, prepareClientContractTrackingPatch, prepareClientServiceChargeUpdate, safeClientFinanceExternalHref } from "../lib/client-finance.js";
 import { clientContactActions } from "../lib/client-contact-actions.js";
 import { removeClientContact } from "../lib/client-contact-records.js";
 import { presentClientContact } from "../lib/client-contact-presentation.js";
@@ -1533,7 +1533,9 @@ function ClientProfileModal({
     frequency: "months",
     frequencyInterval: "1",
     startAt: "",
-    endAt: ""
+    endAt: "",
+    installmentServiceId: "",
+    installmentIndex: null
   });
   const [projectDraft, setProjectDraft] = useState({
     name: "",
@@ -1597,7 +1599,9 @@ function ClientProfileModal({
           frequencyInterval: String(context.frequencyInterval || current.frequencyInterval),
           payerEmail: context.clientEmail || client.email || current.payerEmail,
           startAt: context.startAt || current.startAt,
-          endAt: context.endAt || current.endAt
+          endAt: context.endAt || current.endAt,
+          installmentServiceId: context.installmentServiceId || "",
+          installmentIndex: Number.isInteger(context.installmentIndex) ? context.installmentIndex : null
         }));
         setFinanceDialog(true);
       }
@@ -1623,6 +1627,13 @@ function ClientProfileModal({
       : null;
     if (recurringTerms?.error) {
       onAction(recurringTerms.error);
+      return;
+    }
+    const installmentProgress = financeDraft.installmentServiceId
+      ? advanceClientInstallmentProgress(client.serviceCharges || [], financeDraft.installmentServiceId, financeDraft.installmentIndex)
+      : null;
+    if (installmentProgress?.error) {
+      onAction(installmentProgress.error);
       return;
     }
     setFinanceSaving(true);
@@ -1667,6 +1678,18 @@ function ClientProfileModal({
       });
       const key = financeRecord ? financeDraft.kind === "revenue" ? "revenues" : "expenses" : recurring ? "subscriptions" : "billing";
       const record = financeRecord ? result.data : result.data;
+      let installmentWarning = "";
+      if (installmentProgress) {
+        try {
+          await apiRequest(`/api/workspace/clients/${encodeURIComponent(client.id)}`, {
+            method: "PATCH",
+            body: JSON.stringify({ data: { serviceCharges: installmentProgress.charges } })
+          });
+          setClient(current => ({ ...current, serviceCharges: installmentProgress.charges }));
+        } catch {
+          installmentWarning = " A cobrança foi criada, mas não foi possível salvar o progresso das parcelas. Atualize a ficha antes de gerar a próxima.";
+        }
+      }
       setRelated(current => ({
         ...current,
         [key]: [record, ...(current[key] || [])]
@@ -1675,9 +1698,12 @@ function ClientProfileModal({
       setFinanceDraft(current => ({
         ...current,
         description: "",
-        amount: ""
+        amount: "",
+        installmentServiceId: "",
+        installmentIndex: null
       }));
-      onAction(financeRecord ? "Movimentação registrada no financeiro deste cliente." : recurring ? "Assinatura criada para este cliente." : "Cobrança criada para este cliente.");
+      const successMessage = financeRecord ? "Movimentação registrada no financeiro deste cliente." : recurring ? "Assinatura criada para este cliente." : "Cobrança criada para este cliente.";
+      onAction(`${successMessage}${installmentWarning}`);
     } catch (error) {
       onAction(error.message || "Não foi possível registrar a movimentação. Confira os dados e a conexão do financeiro.");
     } finally {

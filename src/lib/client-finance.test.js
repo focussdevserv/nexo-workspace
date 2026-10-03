@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildClientFinanceHistory, clientFinanceDateKey, clientFinanceDueDateLabel, clientFinanceEditPatch, clientFinanceFailedResources, clientFinanceFilterCounts, clientFinanceFilterForPage, clientFinanceLegacyClientValue, clientFinanceOpenBillingCount, isClientFinanceCancelled, isClientFinanceSettled, manualFinanceSettlementPatch, normalizeClientSubscriptionTerms, prepareClientContractTrackingPatch, prepareClientServiceChargeUpdate, safeClientFinanceExternalHref } from './client-finance.js';
+import { advanceClientInstallmentProgress, buildClientFinanceHistory, clientFinanceDateKey, clientFinanceDueDateLabel, clientFinanceEditPatch, clientFinanceFailedResources, clientFinanceFilterCounts, clientFinanceFilterForPage, clientFinanceLegacyClientValue, clientFinanceOpenBillingCount, isClientFinanceCancelled, isClientFinanceSettled, manualFinanceSettlementPatch, normalizeClientSubscriptionTerms, prepareClientContractTrackingPatch, prepareClientServiceChargeUpdate, safeClientFinanceExternalHref } from './client-finance.js';
 import { belongsToClient } from '../data/client-link.js';
 
 test('client finance shortcuts map to an in-profile filter', () => {
@@ -64,6 +64,21 @@ test('planned service-charge edits preserve installment progress and update only
   assert.equal(result.error, undefined);
   assert.deepEqual(result.charges[0], { ...charges[0], service: 'Site institucional', amount: 1200.5, installments: 4 });
   assert.equal(result.charges[1], charges[1]);
+});
+
+test('successful installment creation advances only the expected plan and rejects stale duplicate actions', () => {
+  const plans = [
+    { serviceId: 'website', service: 'Site', billingMode: 'installments', installments: 3, generatedInstallments: 1 },
+    { serviceId: 'support', service: 'Suporte', billingMode: 'recurring', installments: 0 },
+  ];
+  const advanced = advanceClientInstallmentProgress(plans, 'website', 1);
+
+  assert.equal(advanced.error, undefined);
+  assert.deepEqual(advanced.charges[0], { ...plans[0], generatedInstallments: 2 });
+  assert.equal(advanced.charges[1], plans[1]);
+  assert.equal(plans[0].generatedInstallments, 1, 'the input remains immutable');
+  assert.match(advanceClientInstallmentProgress(advanced.charges, 'website', 1).error, /mudou/);
+  assert.match(advanceClientInstallmentProgress(advanced.charges, 'website', 3).error, /mudou/);
 });
 
 test('planned charge edits reject invalid provider terms and do not rewrite issued installments', () => {

@@ -11,9 +11,19 @@ test('a successful delivery clears the composer even when inbox refresh fails', 
     refresh: async () => { throw new Error('inbox unavailable'); },
   });
 
-  assert.deepEqual(result, { sent: true, refreshed: false });
+  assert.deepEqual(result, { sent: true, refreshed: false, simulated: false });
   assert.equal(sends, 1);
   assert.equal(clears, 1);
+});
+
+test('keeps local demo delivery marked as simulated for truthful feedback', async () => {
+  const result = await sendInboxMessage({
+    deliver: async () => ({ data: { simulated: true } }),
+    onSent: () => {},
+    refresh: async () => {},
+  });
+
+  assert.deepEqual(result, { sent: true, refreshed: true, simulated: true });
 });
 
 test('a delivery failure preserves the composer and never starts a refresh', async () => {

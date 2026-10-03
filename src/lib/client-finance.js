@@ -103,6 +103,22 @@ export function prepareClientServiceChargeUpdate(charges, index, draft) {
   return { charges: charges.map((charge, itemIndex) => itemIndex === index ? next : charge), updated: next };
 }
 
+export function advanceClientInstallmentProgress(charges, serviceId, expectedIndex) {
+  if (!Array.isArray(charges) || !serviceId || !Number.isInteger(expectedIndex) || expectedIndex < 0) {
+    return { error: 'Este parcelamento não está mais disponível. Atualize a ficha do cliente.' };
+  }
+  const index = charges.findIndex((charge) => String(charge.serviceId || charge.id || '') === String(serviceId));
+  if (index < 0) return { error: 'Este parcelamento não está mais disponível. Atualize a ficha do cliente.' };
+  const current = charges[index];
+  const generated = Math.max(0, Number(current.generatedInstallments) || 0);
+  const total = Number(current.installments);
+  if (current.billingMode !== 'installments' || generated !== expectedIndex || !Number.isInteger(total) || generated >= total) {
+    return { error: 'O progresso deste parcelamento mudou. Atualize a ficha do cliente antes de gerar outra cobrança.' };
+  }
+  const next = { ...current, generatedInstallments: generated + 1 };
+  return { charges: charges.map((charge, itemIndex) => itemIndex === index ? next : charge), updated: next };
+}
+
 export function prepareClientContractTrackingPatch(draft) {
   const renewal = String(draft?.renewal || '').trim();
   const internalNote = String(draft?.internalNote || '').trim();
