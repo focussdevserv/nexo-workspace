@@ -569,7 +569,7 @@ function WorkScreen({ page, navigationContext = null, onNavigationContextConsume
     return fileSort === 'recent' ? sortFilesByRecent(filtered) : sortFilesByName(filtered);
   }, [files, fileType, fileQuery, fileSort]);
   const visibleDriveBrowserFiles = useMemo(() => driveBrowserFiles.filter((item) => matchesWorkspaceFileFilter({ name: item.name, mimeType: item.mimeType, folder: item.mimeType === 'application/vnd.google-apps.folder' }, fileType) && `${item.name || ''}`.toLocaleLowerCase('pt-BR').includes(fileQuery.toLocaleLowerCase('pt-BR'))), [driveBrowserFiles, fileType, fileQuery]);
-  const selectedFileScopeLink = resolveFileUploadScopeLink(fileRecordScope, fileUploadScopeTarget, projects);
+  const selectedFileScopeLink = resolveFileUploadScopeLink(fileRecordScope, fileUploadScopeTarget, projects, workspaceClients);
   const fileUploadScopeOptions = fileUploadScopeRequired ? [
     ...workspaceClients.filter((item) => fileRecordScope.clientIds?.map(String).includes(String(item.id))).map((item) => ({ value: `client:${item.id}`, label: `Cliente · ${item.name || item.title || 'Sem nome'}` })),
     ...projects.filter((item) => fileRecordScope.projectIds?.map(String).includes(String(item.id))).map((item) => ({ value: `project:${item.id}`, label: `Projeto · ${item.name || item.title || 'Sem nome'}` })),

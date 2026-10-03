@@ -31,6 +31,7 @@ import { matchConversationClient } from '../lib/conversation-client-match.js';
 import { canReplyToInboxConversation, isResolvedInboxConversation, nextInboxConversationStatus } from '../lib/inbox-reply.js';
 import { sendInboxMessage } from '../lib/inbox-send.js';
 import { clearInboxSendAttempt, inboxSendAttemptId } from '../lib/inbox-send-attempt.js';
+import { createInboxSendLock } from '../lib/inbox-send-lock.js';
 import { buildInboxFollowUpTask, nextInboxFollowUpDate } from '../lib/inbox-follow-up.js';
 import { normalizeWhatsAppChatId } from '../lib/whatsapp-phone.js';
 import { canManageWahaSessions, canOfferWahaConnectAction, canShowWahaQr, wahaQrSessionMessage } from '../lib/waha-session-access.js';
@@ -489,6 +490,8 @@ function Inbox({ notify, forceWhatsapp = false, navigationContext = null, onNavi
   const emailLoadRequests = useRef(null);
   if (!emailLoadRequests.current) emailLoadRequests.current = createLatestRequestGuard();
   const whatsappSendAttempt = useRef({ fingerprint: '', id: '' });
+  const inboxSendLock = useRef(null);
+  if (!inboxSendLock.current) inboxSendLock.current = createInboxSendLock();
   const handledInboxNavigation = useRef('');
   const inboxRole = (() => { try { return JSON.parse(sessionStorage.getItem('nexo.api.user') || 'null')?.role || ''; } catch { return ''; } })();
   const canAuthorizeInboxGoogle = canAuthorizeOAuthIntegrations(inboxRole);
@@ -665,10 +668,11 @@ function Inbox({ notify, forceWhatsapp = false, navigationContext = null, onNavi
     event.preventDefault();
     const text = draft.trim();
     if (!canReply) { notify('Este atendimento está resolvido. Reabra o atendimento antes de responder.'); return; }
-    if ((!text && (channel === 'E-mail' || !attachment)) || !current || sending) return;
+    if ((!text && (channel === 'E-mail' || !attachment)) || !current || sending || inboxSendLock.current.locked) return;
     if (channel === 'E-mail') {
       const recipient = current.email || current.name?.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0];
       if (!recipient) { notify('Esta conversa não tem endereço de e-mail.'); return; }
+      if (!inboxSendLock.current.acquire()) return;
       setSending(true);
       try {
         const last = current.history?.at(-1);
@@ -684,12 +688,13 @@ function Inbox({ notify, forceWhatsapp = false, navigationContext = null, onNavi
         });
         notify(result.refreshed ? `Resposta enviada por ${provider === 'hostinger' ? 'Hostinger' : 'Gmail'}.` : `Resposta enviada por ${provider === 'hostinger' ? 'Hostinger' : 'Gmail'}, mas a caixa não atualizou. Atualize para conferir.`);
       } catch (error) { notify(error.message || 'Não foi possível responder o e-mail.'); }
-      finally { setSending(false); }
+      finally { setSending(false); inboxSendLock.current.release(); }
       return;
     }
     const sessionId = selectedSessionId || current.whatsappSessionId || activeSessions[0]?.id;
     const chatId = current.whatsappChatId || normalizeWhatsAppChatId(current.phone);
     if (!sessionId || !chatId) { notify(!sessionId ? 'Conecte uma sessão WAHA ativa em Integrações.' : 'Esta conversa não tem telefone válido para WhatsApp.'); return; }
+    if (!inboxSendLock.current.acquire()) return;
     setSending(true);
     try {
       const file = attachment ? { attachment: { filename: attachment.name, mimeType: attachment.type || 'application/octet-stream', contentBase64: await encodeAttachmentFile(attachment) } } : {};
@@ -710,7 +715,7 @@ function Inbox({ notify, forceWhatsapp = false, navigationContext = null, onNavi
         : attachment ? 'Arquivo enviado pelo WhatsApp.' : 'Mensagem enviada pelo WhatsApp.';
       notify(result.refreshed ? deliveryMessage : `${deliveryMessage} A conversa não atualizou. Atualize para conferir.`);
     } catch (error) { notify(error.message || 'Não foi possível enviar a mensagem pelo WhatsApp.'); }
-    finally { setSending(false); }
+    finally { setSending(false); inboxSendLock.current.release(); }
   };
   const createConversation = async (event) => {
     event.preventDefault();

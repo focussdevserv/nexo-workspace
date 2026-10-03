@@ -179,7 +179,7 @@ export function clientFinanceEditPatch(record, resource, draft, now = new Date()
   // The CRM sends this as a PATCH, but some workspace adapters replace the
   // resource data with the submitted object. Keep any existing client link
   // fields in the edit payload so an ordinary finance edit cannot orphan it.
-  for (const field of ['clientId', 'clientName', 'client']) {
+  for (const field of ['workspaceClientId', 'clientId', 'clientRecordId', 'clientName', 'client']) {
     if (Object.prototype.hasOwnProperty.call(record || {}, field)) patch[field] = record[field];
   }
   // Saving ordinary edits must never silently register a payment. Add the

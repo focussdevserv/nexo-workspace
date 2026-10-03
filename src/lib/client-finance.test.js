@@ -160,13 +160,15 @@ test('editing a pending client finance record does not silently mark it paid', (
 });
 
 test('editing a client finance record preserves its existing CRM link fields', () => {
-  const record = { id: 'r3', status: 'Pendente', resource: 'revenues', clientId: 'client-1', clientName: 'Aurora', client: 'Aurora' };
+  const record = { id: 'r3', status: 'Pendente', resource: 'revenues', workspaceClientId: 'client-1', clientId: 'client-1', clientRecordId: 'client-1', clientName: 'Aurora', client: 'Aurora' };
   const patch = clientFinanceEditPatch(record, 'revenues', {
     description: 'Consultoria atualizada', amount: '300', date: '2026-10-02', status: 'Pendente',
   });
   assert.equal(patch.clientId, 'client-1');
   assert.equal(patch.clientName, 'Aurora');
   assert.equal(patch.client, 'Aurora');
+  assert.equal(patch.workspaceClientId, 'client-1');
+  assert.equal(patch.clientRecordId, 'client-1');
 });
 
 test('editing an already settled client finance record preserves its original settlement timestamp', () => {
