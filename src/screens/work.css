@@ -286,13 +286,13 @@
 .agenda-v2 .agenda-grid-empty small{color:#829087;font-size:12px}
 .agenda-v2 .agenda-grid-empty>button{display:flex;align-items:center;gap:5px;min-height:31px;padding:0 10px;border:0;border-radius:7px;background:#287a4d;color:#fff;font-size:12px;font-weight:700}
 .agenda-v2 .agenda-time-scroll{grid-template-columns:58px minmax(0,1fr);max-height:640px;overflow:auto;scrollbar-color:#cbd7ce transparent;scrollbar-width:thin}
-.agenda-v2 .agenda-time-axis{display:grid;grid-template-rows:repeat(14,var(--hour-height));padding-right:8px;color:#87938b;font-size:12px;text-align:right}
+.agenda-v2 .agenda-time-axis{display:grid;grid-template-rows:repeat(var(--visible-hours,14),var(--hour-height));padding-right:8px;color:#87938b;font-size:12px;text-align:right}
 .agenda-v2 .agenda-time-axis>span{position:relative;top:0}
 .agenda-v2 .agenda-time-columns{display:grid;grid-template-columns:repeat(7,minmax(96px,1fr));min-width:0}
 .agenda-v2 .agenda-time-grid.is-day .agenda-time-columns{grid-template-columns:minmax(0,1fr)}
-.agenda-v2 .agenda-time-column{position:relative;min-height:calc(14 * var(--hour-height));border-left:1px solid #edf1ee;background-image:repeating-linear-gradient(to bottom,transparent 0,transparent calc(var(--hour-height) - 1px),#e9efeb calc(var(--hour-height) - 1px),#e9efeb var(--hour-height))}
+.agenda-v2 .agenda-time-column{position:relative;min-height:var(--grid-height,calc(14 * var(--hour-height)));border-left:1px solid #edf1ee;background-image:repeating-linear-gradient(to bottom,transparent 0,transparent calc(var(--hour-height) - 1px),#e9efeb calc(var(--hour-height) - 1px),#e9efeb var(--hour-height))}
 .agenda-v2 .agenda-time-column.is-today{background-color:#fbfdfb}
-.agenda-v2 .agenda-time-slots{display:grid;grid-template-rows:repeat(14,var(--hour-height))}
+.agenda-v2 .agenda-time-slots{display:grid;grid-template-rows:repeat(var(--visible-hours,14),var(--hour-height))}
 .agenda-v2 .agenda-time-slots>button{width:100%;border:0;border-bottom:1px dashed #f1f4f1;background:transparent;cursor:pointer}
 .agenda-v2 .agenda-time-slots>button:hover{background:#f3f8f4}
 .agenda-v2 .agenda-grid-event{position:absolute;z-index:2;left:4px;right:4px;display:flex;flex-direction:column;align-items:flex-start;gap:3px;overflow:hidden;padding:6px 8px;border:1px solid #d0e5d5;border-left:3px solid #438b59;border-radius:7px;background:#eff7f0;color:#2c5136;text-align:left;box-shadow:0 2px 6px #1c43200a}

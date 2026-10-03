@@ -1,6 +1,7 @@
 import { isAgendaAllDayEvent } from './agenda-event-presentation.js';
 
 const dateKeyPattern = /^\d{4}-\d{2}-\d{2}$/;
+const timePattern = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 
 export function isAgendaEventVisibleOnDate(event, dateKey) {
   const startDate = String(event?.date || '');
@@ -29,11 +30,47 @@ export function isAgendaEventVisibleInPeriod(event, startDate, endDate) {
     || (eventDate < startDate && isAgendaEventVisibleOnDate(event, startDate));
 }
 
+export function agendaTimeGridHours(events, dateKeys, { firstHour = 7, lastHour = 21 } = {}) {
+  const visibleDates = new Set((Array.isArray(dateKeys) ? dateKeys : []).map(String));
+  let first = firstHour;
+  let last = lastHour;
+  const toMinutes = (value) => {
+    if (!timePattern.test(String(value || ''))) return null;
+    const [hours, minutes] = value.split(':').map(Number);
+    return hours * 60 + minutes;
+  };
+  for (const event of Array.isArray(events) ? events : []) {
+    if (!event || isAgendaAllDayEvent(event)) continue;
+    const startDate = String(event.date || '');
+    const endDate = String(event.endDate || startDate);
+    const startMinutes = toMinutes(event.time);
+    const endMinutes = toMinutes(event.end);
+    if (visibleDates.has(startDate) && startMinutes !== null) {
+      first = Math.min(first, Math.floor(startMinutes / 60));
+      if (endDate > startDate) {
+        last = Math.max(last, 24);
+      } else if (endMinutes !== null) {
+        const endOnNextDate = endMinutes <= startMinutes;
+        last = Math.max(last, endOnNextDate ? 24 : Math.ceil(endMinutes / 60));
+      } else {
+        last = Math.max(last, Math.min(24, Math.ceil((startMinutes + 60) / 60)));
+      }
+    }
+    if (endDate !== startDate && visibleDates.has(endDate) && endMinutes !== null && endMinutes > 0) {
+      first = Math.min(first, Math.floor(endMinutes / 60));
+      last = Math.max(last, Math.ceil(endMinutes / 60));
+    }
+  }
+  first = Math.max(0, Math.min(23, first));
+  last = Math.max(first + 1, Math.min(24, last));
+  return { firstHour: first, lastHour: last };
+}
+
 export function agendaTimedEventSegmentOnDate(event, dateKey, { firstHour = 7, lastHour = 21 } = {}) {
   if (!event || isAgendaAllDayEvent(event) || !isAgendaEventVisibleOnDate(event, dateKey)) return null;
   const startDate = String(event.date || '');
-  const startMatch = /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(String(event.time || ''));
-  const endMatch = /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(String(event.end || ''));
+  const startMatch = timePattern.test(String(event.time || ''));
+  const endMatch = timePattern.test(String(event.end || ''));
   if (!startMatch) return null;
   const minutes = (value) => { const [hours, mins] = value.split(':').map(Number); return hours * 60 + mins; };
   const dayStart = firstHour * 60;

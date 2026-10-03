@@ -51,7 +51,7 @@ import { resolveCreatedWorkspaceRecord } from '../lib/workspace-created-record.j
 import { buildTaskRecord } from '../lib/task-create.js';
 import { projectTemplateChoices, buildProjectTemplateTasks } from '../lib/project-templates.js';
 import { buildAgendaRecurrenceSeries } from '../lib/agenda-recurrence.js';
-import { agendaTimedEventSegmentOnDate, isAgendaEventVisibleInPeriod, isAgendaEventVisibleOnDate } from '../lib/agenda-event-visibility.js';
+import { agendaTimedEventSegmentOnDate, agendaTimeGridHours, isAgendaEventVisibleInPeriod, isAgendaEventVisibleOnDate } from '../lib/agenda-event-visibility.js';
 import { shouldOpenFileDetailsByDefault } from '../lib/file-primary-action.js';
 import { createAsyncActionLock } from '../lib/async-action-lock.js';
 import { createKeyedActionLock } from '../lib/keyed-action-lock.js';
@@ -206,17 +206,19 @@ function nextCalendarDate(date) { const value = new Date(`${date}T12:00:00Z`); v
 function calendarEndDate(date, start, end) { return agendaEventEndDate(date, start, end); }
 
 function AgendaTimeGrid({ dates, events, selectedDate, now, timeZone, locale, onSelectDate, onCreateEvent, onSelectEvent, eventTone, sameDay }) {
-  const firstHour = 7, lastHour = 21, hourHeight = 64;
   const keyOf = (date) => toLocalDateInput(date);
+  const { firstHour, lastHour } = agendaTimeGridHours(events, dates.map(keyOf));
+  const hourHeight = 64;
+  const visibleHours = lastHour - firstHour;
   const dayEvents = (date, allDay) => events.filter((event) => isAgendaAllDayEvent(event) === allDay && (allDay ? isAgendaEventVisibleOnDate(event, keyOf(date)) : Boolean(agendaTimedEventSegmentOnDate(event, keyOf(date), { firstHour, lastHour }))));
   const hasEvents = dates.some((date) => events.some((event) => isAgendaAllDayEvent(event)
     ? isAgendaEventVisibleOnDate(event, keyOf(date))
     : agendaTimedEventSegmentOnDate(event, keyOf(date), { firstHour, lastHour }) !== null));
-  return <div className={`agenda-time-grid ${dates.length === 1 ? 'is-day' : 'is-week'}`}>
+  return <div className={`agenda-time-grid ${dates.length === 1 ? 'is-day' : 'is-week'}`} style={{ '--visible-hours': visibleHours, '--grid-height': `${visibleHours * hourHeight}px` }}>
     <div className="agenda-time-header"><div className="agenda-time-gutter-label">{calendarTimeZoneLabel(new Date(), locale, timeZone)}</div>{dates.map((date) => <button type="button" key={keyOf(date)} className={`agenda-time-date ${sameDay(date, selectedDate) ? 'selected' : ''} ${sameDay(date, now) ? 'is-today' : ''}`} onClick={() => onSelectDate(date)}><span>{date.toLocaleDateString(locale, { weekday: 'short' })}</span><b>{date.getDate()}</b></button>)}</div>
     <div className="agenda-all-day-row"><span>Dia todo</span>{dates.map((date) => <div key={keyOf(date)}>{dayEvents(date, true).map((event) => <button key={event.id} type="button" className={`agenda-grid-allday tone-${eventTone(event)}`} onClick={() => onSelectEvent(event)}>{event.title}</button>)}</div>)}</div>
     {!hasEvents && <div className="agenda-grid-empty"><span><CalendarDays size={17}/></span><div><b>Agenda livre</b><small>Selecione um horário na grade para criar seu próximo compromisso.</small></div><button type="button" onClick={() => onCreateEvent(selectedDate)}><Plus size={14}/> Novo evento</button></div>}
-    <div className="agenda-time-scroll"><div className="agenda-time-axis">{Array.from({ length: lastHour - firstHour }, (_, i) => <span key={i}>{String(firstHour + i).padStart(2, '0')}:00</span>)}</div><div className="agenda-time-columns">{dates.map((date) => <div className={`agenda-time-column ${sameDay(date, now) ? 'is-today' : ''}`} key={keyOf(date)}><div className="agenda-time-slots">{Array.from({ length: lastHour - firstHour }, (_, i) => { const hour = `${String(firstHour + i).padStart(2, '0')}:00`; return <button type="button" key={i} aria-label={agendaTimeSlotLabel(date, hour)} onClick={() => onCreateEvent(date, hour)} />; })}</div>{dayEvents(date, false).map((event) => { const segment = agendaTimedEventSegmentOnDate(event, keyOf(date), { firstHour, lastHour }); return <button type="button" key={event.id} className={`agenda-grid-event tone-${eventTone(event)}`} style={{ top: ((segment.startMinutes - firstHour * 60) / 60) * hourHeight, height: Math.max(34, ((segment.endMinutes - segment.startMinutes) / 60) * hourHeight) }} onClick={() => onSelectEvent(event)}><small>{segment.continuesFromPreviousDay ? `Continuação · até ${event.end}` : `${event.time}${event.end ? `–${event.end}` : ''}`}{segment.continuesAfterGrid ? ' · continua' : ''}</small><b>{event.title}</b>{event.detail && <span>{event.detail}</span>}</button>; })}</div>)}</div></div>
+    <div className="agenda-time-scroll"><div className="agenda-time-axis">{Array.from({ length: visibleHours }, (_, i) => <span key={i}>{String(firstHour + i).padStart(2, '0')}:00</span>)}</div><div className="agenda-time-columns">{dates.map((date) => <div className={`agenda-time-column ${sameDay(date, now) ? 'is-today' : ''}`} key={keyOf(date)}><div className="agenda-time-slots">{Array.from({ length: visibleHours }, (_, i) => { const hour = `${String(firstHour + i).padStart(2, '0')}:00`; return <button type="button" key={i} aria-label={agendaTimeSlotLabel(date, hour)} onClick={() => onCreateEvent(date, hour)} />; })}</div>{dayEvents(date, false).map((event) => { const segment = agendaTimedEventSegmentOnDate(event, keyOf(date), { firstHour, lastHour }); return <button type="button" key={event.id} className={`agenda-grid-event tone-${eventTone(event)}`} style={{ top: ((segment.startMinutes - firstHour * 60) / 60) * hourHeight, height: Math.max(34, ((segment.endMinutes - segment.startMinutes) / 60) * hourHeight) }} onClick={() => onSelectEvent(event)}><small>{segment.continuesFromPreviousDay ? `Continuação · até ${event.end}` : `${event.time}${event.end ? `–${event.end}` : ''}`}{segment.continuesAfterGrid ? ' · continua' : ''}</small><b>{event.title}</b>{event.detail && <span>{event.detail}</span>}</button>; })}</div>)}</div></div>
   </div>;
 }
 
