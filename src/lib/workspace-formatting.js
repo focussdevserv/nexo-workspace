@@ -51,6 +51,7 @@ export function formatWorkspaceDate(value, preferences = {}, options = {}) {
     const timeZone = options.timeZone || 'UTC';
     if (options.month) {
       const dateOptions = { timeZone };
+      if (options.weekday) dateOptions.weekday = options.weekday;
       if (options.day) dateOptions.day = options.day;
       if (options.month) dateOptions.month = options.month;
       if (options.year) dateOptions.year = options.year;

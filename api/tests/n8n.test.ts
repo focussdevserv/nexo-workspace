@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildN8nAutomationWorkflow, mapN8nCollections, n8nApiKeyFailureMessage, n8nApiValidationMessage, n8nAutomationTemplates, n8nProposalTaskMatchesSource, n8nWorkflowActionEndpoint, n8nWorkflowsEndpoint } from '../src/integrations/n8n.ts';
+import { buildN8nAutomationWorkflow, mapN8nCollections, n8nApiKeyFailureMessage, n8nApiValidationMessage, n8nAutomationTaskClientReference, n8nAutomationTemplates, n8nProposalTaskMatchesSource, n8nWorkflowActionEndpoint, n8nWorkflowsEndpoint } from '../src/integrations/n8n.ts';
 
 test('maps automation publish actions to n8n public API endpoints', () => {
   assert.equal(n8nWorkflowActionEndpoint('publish'), 'activate');
@@ -53,6 +53,19 @@ test('proposal checklist tasks do not suppress the distinct n8n follow-up action
   assert.equal(n8nProposalTaskMatchesSource({ sourceProposalId: proposalId, title: 'Preparar homepage' }, proposalId), false);
   assert.equal(n8nProposalTaskMatchesSource({ automationKey: 'n8n:proposal', sourceProposalId: proposalId }, proposalId), true);
   assert.equal(n8nProposalTaskMatchesSource({ automationKey: 'n8n:proposal', sourceProposalId: 'other-proposal' }, proposalId), false);
+});
+
+test('automation tasks link only a client record resolved in the current workspace', () => {
+  const clientId = '39ab51b3-8403-48d1-85b4-a36059086045';
+  assert.deepEqual(n8nAutomationTaskClientReference(clientId, 'Stale name', { id: clientId, name: 'Aurora Café' }), {
+    clientId, clientName: 'Aurora Café',
+  });
+  assert.deepEqual(n8nAutomationTaskClientReference(clientId, 'Legacy client label', { id: 'different-id', name: 'Other workspace' }), {
+    clientId: null, clientName: 'Legacy client label',
+  });
+  assert.deepEqual(n8nAutomationTaskClientReference(null, '  Client without link  ', null), {
+    clientId: null, clientName: 'Client without link',
+  });
 });
 
 test('creates authenticated webhook workflows without retaining execution data', () => {

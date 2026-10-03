@@ -71,7 +71,7 @@ import { buildWahaSendFilePayload, classifyWahaQrResponse, classifyWahaSessionRe
 import { claimWahaMessage, markWahaDeliveryUnknown, markWahaPreflightFailure } from './integrations/waha-send-claim.js';
 import { appendWahaIncomingMessage, applyWahaMessageAck } from './integrations/waha-webhook.js';
 import { clicksignBaseUrl, createClicksignEnvelope, getClicksignEnvelope, notifyClicksignEnvelope } from './integrations/clicksign.js';
-import { mapN8nCollections, n8nAutomationTemplates, buildN8nAutomationWorkflow, n8nApiKeyFailureMessage, n8nApiValidationMessage, n8nProposalTaskMatchesSource, n8nWorkflowActionEndpoint, n8nWorkflowsEndpoint, type N8nAutomationTemplateId } from './integrations/n8n.js';
+import { mapN8nCollections, n8nAutomationTemplates, buildN8nAutomationWorkflow, n8nApiKeyFailureMessage, n8nApiValidationMessage, n8nAutomationTaskClientReference, n8nProposalTaskMatchesSource, n8nWorkflowActionEndpoint, n8nWorkflowsEndpoint, type N8nAutomationTemplateId } from './integrations/n8n.js';
 import { N8N_DELIVERY_MAX_ATTEMPTS, n8nCallbackRejectionReason, n8nDeliveryCanRetry, n8nDeliveryExhausted, n8nDeliveryRetryDelayMs } from './integrations/n8n-delivery.js';
 import { isUnverifiedContractTransition, requiresExternalSignature } from './contracts/status.js';
 import { checkPublicSite } from './monitoring/site-check.js';
@@ -1883,7 +1883,14 @@ app.post('/api/integrations/n8n/actions', { config: { rateLimit: { max: 120, tim
     if (nativeTask) return { data: { status: 'already_applied', taskId: nativeTask.id } };
   }
   const label = String(event.name ?? event.title ?? event.description ?? sourceId ?? 'registro').trim().slice(0, 160) || 'registro';
-  const clientName = String(event.client ?? event.clientName ?? event.company ?? '').trim().slice(0, 160);
+  const suppliedClientId = typeof event.clientId === 'string' ? event.clientId : '';
+  const [linkedClient] = z.string().uuid().safeParse(suppliedClientId).success
+    ? await db.select({ id: workspaceRecords.id, name: sql<string>`coalesce(${workspaceRecords.data}->>'name', '')` }).from(workspaceRecords).where(and(
+      eq(workspaceRecords.id, suppliedClientId), eq(workspaceRecords.organizationId, automation.organizationId),
+      eq(workspaceRecords.resource, 'clients'), isNull(workspaceRecords.archivedAt),
+    )).limit(1)
+    : [];
+  const clientReference = n8nAutomationTaskClientReference(suppliedClientId, event.client ?? event.clientName ?? event.company, linkedClient ?? null);
   const dueDays = template.taskKind === 'project' ? 7 : template.taskKind === 'lead' || template.taskKind === 'proposal' ? 1 : 0;
   const due = new Date(Date.now() + dueDays * 86_400_000).toISOString().slice(0, 10);
   const titlePrefix: Record<typeof template.taskKind, string> = {
@@ -1891,7 +1898,7 @@ app.post('/api/integrations/n8n/actions', { config: { rateLimit: { max: 120, tim
     project: 'Acompanhar entrega', ticket: 'Atender chamado', overduePayment: 'Revisar cobrança vencida',
   };
   const data = {
-    title: `${titlePrefix[template.taskKind]} · ${label}`.slice(0, 220), client: clientName, project: String(event.project ?? ''), due,
+    title: `${titlePrefix[template.taskKind]} · ${label}`.slice(0, 220), client: clientReference.clientName, clientId: clientReference.clientId, project: String(event.project ?? ''), due,
     description: template.taskKind === 'overduePayment'
       ? `Cobrança ${sourceId}, vencida em ${String(event.dueAt ?? '').slice(0, 10)}. Confira o estado atual no Mercado Pago antes de emitir uma nova cobrança.`
       : String(event.description ?? ''),
@@ -1899,7 +1906,7 @@ app.post('/api/integrations/n8n/actions', { config: { rateLimit: { max: 120, tim
     status: 'A fazer', priority: template.taskKind === 'lead' || template.taskKind === 'ticket' || template.taskKind === 'overduePayment' ? 'Alta' : 'Normal', assignee: '',
     automationKey: `n8n:${template.taskKind}`, sourceN8nAutomationId: automation.id, n8nEventId: body.event.eventId,
     ...(template.taskKind === 'lead' ? { sourceLeadId: sourceId } : {}), ...(template.taskKind === 'proposal' ? { sourceProposalId: sourceId } : {}), ...(template.taskKind === 'project' ? { projectId: sourceId } : {}),
-    ...(template.taskKind === 'overduePayment' ? { sourceBillingOrderId: sourceId, clientId: typeof event.clientId === 'string' ? event.clientId : null } : {}),
+    ...(template.taskKind === 'overduePayment' ? { sourceBillingOrderId: sourceId } : {}),
   };
   const result = await db.transaction(async (tx) => {
     const [task] = await tx.insert(workspaceRecords).values({ organizationId: automation.organizationId, createdBy: ownerAccountId, resource: 'tasks', data })
@@ -2824,7 +2831,7 @@ app.post('/api/billing/orders/:id/refresh', { preHandler: app.authenticate, conf
     if (!latest) return reply.code(404).send({ error: 'not_found', message: 'Cobrança não encontrada.' });
     if (saved && changed) {
       await db.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'billing_order', entityId: order.id, action: 'provider_updated', payload: { status } });
-      if (status === 'paid' && order.status !== 'paid') await enqueueN8nEvent(request.user.organizationId, 'payment.confirmed', { id: order.id, title: order.description, client: order.clientName, amount: order.amount });
+      if (status === 'paid' && order.status !== 'paid') await enqueueN8nEvent(request.user.organizationId, 'payment.confirmed', { id: order.id, title: order.description, client: order.clientName, clientId: order.clientId, amount: order.amount });
     }
     return { data: latest, changed: Boolean(saved) && changed };
   } catch {
@@ -2967,7 +2974,7 @@ app.post('/api/integrations/mercadopago/webhook', async (request, reply) => {
   if (!resourceId) return reply.code(200).send({ received: true });
   try {
     if (mercadoPagoWebhookResource(topic) === 'order') {
-      const [local] = await db.select({ id: billingOrders.id, organizationId: billingOrders.organizationId, mercadoPagoAccountId: billingOrders.mercadoPagoAccountId, status: billingOrders.status, statusDetail: billingOrders.statusDetail, mpPaymentId: billingOrders.mpPaymentId, paymentDetails: billingOrders.paymentDetails, updatedAt: billingOrders.updatedAt, description: billingOrders.description, clientName: billingOrders.clientName, amount: billingOrders.amount }).from(billingOrders).where(eq(billingOrders.mpOrderId, resourceId)).limit(1);
+      const [local] = await db.select({ id: billingOrders.id, organizationId: billingOrders.organizationId, mercadoPagoAccountId: billingOrders.mercadoPagoAccountId, status: billingOrders.status, statusDetail: billingOrders.statusDetail, mpPaymentId: billingOrders.mpPaymentId, paymentDetails: billingOrders.paymentDetails, updatedAt: billingOrders.updatedAt, description: billingOrders.description, clientName: billingOrders.clientName, clientId: billingOrders.clientId, amount: billingOrders.amount }).from(billingOrders).where(eq(billingOrders.mpOrderId, resourceId)).limit(1);
       if (!local || !await mercadoPagoRecordBelongsToCurrentAccount(local.organizationId, local.mercadoPagoAccountId)) return reply.code(200).send({ received: true });
       const order = await mercadoPago<Record<string, any>>(local.organizationId, `/v1/orders/${encodeURIComponent(resourceId)}`);
       const externalReference = String(order.external_reference ?? '');
@@ -2987,7 +2994,7 @@ app.post('/api/integrations/mercadopago/webhook', async (request, reply) => {
           )).returning({ id: billingOrders.id });
           if (saved && !duplicateSnapshot) {
             await db.insert(activityEvents).values({ organizationId: local.organizationId, entityType: 'billing_order', entityId: local.id, action: 'provider_updated', payload: { status: nextStatus } });
-            if (nextStatus === 'paid' && local.status !== 'paid') await enqueueN8nEvent(local.organizationId, 'payment.confirmed', { id: local.id, title: local.description, client: local.clientName, amount: local.amount });
+            if (nextStatus === 'paid' && local.status !== 'paid') await enqueueN8nEvent(local.organizationId, 'payment.confirmed', { id: local.id, title: local.description, client: local.clientName, clientId: local.clientId, amount: local.amount });
           }
         }
       }

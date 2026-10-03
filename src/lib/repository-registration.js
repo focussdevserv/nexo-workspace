@@ -1,4 +1,4 @@
-export function repositoryRegistrationIssue({ repos = [], owner = '', name = '', loading = false } = {}) {
+export function repositoryRegistrationIssue({ repos = [], owner = '', name = '', loading = false, excludeId = null } = {}) {
   if (loading) return 'Aguarde o carregamento dos repositórios antes de salvar.';
   const normalizedOwner = String(owner).trim().toLocaleLowerCase('pt-BR');
   const normalizedName = String(name).trim().toLocaleLowerCase('pt-BR');
@@ -11,7 +11,8 @@ export function repositoryRegistrationIssue({ repos = [], owner = '', name = '',
   if (!/^[a-z0-9](?:[a-z0-9._-]{0,98}[a-z0-9])?$/.test(normalizedName)) {
     return 'Informe apenas o nome válido do repositório GitHub, sem URL, barras, espaços ou ponto final.';
   }
-  const duplicate = repos.some((repo) => String(repo.owner || '').trim().toLocaleLowerCase('pt-BR') === normalizedOwner
+  const duplicate = repos.some((repo) => String(repo.id) !== String(excludeId)
+    && String(repo.owner || '').trim().toLocaleLowerCase('pt-BR') === normalizedOwner
     && String(repo.name || '').trim().toLocaleLowerCase('pt-BR') === normalizedName);
   return duplicate ? 'Este repositório já está cadastrado neste workspace.' : '';
 }

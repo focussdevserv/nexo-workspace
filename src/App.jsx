@@ -32,6 +32,7 @@ import { filterDashboardActiveProjects } from './lib/dashboard-active-projects.j
 import { dashboardMetricPresentation } from './lib/dashboard-metric-presentation.js';
 import { dashboardBillingMetrics } from './lib/dashboard-billing-metrics.js';
 import { selectDashboardHighlightedEvent } from './lib/dashboard-highlighted-event.js';
+import { dashboardEventsForDate } from './lib/dashboard-events-for-date.js';
 import { dashboardInboxConversations } from './lib/dashboard-inbox.js';
 import { dashboardCalendarDayQuery, mergeDashboardCalendarEvents } from './lib/dashboard-calendar-events.js';
 import { dashboardCalendarError } from './lib/dashboard-calendar-error.js';
@@ -304,7 +305,7 @@ function WorkspaceShell() {
   const nextMonthIso = `${nextMonthDate.getFullYear()}-${String(nextMonthDate.getMonth() + 1).padStart(2, '0')}-${String(nextMonthDate.getDate()).padStart(2, '0')}`;
   const eventStartTime = (event) => event.time || (event.startsAt ? calendarTimeInTimeZone(event.startsAt, preferences.timezone) : '');
   const dashboardEvents = mergeDashboardCalendarEvents(dashboardRecords.events, dashboardGoogleCalendarEvents);
-  const todayEvents = dashboardEvents.filter((event) => calendarDateKeyForValue(event.date || event.startsAt, preferences.timezone) === todayIso).sort((a, b) => eventStartTime(a).localeCompare(eventStartTime(b)));
+  const todayEvents = dashboardEventsForDate(dashboardEvents, todayIso, preferences.timezone).sort((a, b) => eventStartTime(a).localeCompare(eventStartTime(b)));
   const minutesOfDay = (time) => { const [hours, minutes] = String(time || '').split(':').map(Number); return Number.isFinite(hours) && Number.isFinite(minutes) ? hours * 60 + minutes : -1; };
   const currentMinutes = minutesOfDay(now);
   const activeTodayEvent = todayEvents.find((event) => { const start = minutesOfDay(eventStartTime(event)); return start >= 0 && currentMinutes >= start && currentMinutes < start + (Number(event.durationMinutes ?? event.duration) || 60); });
@@ -591,7 +592,7 @@ function WorkspaceShell() {
 
   const visibleNavGroups = navGroups.map((group) => ({ ...group, items: group.items.filter((item) => roleCanOpenPage(currentUser?.role, item.label, currentUser?.permissions)) })).filter((group) => group.items.length > 0);
   const initials = (currentUser?.name || '').trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase();
-  const dateChip = formatWorkspaceDate(new Date(), preferences, { weekday: 'short', month: 'short', timeZone: preferences.timezone });
+  const dateChip = formatWorkspaceDate(new Date(), preferences, { weekday: 'short', day: '2-digit', month: 'short', timeZone: preferences.timezone });
   const createActions = currentUser?.role === 'member' ? [['Tarefa', 'Tarefas', 'task'], ['Reunião', 'Agenda', 'event']] : [['Lead', 'Leads', 'lead'], ['Projeto', 'Projetos', 'project'], ['Tarefa', 'Tarefas', 'task'], ['Reunião', 'Agenda', 'event'], ['Cobrança', 'Cobranças', 'billing']];
   const availableCreateActions = createActions.filter(([, page]) => roleCanOpenPage(currentUser?.role, page, currentUser?.permissions));
 

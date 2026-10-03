@@ -118,7 +118,17 @@ function readStore() {
     store[resource] = store[resource].map((record) => {
       const defaults = seedById.get(String(record?.id));
       if (!defaults || !record || typeof record !== 'object') return record;
-      const enriched = { ...defaults, ...record };
+      let legacyFileLink = null;
+      if (resource === 'files') {
+        const fileIndex = Number(String(record.id || '').match(/^demo-files-(\d+)$/)?.[1]) - 1;
+        const oldClient = seed.clients[fileIndex % seed.clients.length];
+        const oldProject = seed.projects[fileIndex % seed.projects.length];
+        if (record.demo && Number.isInteger(fileIndex) && fileIndex >= 0 && (!record.projectId || record.projectId === oldProject?.id) && record.clientId === oldClient?.id && record.client === oldClient?.name && record.project === oldProject?.name) {
+          legacyFileLink = { client: defaults.client, clientId: defaults.clientId, project: defaults.project, projectId: defaults.projectId };
+        }
+      }
+      const enriched = { ...defaults, ...record, ...(legacyFileLink || {}) };
+      if (legacyFileLink) changed = true;
       // Repair the exact original duplicate on the ninth sample contact while
       // preserving custom edits to either contact field.
       if (resource === 'contacts' && String(record.id) === 'demo-contacts-9' && enriched.name === 'Paula Dias') {

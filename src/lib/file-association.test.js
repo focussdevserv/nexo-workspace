@@ -11,6 +11,18 @@ test('resolves legacy file names to workspace client and project IDs', () => {
   });
 });
 
+test('preserves client associations stored in legacy workspaceClientId or clientRecordId fields', () => {
+  const expected = { clientId: 'client-1', projectId: '' };
+  assert.deepEqual(fileAssociationDraft({ workspaceClientId: 'client-1' }, clients, []), expected);
+  assert.deepEqual(fileAssociationDraft({ clientRecordId: 'client-1' }, clients, []), expected);
+});
+
+test('does not guess a client name when stored client IDs conflict', () => {
+  assert.deepEqual(fileAssociationDraft({ clientId: 'client-1', clientRecordId: 'client-2', client: clients[0].name }, clients, []), {
+    clientId: '', projectId: '',
+  });
+});
+
 test('choosing a project saves canonical IDs and derives its client', () => {
   assert.deepEqual(resolveFileAssociation({ projectId: 'project-1' }, clients, projects), {
     clientId: 'client-1', client: 'Café Aurora', projectId: 'project-1', project: 'Site institucional',

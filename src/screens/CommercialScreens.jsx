@@ -9,7 +9,6 @@ import { buildSubscriptionSchedule, minimumSubscriptionEndDate } from "../lib/su
 import { createBillingRequestUuid, reuseBillingRequestKey } from "../lib/billing-request-idempotency.js";
 import { completeRequestedServiceCatalog, mergeRequestedServiceCatalog, requestedServiceCatalog } from "../data/service-catalog.js";
 import { resolveProposalServices, summarizeProposalServices } from "../data/proposal-services.js";
-import { buildServiceProject } from "../data/service-project-template.js";
 import { belongsToClient, clientTicketPresentation } from "../data/client-link.js";
 import { contractText, downloadContract, editableContractStatuses, isLockedContractStatus } from "../data/contract-document.js";
 import { moveLeadById } from "../lib/pipeline-stage.js";
@@ -46,6 +45,7 @@ import { isCommercialDateWithinNextDays } from "../lib/commercial-date.js";
 import { confirmWorkspaceDelete, useWorkspacePreferences } from "../lib/workspace-preferences.js";
 import { normalizeCommercialScreenRows } from "../lib/commercial-screen-data.js";
 import { createCommercialSubmissionLock } from "../lib/commercial-submission-lock.js";
+import { createServiceProjectOnce } from "../lib/service-project-creation.js";
 import { resolveLeadNavigation } from "../lib/lead-navigation-context.js";
 import { resolveClientBillingCancellation } from "../lib/client-billing-cancellation.js";
 import { clientProfileSelectionKey } from "../lib/client-profile-selection.js";
@@ -3071,6 +3071,9 @@ function ServicesView({
   })).sort((a, b) => b.count - a.count);
   const topContracted = serviceContracts[0]?.count ? serviceContracts[0].service.name : "Sem contratações";
   const [saving, setSaving] = useState(false);
+  const projectCreateLock = useRef(null);
+  if (!projectCreateLock.current) projectCreateLock.current = createCommercialSubmissionLock();
+  const [projectCreating, setProjectCreating] = useState(false);
   const save = async event => {
     event?.preventDefault?.();
     if (saving) return;
@@ -3123,9 +3126,12 @@ function ServicesView({
     const clientRecord = clients.find(item => String(item.id) === clientId);
     if (!clientRecord) return onAction("Selecione um cliente cadastrado para criar o projeto.");
     if (!onCreateProject) return onAction("A gravação de projetos não está disponível no momento.");
-    const records = buildServiceProject(selected, clientRecord);
     try {
-      await onCreateProject(records.project, records.tasks);
+      const records = await createServiceProjectOnce(projectCreateLock.current, selected, clientRecord, onCreateProject, {
+        onStart: () => setProjectCreating(true),
+        onFinish: () => setProjectCreating(false),
+      });
+      if (!records) return;
       onAction(`Projeto e ${records.tasks.length} tarefas salvos para ${clientRecord.name}.`);
       setClientId("");
       setTab("Detalhes");
@@ -3188,6 +3194,6 @@ function ServicesView({
               })} placeholder="Termos padrao para revisao" /></label></div><footer><button type="button" className="com-secondary com-delete-action" onClick={() => void deleteService()} disabled={saving}>Excluir serviço</button><span /><button className="com-primary" type="submit" disabled={saving}><Check size={14} />{saving ? "Salvando…" : "Salvar alterações"}</button></footer></form> : <div className="com-service-template"><label>Checklist padrão<textarea rows="8" value={draft.checklist} onChange={e => setDraft({
               ...draft,
               checklist: e.target.value
-            })} placeholder="Briefing\nReceber materiais\nCriar primeira versão\nRevisão do cliente\nPublicação" /></label><p>Uma tarefa será criada para cada linha quando você iniciar um projeto por este serviço.</p><div className="com-project-from-template"><label>Cliente do projeto<select required={true} value={clientId} onChange={e => setClientId(e.target.value)}><option value="">Selecione um cliente cadastrado</option>{clients.map(item => <option value={item.id}>{item.name}</option>)}</select></label><button className="com-primary" type="button" disabled={!clientId} onClick={startProject}><Plus size={14} />Criar projeto e tarefas</button></div><button className="com-secondary" type="button" onClick={save}>Salvar template</button></div>}</section></div>}</Fragment>;
+            })} placeholder="Briefing\nReceber materiais\nCriar primeira versão\nRevisão do cliente\nPublicação" /></label><p>Uma tarefa será criada para cada linha quando você iniciar um projeto por este serviço.</p><div className="com-project-from-template"><label>Cliente do projeto<select required={true} value={clientId} onChange={e => setClientId(e.target.value)} disabled={projectCreating}><option value="">Selecione um cliente cadastrado</option>{clients.map(item => <option value={item.id}>{item.name}</option>)}</select></label><button className="com-primary" type="button" disabled={!clientId || projectCreating} onClick={startProject}><Plus size={14} />{projectCreating ? "Criando projeto e tarefas…" : "Criar projeto e tarefas"}</button></div><button className="com-secondary" type="button" onClick={save}>Salvar template</button></div>}</section></div>}</Fragment>;
 }
 var _c, _c2, _c3, _c4, _c5, _c6, _c7, _c8, _c9, _c0, _c1, _c10, _c11, _c12, _c13, _c14, _c15, _c16, _c17, _c18;

@@ -16,6 +16,13 @@ test('workspace date format affects date-only and timestamp display', () => {
   assert.ok(formatWorkspaceTime('2026-10-03T10:30:00Z', { language: 'en-US' }).includes('AM'));
 });
 
+test('compact navigation dates retain weekday, day, and month together', () => {
+  const label = formatWorkspaceDate('2026-10-03', { language: 'pt-BR' }, { weekday: 'short', day: '2-digit', month: 'short' });
+  assert.match(label, /sáb/i);
+  assert.match(label, /\b03\b/);
+  assert.match(label, /out/i);
+});
+
 test('bad values do not throw and fall back to supported workspace defaults', () => {
   assert.match(formatWorkspaceCurrency(10, { language: 'invalid', currency: 'invalid' }), /R\$/);
   assert.equal(formatWorkspaceDate('no date', { language: 'invalid' }), '—');

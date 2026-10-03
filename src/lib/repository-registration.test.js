@@ -19,6 +19,21 @@ test('allows distinct repositories and requires owner and name', () => {
   assert.match(repositoryRegistrationIssue({ owner: 'acme', name: ' ' }), /Informe/);
 });
 
+test('allows editing a repository without treating its unchanged identity as a duplicate', () => {
+  assert.equal(repositoryRegistrationIssue({
+    owner: ' ACME ',
+    name: 'SITE',
+    excludeId: 'repo-1',
+    repos: [{ id: 'repo-1', owner: 'acme', name: 'site' }, { id: 'repo-2', owner: 'acme', name: 'other' }],
+  }), '');
+  assert.match(repositoryRegistrationIssue({
+    owner: 'acme',
+    name: 'other',
+    excludeId: 'repo-1',
+    repos: [{ id: 'repo-1', owner: 'acme', name: 'site' }, { id: 'repo-2', owner: 'acme', name: 'other' }],
+  }), /já está cadastrado/u);
+});
+
 test('rejects names the GitHub activity endpoint would reject before saving them', () => {
   assert.match(repositoryRegistrationIssue({ owner: 'https://github.com/acme', name: 'site' }), /sem URL/);
   assert.match(repositoryRegistrationIssue({ owner: 'acme', name: 'group/site' }), /sem URL/);

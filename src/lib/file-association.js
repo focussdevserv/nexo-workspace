@@ -10,8 +10,16 @@ function uniqueMatch(records, predicate) {
 }
 
 export function fileAssociationDraft(file = {}, clients = [], projects = []) {
-  const client = uniqueMatch(clients, (item) => String(item.id) === String(file.clientId || ''))
-    || uniqueMatch(clients, (item) => normalizeName(item.name || item.title) === normalizeName(file.client));
+  // Workspace records have used all three client ID fields over time. Prefer
+  // the canonical ID fields and only fall back to a name for genuinely legacy
+  // records; otherwise opening/saving an older Drive entry can silently unlink
+  // it from its client.
+  const clientIds = [file.workspaceClientId, file.clientId, file.clientRecordId]
+    .filter((value) => value != null && String(value).trim())
+    .map(String);
+  const client = clientIds.length
+    ? uniqueMatch(clients, (item) => clientIds.every((id) => id === String(item.id)))
+    : uniqueMatch(clients, (item) => normalizeName(item.name || item.title) === normalizeName(file.client));
   const project = uniqueMatch(projects, (item) => String(item.id) === String(file.projectId || ''))
     || uniqueMatch(projects, (item) => normalizeName(item.name || item.title) === normalizeName(file.project));
   const projectClient = project && findProjectClient(project, clients);

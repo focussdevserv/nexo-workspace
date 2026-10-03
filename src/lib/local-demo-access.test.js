@@ -35,6 +35,10 @@ test('production demo mode is explicitly opt-in, isolated to browser storage, an
     const clients = await apiRequest('/api/workspace/clients?limit=200&offset=0');
     assert.ok(clients.data.length >= 6, 'the preview includes populated workspace data');
     assert.ok(clients.data.every((client) => client.demo === true));
+    const projects = await apiRequest('/api/workspace/projects?limit=200&offset=0');
+    const files = await apiRequest('/api/workspace/files?limit=200&offset=0');
+    const projectById = new Map(projects.data.map((project) => [String(project.id), project]));
+    assert.ok(files.data.every((file) => projectById.get(String(file.projectId))?.clientId === file.clientId), 'each demo file is linked to a project owned by the same client');
     const contacts = await apiRequest('/api/workspace/contacts?limit=200&offset=0');
     assert.equal(contacts.data.length, 9);
     assert.equal(new Set(contacts.data.map((contact) => contact.email.toLowerCase())).size, contacts.data.length, 'each sample contact has a distinct email');
@@ -45,6 +49,12 @@ test('production demo mode is explicitly opt-in, isolated to browser storage, an
     const migratedContacts = await apiRequest('/api/workspace/contacts?limit=200&offset=0');
     assert.equal(migratedContacts.data[8].email, 'paula@aurora.local');
     assert.notEqual(migratedContacts.data[8].phone, migratedContacts.data[0].phone, 'legacy sample duplicate is repaired without restoring all demo data');
+    const oldBrisa = legacyStore.clients[6];
+    const legacyCuboProject = legacyStore.projects[6];
+    legacyStore.files[6] = { ...legacyStore.files[6], client: oldBrisa.name, clientId: oldBrisa.id, project: legacyCuboProject.name, projectId: legacyCuboProject.id };
+    values.set('focusshub.local-demo.v1', JSON.stringify(legacyStore));
+    const migratedFiles = await apiRequest('/api/workspace/files?limit=200&offset=0');
+    assert.equal(migratedFiles.data[6].clientId, projectById.get(String(migratedFiles.data[6].projectId))?.clientId, 'legacy untouched file links migrate to the owning project client');
     const integration = await apiRequest('/api/integrations/waha/status');
     assert.equal(integration.status, 'demo_only');
     assert.equal(networkCalls, 0, 'demo reads and integration requests stay in the browser');

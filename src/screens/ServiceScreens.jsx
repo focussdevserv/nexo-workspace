@@ -31,6 +31,7 @@ import { matchConversationClient } from '../lib/conversation-client-match.js';
 import { canReplyToInboxConversation, isResolvedInboxConversation, nextInboxConversationStatus } from '../lib/inbox-reply.js';
 import { sendInboxMessage, whatsappSendPreflight } from '../lib/inbox-send.js';
 import { inboxReplySelectionKey, shouldClearInboxReplyComposer } from '../lib/inbox-reply-selection.js';
+import { inboxChannelSelection, setInboxChannelSelection } from '../lib/inbox-channel-selection.js';
 import { clearInboxSendAttempt, inboxSendAttemptId } from '../lib/inbox-send-attempt.js';
 import { createInboxSendLock } from '../lib/inbox-send-lock.js';
 import { buildInboxFollowUpTask, nextInboxFollowUpDate } from '../lib/inbox-follow-up.js';
@@ -490,7 +491,7 @@ function Inbox({ notify, forceWhatsapp = false, navigationContext = null, onNavi
   const [messages, , refreshMessages, messagesLoading] = useStoredArray('nexo.support.conversations.v1', initialMessages);
   const clientsStore = useWorkspaceRecords('clients');
   const contactsStore = useWorkspaceRecords('contacts');
-  const [selectedId, setSelectedId] = useState('');
+  const [selectedIds, setSelectedIds] = useState({ WhatsApp: '', 'E-mail': '' });
   const [draft, setDraft] = useState('');
   const [filter, setFilter] = useState('Todas');
   const [query, setQuery] = useState('');
@@ -528,6 +529,9 @@ function Inbox({ notify, forceWhatsapp = false, navigationContext = null, onNavi
   const [conversationError, setConversationError] = useState('');
   const whatsappMessages = messages.filter((item) => item.channel !== 'Gmail' && item.gmailMetadata !== true);
   const activeMessages = channel === 'E-mail' ? emailThreads : whatsappMessages;
+  const selectedId = inboxChannelSelection(selectedIds, channel, activeMessages);
+  const setSelectedId = (id) => setSelectedIds((current) => setInboxChannelSelection(current, channel, id));
+  const setChannelSelection = (targetChannel, id) => setSelectedIds((current) => setInboxChannelSelection(current, targetChannel, id));
   const current = activeMessages.find((item) => String(item.id) === String(selectedId)) || activeMessages[0];
   const replySelectionKey = inboxReplySelectionKey(channel, current?.id);
   const previousReplySelectionKey = useRef(replySelectionKey);
@@ -616,9 +620,8 @@ function Inbox({ notify, forceWhatsapp = false, navigationContext = null, onNavi
     return () => { mounted = false; window.clearInterval(sessionsTimer); window.clearInterval(messagesTimer); };
   }, [refreshMessages, retrySessions]);
   useEffect(() => {
-    if (!selectedId && activeMessages[0]?.id) setSelectedId(String(activeMessages[0].id));
-    else if (selectedId && !activeMessages.some((item) => String(item.id) === String(selectedId))) setSelectedId(String(activeMessages[0]?.id || ''));
-  }, [activeMessages, selectedId]);
+    if (selectedId !== (selectedIds[channel] || '')) setChannelSelection(channel, selectedId);
+  }, [activeMessages, selectedId, selectedIds, channel]);
   useEffect(() => { setOwner(current?.owner || ''); }, [current?.id, current?.owner]);
   const inboxNavigationKey = navigationContext?.intentId
     || (navigationContext?.conversationId ? `${navigationContext.channel || ''}:${navigationContext.conversationId}` : navigationContext?.clientId ? `client:${navigationContext.clientId}` : '');
@@ -669,9 +672,9 @@ function Inbox({ notify, forceWhatsapp = false, navigationContext = null, onNavi
     setFilter('Todas');
     if (conversation) {
       setQuery('');
-      setSelectedId(String(conversation.id));
+      setChannelSelection('WhatsApp', String(conversation.id));
     } else {
-      setSelectedId('');
+      setChannelSelection('WhatsApp', '');
       setNewContact({ name: client.person || client.name, company: client.name, phone: client.phone || '', email: client.email || '' });
       setNewOpen(true);
       notify('N\u00e3o existe conversa para este cliente. Revise os dados e crie o atendimento quando estiver pronto.');

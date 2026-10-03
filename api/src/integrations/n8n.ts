@@ -87,6 +87,18 @@ export function n8nProposalTaskMatchesSource(task: { automationKey?: unknown; so
   return task.automationKey === 'n8n:proposal' && String(task.sourceProposalId ?? '') === proposalId;
 }
 
+export function n8nAutomationTaskClientReference(
+  eventClientId: unknown,
+  eventClientName: unknown,
+  client?: { id: string; name?: unknown } | null,
+) {
+  const suppliedId = typeof eventClientId === 'string' ? eventClientId : '';
+  const suppliedName = typeof eventClientName === 'string' ? eventClientName.trim().slice(0, 160) : '';
+  const linked = client && client.id === suppliedId ? client : null;
+  const linkedName = typeof linked?.name === 'string' ? linked.name.trim().slice(0, 160) : '';
+  return { clientId: linked?.id ?? null, clientName: linkedName || suppliedName };
+}
+
 export function buildN8nAutomationWorkflow(input: {
   automationId: string;
   templateId: N8nAutomationTemplateId;
