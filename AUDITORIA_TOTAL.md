@@ -546,4 +546,4 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - **Sites e domínios:** indicador dedicado conta renovações vencidas; cálculo de prazo usa datas civis e valida datas inválidas, incluindo datas legadas brasileiras.
 - **Validação automatizada:** 555 testes do frontend e 221 testes da API passaram; `npm run lint`, `npm run build`, `npm run api:build` e `git diff --check` passaram.
 - **Navegador em demonstração local:** navegação pelos 29 destinos do menu preservou os títulos de página e não mostrou overflow horizontal ou tela de erro. A tela de Sites carregou os quatro indicadores e sete registros fictícios. A tela de CRM foi conferida após aguardar sua montagem; nenhum registro real ou serviço externo foi alterado.
-- **Publicação:** esta onda ainda precisa de push e confirmação do deploy em produção.
+- **Publicação:** commit `4a8c7ab7b2f5cccd8f974a5ce894554d8db6df77` enviado e confirmado pelo workflow `37097914180`. Health da API `ok`, banco conectado, manifest web e revisão da API iguais ao commit; HTML e bundle HTTP 200; endpoints privados sem sessão HTTP 401.
