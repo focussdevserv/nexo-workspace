@@ -121,7 +121,19 @@ test('hours goals fall back from null hours and minutes to stored timer seconds'
     ],
   }, { hours: 'ready' }, 'month', now, prefs);
 
-  assert.equal(result.value, 0.75);
+  assert.equal(result.value, 1.75);
+});
+
+test('hours goals count a short saved session from exact seconds when rounded hours are zero', () => {
+  const result = calculateGoalMetric('registered_hours', {
+    hours: [
+      { endedAt: '2026-10-01T10:00:00-03:00', hours: 0, seconds: 10 },
+      { endedAt: '2026-10-01T10:01:00-03:00', hours: 0.25, seconds: 0 },
+      { endedAt: '2026-10-01T10:02:00-03:00', hours: 0, minutes: 30 },
+    ],
+  }, { hours: 'ready' }, 'month', now, prefs);
+
+  assert.ok(Math.abs(result.value - (10 / 3600 + 0.25 + 0.5)) < 1e-12);
 });
 
 test('registered-hours goals exclude live timers but retain completed and legacy records', () => {

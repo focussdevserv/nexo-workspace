@@ -391,7 +391,7 @@ function WorkspaceShell() {
     setDashboardCalendarFailure(null);
     apiRequest(`/api/integrations/google/calendar/events?${query.toString()}`)
       .then((result) => { if (active && requestId === dashboardCalendarRequestId.current) setDashboardGoogleCalendarEvents(Array.isArray(result.data) ? result.data : []); })
-      .catch((error) => { if (active && requestId === dashboardCalendarRequestId.current) { setDashboardGoogleCalendarEvents([]); setDashboardCalendarFailure(dashboardCalendarError(error, currentUser?.role === 'owner')); } });
+      .catch((error) => { if (active && requestId === dashboardCalendarRequestId.current) { setDashboardCalendarFailure(dashboardCalendarError(error, currentUser?.role === 'owner')); } });
     return () => { active = false; };
   }, [activeNav, localDemo, preferences.timezone, dashboardCalendarRevision, currentUser?.role]);
 

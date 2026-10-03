@@ -69,9 +69,9 @@ export function safeClientPortalHref(value) {
   }
 }
 
-export async function copyPortalLink(text, { clipboard = globalThis.navigator?.clipboard, documentRef = globalThis.document } = {}) {
+export async function copyClientPortalText(text, { clipboard = globalThis.navigator?.clipboard, documentRef = globalThis.document, label = 'conteúdo' } = {}) {
   const value = String(text || '');
-  if (!value.trim()) throw new Error('O link do portal está vazio.');
+  if (!value.trim()) throw new Error(`O ${label} est\u00e1 vazio.`);
 
   if (clipboard?.writeText) {
     try {
@@ -83,7 +83,7 @@ export async function copyPortalLink(text, { clipboard = globalThis.navigator?.c
   }
 
   if (!documentRef?.body || !documentRef.createElement || !documentRef.execCommand) {
-    throw new Error('Este navegador não permite copiar o link.');
+    throw new Error('Este navegador n\u00e3o permite copiar o texto.');
   }
 
   const field = documentRef.createElement('textarea');
@@ -104,6 +104,10 @@ export async function copyPortalLink(text, { clipboard = globalThis.navigator?.c
     field.remove();
     previousFocus?.focus?.();
   }
+}
+
+export function copyPortalLink(text, options = {}) {
+  return copyClientPortalText(text, { ...options, label: 'link do portal' });
 }
 
 export function appendSentPortalMessage(messages = [], message, responseId = '') {

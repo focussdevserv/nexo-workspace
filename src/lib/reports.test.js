@@ -200,6 +200,12 @@ test('project reports count legacy duration fields and retain fractional hours',
   assert.equal(formatReportHours(1.5), '1h 30min');
 });
 
+test('report hours prefer exact timer seconds when rounded hours are zero', () => {
+  assert.equal(reportHours({ hours: 0, seconds: 10 }), 10 / 3600);
+  assert.equal(reportHours({ hours: 0, duration_seconds: 30, minutes: 0 }), 30 / 3600);
+  assert.equal(reportHours({ hours: 0.25, seconds: 0, minutes: 45 }), 0.25);
+});
+
 test('project report hours omit running timers while keeping completed and legacy records', () => {
   const rows = buildProjectReportRows([], [], [
     { id: 'active', status: 'running', title: 'Timer', startedAt: '2026-10-01T10:00:00Z', hours: 5 },
@@ -271,4 +277,14 @@ test('project report lists dated tasks and work-hour records alongside projects'
   assert.deepEqual(rows[0], ['Revisar página', 'Tarefa · Site Aurora', 'Pendente', '02/10/2026']);
   assert.deepEqual(rows[1], ['Implementação', 'Horas · Site Aurora', '2.5h · completed', '01/10/2026']);
   assert.equal(rows.some(([name]) => name === 'Tarefa antiga'), false);
+});
+
+test('project reports include older projects completed during the selected period', () => {
+  const now = new Date('2026-10-03T12:00:00Z');
+  const rows = buildProjectReportRows([
+    { name: 'Projeto iniciado antes', status: 'Concluído', createdAt: '2026-08-10T12:00:00Z', completedAt: '2026-10-02T10:00:00Z' },
+    { name: 'Projeto concluído antes', status: 'Concluído', createdAt: '2026-08-10T12:00:00Z', completedAt: '2026-09-30T10:00:00Z' },
+  ], [], [], 'month', now, { timezone: 'UTC' });
+
+  assert.deepEqual(rows, [['Projeto iniciado antes', 'Projeto · Cliente não informado', 'Concluído', '02/10/2026']]);
 });

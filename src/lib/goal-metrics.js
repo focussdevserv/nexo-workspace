@@ -52,14 +52,19 @@ export function calculateGoalMetric(metric, data = {}, states = {}, period = 'mo
   if (metric === 'registered_hours') {
     const hours = (data.hours || []).filter((item) => isReportableWorkRecord(item) && inPeriod(item, ['endedAt', 'ended_at', 'startedAt', 'started_at', 'date', 'createdAt', 'created_at']));
     const value = hours.reduce((sum, item) => {
-      const explicitHours = item.hours === null || item.hours === undefined || item.hours === '' ? Number.NaN : Number(item.hours);
-      if (Number.isFinite(explicitHours) && explicitHours >= 0) return sum + explicitHours;
-      const rawMinutes = item.minutes ?? item.durationMinutes ?? item.duration_minutes;
-      const minutes = rawMinutes === null || rawMinutes === undefined || rawMinutes === '' ? Number.NaN : Number(rawMinutes);
-      if (Number.isFinite(minutes) && minutes >= 0) return sum + minutes / 60;
+      // The Hours screen stores exact duration in seconds, while `hours` is
+      // rounded to two decimals. Prefer seconds when present so short sessions
+      // (for example 10 seconds => 0.00 hours) are not silently discarded.
       const rawSeconds = item.seconds ?? item.durationSeconds ?? item.duration_seconds;
       const seconds = rawSeconds === null || rawSeconds === undefined || rawSeconds === '' ? Number.NaN : Number(rawSeconds);
-      return Number.isFinite(seconds) && seconds >= 0 ? sum + seconds / 3600 : sum;
+      if (Number.isFinite(seconds) && seconds > 0) return sum + seconds / 3600;
+
+      const explicitHours = item.hours === null || item.hours === undefined || item.hours === '' ? Number.NaN : Number(item.hours);
+      if (Number.isFinite(explicitHours) && explicitHours > 0) return sum + explicitHours;
+      const rawMinutes = item.minutes ?? item.durationMinutes ?? item.duration_minutes;
+      const minutes = rawMinutes === null || rawMinutes === undefined || rawMinutes === '' ? Number.NaN : Number(rawMinutes);
+      if (Number.isFinite(minutes) && minutes > 0) return sum + minutes / 60;
+      return sum;
     }, 0);
     return { state: 'ready', value };
   }

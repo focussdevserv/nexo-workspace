@@ -5,7 +5,7 @@ import { apiRequest, fetchAllRecords, useWorkspaceRecords } from '../lib/workspa
 import { useWorkspacePreferences } from '../lib/workspace-preferences.js';
 import { formatWorkspaceCurrency, formatWorkspaceDateTime, formatWorkspaceTime } from '../lib/workspace-formatting.js';
 import { isLocalDemoActive } from '../lib/local-demo.js';
-import { acquireClientPortalActionAfterConfirmation, appendSentPortalMessage, canOfferClientPortalPaymentAction, canSendPortalMessage, canSubmitPortalApprovalDecision, copyPortalLink, createClientPortalActionLock, portalLinkActionLabel, safeClientPortalHref, shouldConfirmPortalLinkRotation, splitClientPortalApprovals } from '../lib/client-portal-actions.js';
+import { acquireClientPortalActionAfterConfirmation, appendSentPortalMessage, canOfferClientPortalPaymentAction, canSendPortalMessage, canSubmitPortalApprovalDecision, copyClientPortalText, copyPortalLink, createClientPortalActionLock, portalLinkActionLabel, safeClientPortalHref, shouldConfirmPortalLinkRotation, splitClientPortalApprovals } from '../lib/client-portal-actions.js';
 import { recordBelongsToPortalClient } from '../lib/client-portal-scope.js';
 import { isApprovalPending } from '../lib/approval-status.js';
 import { buildClientPortalPaymentPreview } from '../lib/client-portal-payment-preview.js';
@@ -205,8 +205,8 @@ export function PublicClientPortal({ slug }) {
   const client = data?.client;
   const flash = (text) => { setNotice(text); window.clearTimeout(noticeTimer.current); noticeTimer.current = window.setTimeout(() => setNotice(''), 3500); };
   const copyPixCode = async (code) => {
-    try { await navigator.clipboard.writeText(code); flash('Codigo Pix copiado.'); }
-    catch { flash('Nao foi possivel copiar o codigo Pix neste navegador.'); }
+    try { await copyClientPortalText(code, { label: 'código Pix' }); flash('Código Pix copiado.'); }
+    catch (error) { flash(error.message || 'Não foi possível copiar o código Pix neste navegador.'); }
   };
   const sendMessage = async (event) => {
     event.preventDefault();

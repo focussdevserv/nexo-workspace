@@ -1,5 +1,6 @@
 import { formatWorkspaceDate } from './workspace-formatting.js';
 import { calendarDateKeyForValue, calendarDateInTimeZone, normalizeCalendarTimeZone } from './calendar-preferences.js';
+import { isReportProjectCompleted } from './report-project-status.js';
 const reportDateValue = (item, field = 'default') => {
   const candidates = field === 'created' ? [item.createdAt, item.created_at, item.date, item.updatedAt, item.updated_at]
     : field === 'expense' ? [item.date, item.createdAt, item.created_at, item.updatedAt, item.updated_at]
@@ -134,20 +135,21 @@ export function parseReportAmount(value) {
 }
 
 export function reportHours(item = {}) {
+  const rawSeconds = item.seconds ?? item.durationSeconds ?? item.duration_seconds;
+  if (rawSeconds !== null && rawSeconds !== undefined && rawSeconds !== '') {
+    const seconds = Number(rawSeconds);
+    if (Number.isFinite(seconds) && seconds > 0) return seconds / 3600;
+  }
+
   if (item.hours !== null && item.hours !== undefined && item.hours !== '') {
     const hours = Number(item.hours);
-    if (Number.isFinite(hours) && hours >= 0) return hours;
+    if (Number.isFinite(hours) && hours > 0) return hours;
   }
 
   const rawMinutes = item.minutes ?? item.durationMinutes ?? item.duration_minutes;
   if (rawMinutes !== null && rawMinutes !== undefined && rawMinutes !== '') {
     const minutes = Number(rawMinutes);
-    if (Number.isFinite(minutes) && minutes >= 0) return minutes / 60;
-  }
-
-  if (item.seconds !== null && item.seconds !== undefined && item.seconds !== '') {
-    const seconds = Number(item.seconds);
-    if (Number.isFinite(seconds) && seconds >= 0) return seconds / 3600;
+    if (Number.isFinite(minutes) && minutes > 0) return minutes / 60;
   }
   return 0;
 }
@@ -179,11 +181,16 @@ export const reportDateLabel = (value, preferences = {}) => formatWorkspaceDate(
 
 export function buildProjectReportRows(projects = [], tasks = [], hours = [], periodId, now = new Date(), preferences = {}) {
   const rows = [
-    ...projects.filter((item) => inPeriod(item, periodId, now, 'default', preferences)).map((item) => [
-      item.name || item.title || 'Projeto', `Projeto · ${item.client || 'Cliente não informado'}`,
-      item.status || 'Em andamento', reportDateLabel(item.date || item.createdAt || item.created_at, preferences),
-      dateOf(item).getTime(),
-    ]),
+    ...projects.filter((item) => inPeriod(item, periodId, now, 'default', preferences)
+      || (isReportProjectCompleted(item) && inPeriod(item, periodId, now, 'completed', preferences))).map((item) => {
+      const completedInPeriod = isReportProjectCompleted(item) && inPeriod(item, periodId, now, 'completed', preferences);
+      const projectDate = completedInPeriod ? dateOf(item, 'completed') : dateOf(item);
+      return [
+        item.name || item.title || 'Projeto', `Projeto · ${item.client || 'Cliente não informado'}`,
+        item.status || item.state || 'Em andamento', reportDateLabel(projectDate, preferences),
+        projectDate.getTime(),
+      ];
+    }),
     ...tasks.filter((item) => inPeriod(item, periodId, now, 'task', preferences)).map((item) => [
       item.title || item.name || 'Tarefa', `Tarefa · ${item.project || item.client || 'Projeto não informado'}`,
       item.status || item.state || 'Em andamento', reportDateLabel(item.due || item.dueAt || item.due_at || item.createdAt || item.created_at, preferences),

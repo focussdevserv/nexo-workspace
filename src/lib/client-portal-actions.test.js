@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { acquireClientPortalActionAfterConfirmation, appendSentPortalMessage, canOfferClientPortalPaymentAction, canSendPortalMessage, canSubmitPortalApprovalDecision, copyPortalLink, createClientPortalActionLock, portalLinkActionLabel, safeClientPortalHref, shouldConfirmPortalLinkRotation, splitClientPortalApprovals } from './client-portal-actions.js';
+import { acquireClientPortalActionAfterConfirmation, appendSentPortalMessage, canOfferClientPortalPaymentAction, canSendPortalMessage, canSubmitPortalApprovalDecision, copyClientPortalText, copyPortalLink, createClientPortalActionLock, portalLinkActionLabel, safeClientPortalHref, shouldConfirmPortalLinkRotation, splitClientPortalApprovals } from './client-portal-actions.js';
 
 test('client portal payment actions are available only for payable invoices', () => {
   for (const status of ['pending', 'Aguardando pagamento', 'overdue', 'Vencida']) assert.equal(canOfferClientPortalPaymentAction(status), true, status);
@@ -85,6 +85,22 @@ test('portal link copy prefers the secure clipboard API', async () => {
   });
   assert.equal(mode, 'clipboard');
   assert.equal(copied, 'https://example.test/portal/token');
+});
+
+test('Pix payment code copy falls back when clipboard permission is blocked', async () => {
+  let copied = '';
+  const field = { value: '', style: {}, setAttribute() {}, focus() {}, select() {}, remove() {} };
+  const documentRef = {
+    body: { appendChild: (element) => { field.value = element.value; } },
+    activeElement: null,
+    createElement: () => field,
+    execCommand(command) { if (command === 'copy') copied = field.value; return command === 'copy'; },
+  };
+  const mode = await copyClientPortalText('pix-copia-e-cola', {
+    label: 'código Pix', clipboard: { writeText: async () => { throw new Error('permission denied'); } }, documentRef,
+  });
+  assert.equal(mode, 'legacy');
+  assert.equal(copied, 'pix-copia-e-cola');
 });
 
 test('portal link copy falls back to a temporary selected field when clipboard access is blocked', async () => {
