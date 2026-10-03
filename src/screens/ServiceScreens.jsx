@@ -38,7 +38,7 @@ import { createInboxSendLock } from '../lib/inbox-send-lock.js';
 import { buildInboxFollowUpTask, createInboxFollowUpOnce, nextInboxFollowUpDate } from '../lib/inbox-follow-up.js';
 import { normalizeWhatsAppChatId } from '../lib/whatsapp-phone.js';
 import { emptyInboxComposerDraft } from '../lib/inbox-composer.js';
-import { canManageWahaSessions, canOfferWahaConnectAction, canShowWahaQr, wahaQrSessionMessage, wahaSessionStatusLabel, wahaSessionStatusSummary } from '../lib/waha-session-access.js';
+import { canManageWahaSessions, canOfferWahaConnectAction, canShowWahaQr, wahaIntegrationAvailability, wahaQrSessionMessage, wahaSessionStatusLabel, wahaSessionStatusSummary } from '../lib/waha-session-access.js';
 import { createAsyncActionLock } from '../lib/async-action-lock.js';
 import { beginSiteCheck, finishSiteCheck, siteCheckFailureMessage } from '../lib/site-check-state.js';
 import { filterTableRows, tableStatusOptions } from '../lib/table-status-filter.js';
@@ -1403,12 +1403,39 @@ function WahaSessions({ notify }) {
   const [manualRefreshing, setManualRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [statusQueryError, setStatusQueryError] = useState('');
+  const [integrationState, setIntegrationState] = useState('checking');
+  const [integrationMessage, setIntegrationMessage] = useState('Verificando a configuração do WAHA…');
   const sessionRefreshLock = useRef(null);
   const sessionRefreshMounted = useRef(false);
   if (!sessionRefreshLock.current) sessionRefreshLock.current = createAsyncActionLock();
   const qrRequests = useRef(null);
   if (!qrRequests.current) qrRequests.current = createLatestRequestGuard();
   const selectedSession = sessions.find((item) => item.id === selected);
+  const checkIntegration = async () => {
+    try {
+      const result = await apiRequest('/api/integrations/status');
+      if (!sessionRefreshMounted.current) return false;
+      const availability = wahaIntegrationAvailability(result.data);
+      setIntegrationState(availability.state);
+      setIntegrationMessage(availability.message);
+      if (availability.state !== 'ready') {
+        setSessions([]);
+        setSelected(null);
+        setLoading(false);
+        setStatusQueryError('');
+        return false;
+      }
+      setIntegrationMessage('');
+      return true;
+    } catch (err) {
+      if (sessionRefreshMounted.current) {
+        setIntegrationState('error');
+        setIntegrationMessage(err.message || 'Não foi possível verificar a configuração do WAHA.');
+        setLoading(false);
+      }
+      return false;
+    }
+  };
   const refresh = async ({ clearError = false } = {}) => sessionRefreshLock.current.run(async () => {
     try {
       const result = await apiRequest('/api/integrations/waha/sessions');
@@ -1424,20 +1451,37 @@ function WahaSessions({ notify }) {
       });
       if (clearError) setError('');
     }
-    catch (err) { if (sessionRefreshMounted.current) setStatusQueryError(err.message || 'Falha ao consultar o status das sessões WAHA.'); }
+    catch (err) {
+      if (!sessionRefreshMounted.current) return;
+      if (['waha_not_configured', 'integration_not_configured', 'integration_disconnected'].includes(err.code)) {
+        const availability = err.code === 'integration_disconnected'
+          ? { state: 'disconnected', message: err.message || 'O WAHA está desativado. Reative-o em Integrações para gerenciar números.' }
+          : { state: 'not_configured', message: err.message || 'Configure o WAHA em Integrações antes de adicionar números.' };
+        setIntegrationState(availability.state);
+        setIntegrationMessage(availability.message);
+        setSessions([]);
+        setSelected(null);
+        setStatusQueryError('');
+      } else setStatusQueryError(err.message || 'Falha ao consultar o status das sessões WAHA.');
+    }
     finally { if (sessionRefreshMounted.current) setLoading(false); }
   });
   const refreshManually = async () => {
     setManualRefreshing(true);
-    try { await refresh({ clearError: true }); }
+    try { if (await checkIntegration()) await refresh({ clearError: true }); }
     finally { setManualRefreshing(false); }
   };
   useEffect(() => {
     sessionRefreshMounted.current = true;
-    const timer = window.setInterval(() => { void refresh(); }, 5000);
-    void refresh();
-    return () => { sessionRefreshMounted.current = false; window.clearInterval(timer); };
+    void checkIntegration();
+    return () => { sessionRefreshMounted.current = false; };
   }, []);
+  useEffect(() => {
+    if (integrationState !== 'ready') return undefined;
+    void refresh();
+    const timer = window.setInterval(() => { void refresh(); }, 5000);
+    return () => window.clearInterval(timer);
+  }, [integrationState]);
   const loadQr = async (id) => {
     const targetSession = sessions.find((item) => item.id === id);
     if (targetSession?.demo) { setQr(''); setQrError('QR Code real não é gerado na demonstração local. Configure WAHA no servidor para parear um número.'); setQrLoading(false); return; }
@@ -1459,6 +1503,11 @@ function WahaSessions({ notify }) {
     return () => { window.clearInterval(timer); qrRequests.current.invalidate(); };
   }, [selected, selectedSession?.status, statusQueryError]);
   const createSession = async (event) => {
+    if (integrationState !== 'ready') {
+      event.preventDefault();
+      notify(integrationMessage || 'Configure e ative o WAHA em Integrações antes de adicionar números.');
+      return;
+    }
     event.preventDefault(); if (!canManageSessions) { notify('Somente a pessoa proprietária pode adicionar ou reconectar números WhatsApp.'); return; } if (!label.trim()) return;
     setBusy(true);
     try { const result = await apiRequest('/api/integrations/waha/sessions', { method: 'POST', body: JSON.stringify({ label: label.trim() }) }); setSessions((items) => [result.data, ...items]); setSelected(result.data.id); setQr(''); setNewOpen(false); setLabel(''); notify(localDemo ? 'Sessão simulada criada; nenhum QR real ou número foi conectado.' : 'Sessão criada. Escaneie o QR Code pelo WhatsApp do celular.'); }
@@ -1483,12 +1532,14 @@ function WahaSessions({ notify }) {
     notify('CSV das sessões exportado.');
   };
   const statusSummary = wahaSessionStatusSummary(sessions, Boolean(statusQueryError));
+  const addButtonDisabled = busy || integrationState === 'checking' || manualRefreshing || (integrationState === 'ready' && !canManageSessions);
   useDialogEscapeClose(newOpen, busy, () => { setNewOpen(false); setLabel(''); }, wahaDialogTriggerRef);
   return <>{localDemo && <div className="ns-info-note" role="status"><ShieldCheck size={16} /><span>Demonstração local: sessões e mensagens são simuladas; nenhum número real é conectado e nenhum QR válido é criado.</span></div>}{!canManageSessions && <div className="ns-info-note" role="status"><ShieldCheck size={16} /><span>Somente a pessoa propriet&aacute;ria pode adicionar, parear, pausar ou reconectar n&uacute;meros. Voc&ecirc; ainda pode consultar sess&otilde;es e atender conversas j&aacute; conectadas.</span></div>}
     <div className="ns-metrics ns-metrics-three"><Metric label="Números cadastrados" value={String(sessions.length)} note="Sessões neste workspace" icon={Smartphone} /><Metric label={localDemo ? 'Sessões ativas' : 'Conectados'} value={statusSummary.connected} note={statusQueryError ? 'Status indisponível; tente atualizar' : localDemo ? 'Atividade simulada neste navegador' : Number(statusSummary.connected) > 0 ? 'WhatsApp pronto para uso' : 'Nenhum número ativo'} icon={MessageCircle} /><Metric label="Precisam de ação" value={statusSummary.needsAction} note={statusQueryError ? 'Aguardando consulta ao WAHA' : 'QR, pausa ou reconexão'} icon={AlertCircle} /></div>
-    <div className="ns-section-heading"><div><h2>Conexões WhatsApp</h2><p>Adicione vários números, conecte pelo QR e controle cada sessão.</p></div><div className="ns-support-actions"><button className="ns-secondary" type="button" onClick={exportSessions} disabled={!sessions.length}><Download size={14} />Exportar CSV</button><button className="ns-secondary" type="button" onClick={refreshManually} disabled={manualRefreshing}><RefreshCw size={14} className={manualRefreshing ? 'ns-spinning' : ''} />{manualRefreshing ? 'Atualizando…' : 'Atualizar'}</button><button className="ns-primary" type="button" onClick={(event) => { wahaDialogTriggerRef.current = event.currentTarget; setNewOpen(true); }} disabled={!canManageSessions} title={!canManageSessions ? 'Somente a pessoa proprietária pode adicionar números.' : undefined}><Plus size={15} />Adicionar número</button></div></div>
+    <div className="ns-section-heading"><div><h2>Conexões WhatsApp</h2><p>Adicione vários números, conecte pelo QR e controle cada sessão.</p></div><div className="ns-support-actions"><button className="ns-secondary" type="button" onClick={exportSessions} disabled={!sessions.length}><Download size={14} />Exportar CSV</button><button className="ns-secondary" type="button" onClick={refreshManually} disabled={manualRefreshing}><RefreshCw size={14} className={manualRefreshing ? 'ns-spinning' : ''} />{manualRefreshing ? 'Atualizando…' : 'Atualizar'}</button><button className="ns-primary" type="button" onClick={(event) => { if (integrationState === 'ready') { wahaDialogTriggerRef.current = event.currentTarget; setNewOpen(true); } else if (integrationState === 'error') { void refreshManually(); } else { window.dispatchEvent(new CustomEvent('nexo:navigate', { detail: 'Integrações' })); } }} disabled={addButtonDisabled} title={integrationState === 'ready' && !canManageSessions ? 'Somente a pessoa proprietária pode adicionar números.' : undefined}>{integrationState === 'ready' ? <><Plus size={15} />Adicionar número</> : integrationState === 'checking' ? <><RefreshCw size={14} className="ns-spinning" />Verificando WAHA…</> : integrationState === 'error' ? <><RefreshCw size={14} />Verificar WAHA</> : <><Link2 size={14} />{integrationState === 'disconnected' ? 'Reativar WAHA' : 'Configurar WAHA'}</>}</button></div></div>
+    {integrationState !== 'ready' && integrationState !== 'checking' && <div className="dashboard-data-error" role="status"><span>{integrationMessage}</span>{integrationState === 'error' ? <button type="button" onClick={refreshManually} disabled={manualRefreshing}>Verificar novamente</button> : <button type="button" onClick={() => window.dispatchEvent(new CustomEvent('nexo:navigate', { detail: 'Integrações' }))}>Abrir Integrações</button>}</div>}
     {(statusQueryError || error) && <div className="dashboard-data-error" role="alert"><span>{statusQueryError || error}</span><button type="button" onClick={refreshManually} disabled={manualRefreshing}><RefreshCw size={14} className={manualRefreshing ? 'ns-spinning' : ''} />Tentar novamente</button><button type="button" onClick={() => { setStatusQueryError(''); setError(''); }} aria-label="Fechar">×</button></div>}
-    {loading ? <div className="ns-empty-history">Carregando sessões do servidor…</div> : sessions.length === 0 ? <div className="ns-empty-history">Nenhum número conectado. Adicione um para gerar o primeiro QR Code.</div> : <div className="ns-integration-grid">{sessions.map((item) => <article className="ns-integration-card" key={item.id}><div className="ns-integration-top"><span className="ns-integration-logo whatsapp"><Smartphone size={20} /></span><span className={`ns-connection-badge ${!statusQueryError && item.status === 'WORKING' && !item.demo ? 'configured' : ''}`}><i />{statusLabel(item.status, item.demo)}</span></div><h3>{item.label}</h3><p>{item.number || 'Número aparecerá depois da leitura do QR Code'} · {item.engine}</p><div className="ns-integration-actions">{canOfferWahaConnectAction(item.status) && <button type="button" disabled={!canManageSessions || busy || Boolean(statusQueryError)} onClick={() => { setSelected(item.id); setQr(''); setQrError(''); if (item.status === 'FAILED') perform(item, 'restart'); else if (item.status === 'NOT_FOUND') perform(item, 'start'); }}><Smartphone size={14} />{item.status === 'STARTING' ? 'Iniciando sessão…' : selected === item.id && qr ? 'QR Code aberto' : item.demo ? 'Ver simulação de conexão' : item.status === 'FAILED' ? 'Gerar novo QR Code' : 'Conectar / QR Code'}</button>}{item.status === 'WORKING' ? <button type="button" disabled={!canManageSessions || busy || Boolean(statusQueryError)} onClick={() => perform(item, 'stop')}>Pausar</button> : item.status === 'STOPPED' && <button type="button" disabled={!canManageSessions || busy || Boolean(statusQueryError)} onClick={() => perform(item, 'start')}>Retomar</button>}{item.status === 'WORKING' && <button type="button" disabled={!canManageSessions || busy || Boolean(statusQueryError)} onClick={() => perform(item, 'logout')}>Desconectar</button>}<button type="button" className="ns-link-button danger" disabled={!canManageSessions || busy || Boolean(statusQueryError)} onClick={() => perform(item, 'delete')}><Trash2 size={14} />Apagar</button></div>{selected === item.id && item.status !== 'WORKING' && <div className="ns-waha-qr" role="status" aria-live="polite">{qrError ? <><span className="ns-waha-qr-error" role="alert">{qrError}</span><button className="ns-secondary" type="button" disabled={!canManageSessions || qrLoading || Boolean(statusQueryError)} onClick={() => loadQr(item.id)}><RefreshCw size={14} className={qrLoading ? 'ns-spinning' : ''} />{qrLoading ? 'Tentando novamente...' : 'Tentar carregar QR novamente'}</button></> : qrLoading && !qr ? <span>Carregando QR Code…</span> : qr ? <img width={280} height={280} src={qr} alt={`QR Code de conexão para ${item.label}`} /> : <span>{statusQueryError ? 'Aguardando consulta atualizada do WAHA.' : wahaQrSessionMessage(item.status)}</span>}<small>WhatsApp no celular → Dispositivos conectados → Conectar dispositivo</small></div>}</article>)}</div>}
+    {loading ? <div className="ns-empty-history">Carregando sessões do servidor…</div> : integrationState !== 'ready' ? null : sessions.length === 0 ? <div className="ns-empty-history">Nenhum número conectado. Adicione um para gerar o primeiro QR Code.</div> : <div className="ns-integration-grid">{sessions.map((item) => <article className="ns-integration-card" key={item.id}><div className="ns-integration-top"><span className="ns-integration-logo whatsapp"><Smartphone size={20} /></span><span className={`ns-connection-badge ${!statusQueryError && item.status === 'WORKING' && !item.demo ? 'configured' : ''}`}><i />{statusLabel(item.status, item.demo)}</span></div><h3>{item.label}</h3><p>{item.number || 'Número aparecerá depois da leitura do QR Code'} · {item.engine}</p><div className="ns-integration-actions">{canOfferWahaConnectAction(item.status) && <button type="button" disabled={!canManageSessions || busy || Boolean(statusQueryError)} onClick={() => { setSelected(item.id); setQr(''); setQrError(''); if (item.status === 'FAILED') perform(item, 'restart'); else if (item.status === 'NOT_FOUND') perform(item, 'start'); }}><Smartphone size={14} />{item.status === 'STARTING' ? 'Iniciando sessão…' : selected === item.id && qr ? 'QR Code aberto' : item.demo ? 'Ver simulação de conexão' : item.status === 'FAILED' ? 'Gerar novo QR Code' : 'Conectar / QR Code'}</button>}{item.status === 'WORKING' ? <button type="button" disabled={!canManageSessions || busy || Boolean(statusQueryError)} onClick={() => perform(item, 'stop')}>Pausar</button> : item.status === 'STOPPED' && <button type="button" disabled={!canManageSessions || busy || Boolean(statusQueryError)} onClick={() => perform(item, 'start')}>Retomar</button>}{item.status === 'WORKING' && <button type="button" disabled={!canManageSessions || busy || Boolean(statusQueryError)} onClick={() => perform(item, 'logout')}>Desconectar</button>}<button type="button" className="ns-link-button danger" disabled={!canManageSessions || busy || Boolean(statusQueryError)} onClick={() => perform(item, 'delete')}><Trash2 size={14} />Apagar</button></div>{selected === item.id && item.status !== 'WORKING' && <div className="ns-waha-qr" role="status" aria-live="polite">{qrError ? <><span className="ns-waha-qr-error" role="alert">{qrError}</span><button className="ns-secondary" type="button" disabled={!canManageSessions || qrLoading || Boolean(statusQueryError)} onClick={() => loadQr(item.id)}><RefreshCw size={14} className={qrLoading ? 'ns-spinning' : ''} />{qrLoading ? 'Tentando novamente...' : 'Tentar carregar QR novamente'}</button></> : qrLoading && !qr ? <span>Carregando QR Code…</span> : qr ? <img width={280} height={280} src={qr} alt={`QR Code de conexão para ${item.label}`} /> : <span>{statusQueryError ? 'Aguardando consulta atualizada do WAHA.' : wahaQrSessionMessage(item.status)}</span>}<small>WhatsApp no celular → Dispositivos conectados → Conectar dispositivo</small></div>}</article>)}</div>}
     <div className="ns-info-note"><ShieldCheck size={17} /><span>“Pausar” mantém o vínculo salvo. “Desconectar” encerra o vínculo do WhatsApp e pede nova leitura do QR. “Apagar” remove a sessão e seus dados no WAHA.</span></div>
     {newOpen && <div className="ns-integration-modal-backdrop" role="presentation" onMouseDown={(event) => { if (!busy && event.target === event.currentTarget) { setNewOpen(false); setLabel(''); }; }}><form className="ns-integration-modal" role="dialog" aria-modal="true" aria-labelledby="waha-create-title" aria-busy={busy} onSubmit={createSession}><header><span className="ns-integration-logo whatsapp"><Smartphone size={18} /></span><div><h2 id="waha-create-title">Adicionar número WhatsApp</h2><p>{localDemo ? 'Cria uma sessão simulada neste navegador. Não conecta um número real.' : 'Cria uma sessão independente para este número.'}</p></div><button type="button" aria-label="Fechar" disabled={!canManageSessions || busy} onClick={() => { setNewOpen(false); setLabel(''); }}><X size={17} /></button></header><div className="ns-integration-fields"><label>Nome para identificar o número<input autoFocus required minLength="2" maxLength="80" value={label} onChange={(event) => setLabel(event.target.value)} placeholder="Ex.: Comercial FocussDev" /></label></div><div className="ns-integration-modal-note"><ShieldCheck size={15} />{localDemo ? 'A simulação não gera QR Code válido nem chama o WhatsApp.' : 'Após criar, o QR Code será gerado aqui. Cada número usa uma sessão WAHA independente.'}</div><footer><button type="button" className="ns-secondary" disabled={!canManageSessions || busy} onClick={() => { setNewOpen(false); setLabel(''); }}>Cancelar</button><button type="submit" className="ns-primary" disabled={!canManageSessions || busy}><Plus size={14} />{busy ? 'Criando…' : localDemo ? 'Criar sessão simulada' : 'Criar e gerar QR'}</button></footer></form></div>}
   </>;

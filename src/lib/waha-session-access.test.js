@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { canManageWahaSessions, canOfferWahaConnectAction, canShowWahaQr, wahaQrSessionMessage, wahaSessionStatusLabel, wahaSessionStatusSummary } from './waha-session-access.js';
+import { canManageWahaSessions, canOfferWahaConnectAction, canShowWahaQr, wahaIntegrationAvailability, wahaQrSessionMessage, wahaSessionStatusLabel, wahaSessionStatusSummary } from './waha-session-access.js';
+
+test('WAHA readiness prevents session requests until configured and enabled', () => {
+  assert.deepEqual(wahaIntegrationAvailability([]), { state: 'not_configured', message: 'Configure o WAHA em Integrações antes de adicionar números.' });
+  assert.equal(wahaIntegrationAvailability([{ provider: 'waha', configured: true, enabled: false }]).state, 'disconnected');
+  assert.equal(wahaIntegrationAvailability([{ name: 'WAHA', configured: true, enabled: true }]).state, 'ready');
+});
 
 test('session management and QR pairing are limited to the owner role', () => {
   assert.equal(canManageWahaSessions('owner'), true);
