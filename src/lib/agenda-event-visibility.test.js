@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { agendaTimedEventSegmentOnDate, agendaTimeGridHours, isAgendaEventVisibleInPeriod, isAgendaEventVisibleOnDate } from './agenda-event-visibility.js';
+import { agendaEventCountOnDate, agendaTimedEventSegmentOnDate, agendaTimeGridHours, isAgendaEventVisibleInPeriod, isAgendaEventVisibleOnDate } from './agenda-event-visibility.js';
 
 test('all-day events span their exclusive end date in agenda views', () => {
   const event = { date: '2026-10-02', endDate: '2026-10-05', allDay: true };
@@ -9,6 +9,18 @@ test('all-day events span their exclusive end date in agenda views', () => {
   assert.equal(isAgendaEventVisibleOnDate(event, '2026-10-04'), true);
   assert.equal(isAgendaEventVisibleOnDate(event, '2026-10-05'), false);
   assert.equal(isAgendaEventVisibleOnDate(event, '2026-10-01'), false);
+});
+
+test('mini-calendar event counts include every day occupied by multi-day and overnight events', () => {
+  const events = [
+    { date: '2026-10-02', endDate: '2026-10-05', allDay: true },
+    { date: '2026-10-02', endDate: '2026-10-03', time: '23:30', end: '00:30' },
+    { date: '2026-10-02', endDate: '2026-10-02', time: '09:00', end: '10:00' },
+  ];
+  assert.equal(agendaEventCountOnDate(events, '2026-10-02'), 3);
+  assert.equal(agendaEventCountOnDate(events, '2026-10-03'), 2);
+  assert.equal(agendaEventCountOnDate(events, '2026-10-04'), 1);
+  assert.equal(agendaEventCountOnDate(events, '2026-10-05'), 0, 'all-day end date is exclusive');
 });
 
 test('timed events remain on their start day unless their explicit end date continues after midnight', () => {

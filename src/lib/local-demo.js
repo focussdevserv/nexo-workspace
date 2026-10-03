@@ -4,6 +4,7 @@ import { proposalAcceptanceState } from './proposal-acceptance-state.js';
 import { handleLocalDemoInboxRequest } from './local-demo-inbox.js';
 import { financeEntryAttemptFingerprint } from './finance-entry-attempt.js';
 import { buildLocalDemoFinanceDates } from './local-demo-finance.js';
+import { createLocalDemoBillingRecord } from './local-demo-billing.js';
 
 const STORAGE_KEY = 'focusshub.local-demo.v1';
 const ENABLED_KEY = 'focusshub.local-demo.enabled';
@@ -372,7 +373,7 @@ export function handleLocalDemoRequest(path, options = {}) {
   if (billingResource) {
     const records = store[billingResource] || [];
     if (method === 'GET') { const offset = Number(url.searchParams.get('offset') || 0); const limit = Math.min(200, Number(url.searchParams.get('limit') || 200)); return { data: records.slice(offset, offset + limit), pagination: { limit, offset, total: records.length } }; }
-    if (method === 'POST') { const item = row(`${billingResource}-${crypto.randomUUID()}`, { ...body, ...(body.dueDate ? { dueAt: `${body.dueDate}T23:59:59-03:00` } : {}), status: 'pending', demoTag: 'DEMONSTRAÇÃO LOCAL · SEM AÇÃO EXTERNA', createdAt: new Date().toISOString(), paymentDetails: { simulated: true } }); store[billingResource] = [item, ...records]; save(); return { data: item }; }
+    if (method === 'POST') { const item = createLocalDemoBillingRecord(store, billingResource, body, options.headers); save(); return { data: item }; }
   }
   const cancelBillingOrder = url.pathname.match(/^\/api\/billing\/orders\/([^/]+)\/cancel$/);
   if (cancelBillingOrder && method === 'POST') {

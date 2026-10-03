@@ -216,6 +216,12 @@ test('editing a pending client finance record does not silently mark it paid', (
   assert.equal(explicitSettlement.paidAt, now.toISOString());
 });
 
+test('failed client finance edits keep the editor open for correction or retry', async () => {
+  const source = await readFile(new URL('../screens/CommercialScreens.jsx', import.meta.url), 'utf8');
+  const record = source.slice(source.indexOf('function ClientFinancialRecord('), source.indexOf('function ClientPlannedChargeRecord('));
+  assert.match(record, /const saved = await onUpdate\(patch\);\s*if \(saved !== false\) setEditing\(false\);/);
+});
+
 test('installment retries reuse an open or failed intent, and canceled installments receive a new intent key', async () => {
   const first = await resolveClientInstallmentRequest([], 'client-1', 'service-1', 0);
   const retry = await resolveClientInstallmentRequest([{ id: 'order-1', workspaceClientId: 'client-1', requestIdempotencyKey: first.key, status: 'pending' }], 'client-1', 'service-1', 0);

@@ -23,6 +23,10 @@ export function isAgendaEventVisibleOnDate(event, dateKey) {
     && endTime !== '00:00';
 }
 
+export function agendaEventCountOnDate(events, dateKey) {
+  return (Array.isArray(events) ? events : []).filter((event) => isAgendaEventVisibleOnDate(event, dateKey)).length;
+}
+
 export function isAgendaEventVisibleInPeriod(event, startDate, endDate) {
   const eventDate = String(event?.date || '');
   if (!dateKeyPattern.test(eventDate) || !dateKeyPattern.test(String(startDate || '')) || !dateKeyPattern.test(String(endDate || ''))) return false;
