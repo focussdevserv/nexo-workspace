@@ -61,6 +61,9 @@ import { calculateAccountMovementBalance, canUpdateFinanceAccountBalance, isCurr
 import { paymentDueDateAtEndOfDay, paymentDueDateDuration } from './billing/due-date.js';
 import { withStableBillingPaidAt } from './billing/paid-at.js';
 import { subscriptionDateTimeSchema, validateSubscriptionDates } from './billing/subscription-dates.js';
+import { isSupportedBillingAmount } from './billing/amount.js';
+import { isValidFinanceEntryAmount } from './integrations/finance-entry-amount.js';
+import { isValidFinanceEntryDate, isValidOptionalFinanceEntryDate } from './integrations/finance-entry-date.js';
 import { billingMethodPreferenceAllows } from './billing/method-preferences.js';
 import { billingSubscriptionPreferenceAllows } from './billing/subscription-preferences.js';
 import { isBillingOrderCancelable } from './billing/order-cancellation.js';
@@ -189,7 +192,7 @@ const paymentOrderSchema = z.object({
   clientName: z.string().trim().min(2).max(180),
   payerEmail: z.string().trim().email().max(254).transform((value) => value.toLowerCase()),
   description: z.string().trim().min(2).max(250),
-  amount: z.coerce.number().positive().max(1000000),
+  amount: z.coerce.number().refine(isSupportedBillingAmount, 'O valor deve ser positivo, ter no máximo duas casas decimais e não ultrapassar R$ 1.000.000,00.'),
   method: z.enum(['pix', 'boleto', 'credit_card', 'debit_card']),
   dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   identificationType: z.string().trim().max(10).optional(),
@@ -212,7 +215,7 @@ const paymentOrderSchema = z.object({
 const subscriptionSchema = z.object({
   clientId: z.string().uuid().optional(), workspaceClientId: z.string().uuid().optional(), clientName: z.string().trim().min(2).max(180),
   payerEmail: z.string().trim().email().max(254).transform((value) => value.toLowerCase()),
-  description: z.string().trim().min(2).max(250), amount: z.coerce.number().positive().max(1000000),
+  description: z.string().trim().min(2).max(250), amount: z.coerce.number().refine(isSupportedBillingAmount, 'O valor deve ser positivo, ter no máximo duas casas decimais e não ultrapassar R$ 1.000.000,00.'),
   frequency: z.enum(['days', 'months']).default('months'),
   frequencyInterval: z.coerce.number().int().min(1).max(24).default(1),
   startAt: subscriptionDateTimeSchema.optional(), endAt: subscriptionDateTimeSchema.optional(),
@@ -4044,6 +4047,8 @@ app.post('/api/workspace/:resource', { preHandler: app.authenticate }, async (re
     : null;
   if (projectClientId && !projectClientId.success) return reply.code(400).send({ error: 'project_client_invalid', message: 'O cliente vinculado ao projeto é inválido.' });
   const financeEntryCreate = ['revenues', 'expenses'].includes(params.data.resource);
+  if (financeEntryCreate && !isValidFinanceEntryAmount(body.data.amount)) return reply.code(400).send({ error: 'finance_entry_amount_invalid', message: 'Informe um valor positivo com no máximo duas casas decimais.' });
+  if (financeEntryCreate && (!isValidFinanceEntryDate(body.data.date) || !isValidOptionalFinanceEntryDate(body.data.dueDate))) return reply.code(400).send({ error: 'finance_entry_date_invalid', message: 'Informe uma data de lançamento e vencimento válidos.' });
   const parsedFinanceEntryKey = financeEntryCreate ? billingRequestIdempotencyKey(request.headers['idempotency-key']) : { key: null, valid: true };
   if (!parsedFinanceEntryKey.valid) return reply.code(400).send({ error: 'invalid_idempotency_key', message: 'Envie uma chave Idempotency-Key no formato UUID.' });
   const financeEntryKey = parsedFinanceEntryKey.key;
@@ -4190,7 +4195,10 @@ app.patch('/api/workspace/:resource/:id', { preHandler: app.authenticate }, asyn
   if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Recurso ou identificador inválidos.' });
   if (!body) return;
   let invalidClientBilling = '';
-   if (params.data.resource === 'finance-accounts' && Object.hasOwn(body.data, 'balance') && !isCurrencyBalance(body.data.balance)) return reply.code(400).send({ error: 'finance_account_balance_invalid', message: 'O saldo deve ter no máximo duas casas decimais.' });
+  const financeEntryUpdate = ['revenues', 'expenses'].includes(params.data.resource);
+  if (financeEntryUpdate && Object.hasOwn(body.data, 'amount') && !isValidFinanceEntryAmount(body.data.amount)) return reply.code(400).send({ error: 'finance_entry_amount_invalid', message: 'Informe um valor positivo com no máximo duas casas decimais.' });
+  if (financeEntryUpdate && ((Object.hasOwn(body.data, 'date') && !isValidFinanceEntryDate(body.data.date)) || (Object.hasOwn(body.data, 'dueDate') && !isValidOptionalFinanceEntryDate(body.data.dueDate)))) return reply.code(400).send({ error: 'finance_entry_date_invalid', message: 'Informe uma data de lançamento e vencimento válidos.' });
+  if (params.data.resource === 'finance-accounts' && Object.hasOwn(body.data, 'balance') && !isCurrencyBalance(body.data.balance)) return reply.code(400).send({ error: 'finance_account_balance_invalid', message: 'O saldo deve ter no máximo duas casas decimais.' });
   if (['revenues', 'expenses'].includes(params.data.resource) && Object.hasOwn(body.data, 'clientId') && body.data.clientId != null && body.data.clientId !== '') {
     const clientId = z.string().uuid().safeParse(body.data.clientId);
     if (!clientId.success) return reply.code(400).send({ error: 'finance_client_invalid', message: 'O cliente vinculado não é válido.' });
