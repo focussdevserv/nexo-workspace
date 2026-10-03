@@ -6,6 +6,17 @@ import { handleLocalDemoInboxRequest } from './local-demo-inbox.js';
 const STORAGE_KEY = 'focusshub.local-demo.v1';
 const ENABLED_KEY = 'focusshub.local-demo.enabled';
 
+export function formatLocalDemoCurrency(amount) {
+  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(amount) || 0);
+}
+
+export function migrateLegacyDemoContractValue(record, seededRecord) {
+  if (!record?.demo || !seededRecord?.demo || String(record.id) !== String(seededRecord.id)) return record;
+  const seededAmount = Number(String(seededRecord.value || '').replace(/[^\d,]/g, '').replace(',', '.'));
+  if (!Number.isFinite(seededAmount)) return record;
+  return record.value === `R$ ${seededAmount.toFixed(0)},00` ? { ...record, value: seededRecord.value } : record;
+}
+
 const today = () => {
   const date = new Date();
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -63,8 +74,8 @@ function buildSeed() {
   ][index], demoTag: 'DEMONSTRAÇÃO LOCAL' }));
   const events = Array.from({ length: 12 }, (_, index) => row(`event-${index + 1}`, { title: ['Briefing — Aurora Café', 'Apresentação de identidade visual', 'Revisão de escopo — Flora', 'Check-in de projeto', 'Reunião de planejamento', 'Aprovação da landing page', 'Alinhamento de conteúdo', 'Demonstração do portal', 'Retorno comercial', 'Revisão de campanha', 'Entrega final — Atlas', 'Planejamento semanal'][index], client: client(index).name, clientId: client(index).id, date: index < 4 ? today() : shiftDate(index - 2), time: `${String(9 + index % 8).padStart(2, '0')}:00`, startsAt: `${index < 4 ? today() : shiftDate(index - 2)}T${String(9 + index % 8).padStart(2, '0')}:00:00-03:00`, duration: 60, type: index % 2 ? 'Reunião' : 'Apresentação', status: 'Agendado', demoTag: 'DEMONSTRAÇÃO LOCAL' }));
   const proposals = Array.from({ length: 6 }, (_, index) => row(`proposal-${index + 1}`, { title: ['Website institucional', 'Identidade visual completa', 'Gestão de conteúdo', 'Landing page de campanha', 'Portal do cliente', 'Evolução do e-commerce'][index], client: client(index).name, clientId: client(index).id, amount: [12800, 6400, 4800, 7200, 15800, 9300][index], value: [12800, 6400, 4800, 7200, 15800, 9300][index], status: ['Enviada', 'Aprovada', 'Em análise', 'Rascunho', 'Enviada', 'Recusada'][index], createdAt: shiftDate(-index * 3), validUntil: shiftDate(20 + index), demoTag: 'DEMONSTRAÇÃO LOCAL' }));
-  const services = ['Identidade visual', 'Site institucional', 'Landing page', 'Gestão de tráfego', 'Conteúdo para redes sociais', 'SEO', 'Manutenção mensal', 'Loja virtual', 'Consultoria digital', 'Produção audiovisual'].map((name, index) => row(`service-${index + 1}`, { name, category: ['Marca', 'Web', 'Marketing'][index % 3], description: `Serviço demonstrativo ${name.toLowerCase()} para apresentação do catálogo.`, price: `R$ ${[4200, 12800, 5200, 2800, 1900][index % 5]},00`, cadence: index === 6 ? 'Mensal' : 'Projeto', status: 'Ativo', demoTag: 'DEMONSTRAÇÃO LOCAL' }));
-  const contracts = Array.from({ length: 5 }, (_, index) => row(`contract-${index + 1}`, { title: `Contrato de ${['site institucional', 'identidade visual', 'manutenção mensal', 'campanha digital', 'consultoria'][index]}`, code: `DEMO-2026-${String(index + 1).padStart(3, '0')}`, client: client(index).name, clientId: client(index).id, value: `R$ ${[12800, 6400, 1800, 7200, 3500][index]},00`, status: ['Ativo', 'Assinado', 'Em revisão', 'Ativo', 'Aguardando assinatura'][index], renewal: shiftDate(30 + index * 7), demoTag: 'DEMONSTRAÇÃO LOCAL' }));
+  const services = ['Identidade visual', 'Site institucional', 'Landing page', 'Gestão de tráfego', 'Conteúdo para redes sociais', 'SEO', 'Manutenção mensal', 'Loja virtual', 'Consultoria digital', 'Produção audiovisual'].map((name, index) => row(`service-${index + 1}`, { name, category: ['Marca', 'Web', 'Marketing'][index % 3], description: `Serviço demonstrativo ${name.toLowerCase()} para apresentação do catálogo.`, price: formatLocalDemoCurrency([4200, 12800, 5200, 2800, 1900][index % 5]), cadence: index === 6 ? 'Mensal' : 'Projeto', status: 'Ativo', demoTag: 'DEMONSTRAÇÃO LOCAL' }));
+  const contracts = Array.from({ length: 5 }, (_, index) => row(`contract-${index + 1}`, { title: `Contrato de ${['site institucional', 'identidade visual', 'manutenção mensal', 'campanha digital', 'consultoria'][index]}`, code: `DEMO-2026-${String(index + 1).padStart(3, '0')}`, client: client(index).name, clientId: client(index).id, value: formatLocalDemoCurrency([12800, 6400, 1800, 7200, 3500][index]), status: ['Ativo', 'Assinado', 'Em revisão', 'Ativo', 'Aguardando assinatura'][index], renewal: shiftDate(30 + index * 7), demoTag: 'DEMONSTRAÇÃO LOCAL' }));
   const billing = Array.from({ length: 8 }, (_, index) => row(`bill-${index + 1}`, { clientName: client(index).name, client: client(index).name, workspaceClientId: client(index).id, clientId: client(index).id, payerEmail: client(index).email, description: ['Etapa 2 — Portal Aurora', 'Manutenção mensal', 'Identidade visual', 'Hospedagem e suporte', 'Landing page', 'Consultoria mensal', 'Desenvolvimento web', 'Ajuste de campanha'][index], amount: [3200, 1800, 2400, 390, 5200, 1200, 6800, 850][index], method: ['pix', 'boleto'][index % 2], status: ['pending', 'paid', 'pending', 'overdue', 'processing', 'paid', 'pending', 'cancelled'][index], dueAt: `${index === 3 ? shiftDate(-3) : shiftDate(index + 2)}T23:59:00-03:00`, createdAt: new Date(Date.now() - index * 172800000).toISOString(), ...(index === 1 || index === 5 ? { paidAt: `${today()}T01:00:00-03:00` } : {}), paymentDetails: { paymentMethod: ['pix', 'boleto'][index % 2], simulated: true }, demoTag: 'DEMONSTRAÇÃO LOCAL · SEM COBRANÇA REAL' }));
   const subscriptions = Array.from({ length: 4 }, (_, index) => row(`subscription-${index + 1}`, { clientName: client(index).name, client: client(index).name, workspaceClientId: client(index).id, payerEmail: client(index).email, service: ['Suporte mensal', 'Gestão de conteúdo', 'Manutenção de site', 'Consultoria recorrente'][index], description: ['Suporte mensal', 'Gestão de conteúdo', 'Manutenção de site', 'Consultoria recorrente'][index], amount: [1800, 2400, 950, 1250][index], frequency: 'months', frequencyInterval: 1, cycle: 'Mensal', status: index === 3 ? 'paused' : 'authorized', nextDue: shiftDate(6 + index * 4), demoTag: 'DEMONSTRAÇÃO LOCAL' }));
   const recordSet = (resource, items) => [resource, items];
@@ -108,6 +119,7 @@ function readStore() {
       const defaults = seedById.get(String(record?.id));
       if (!defaults || !record || typeof record !== 'object') return record;
       const enriched = { ...defaults, ...record };
+      if (resource === 'contracts') Object.assign(enriched, migrateLegacyDemoContractValue(record, defaults));
       for (const [field, value] of Object.entries(defaults)) {
         if ((enriched[field] === undefined || enriched[field] === null || enriched[field] === '') && value !== undefined) enriched[field] = value;
       }

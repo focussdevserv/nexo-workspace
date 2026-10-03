@@ -68,6 +68,7 @@ import { canTransitionBillingSubscription, normalizeBillingSubscriptionStatus } 
 import { buildFinanceRecurrenceDates } from './integrations/finance-recurrence.js';
 import { buildWahaSendFilePayload, classifyWahaQrResponse, classifyWahaSessionReadiness } from './integrations/waha.js';
 import { claimWahaMessage } from './integrations/waha-send-claim.js';
+import { appendWahaIncomingMessage, applyWahaMessageAck } from './integrations/waha-webhook.js';
 import { clicksignBaseUrl, createClicksignEnvelope, getClicksignEnvelope, notifyClicksignEnvelope } from './integrations/clicksign.js';
 import { mapN8nCollections, n8nAutomationTemplates, buildN8nAutomationWorkflow, n8nApiKeyFailureMessage, n8nApiValidationMessage, n8nProposalTaskMatchesSource, n8nWorkflowActionEndpoint, n8nWorkflowsEndpoint, type N8nAutomationTemplateId } from './integrations/n8n.js';
 import { N8N_DELIVERY_MAX_ATTEMPTS, n8nCallbackRejectionReason, n8nDeliveryCanRetry, n8nDeliveryExhausted, n8nDeliveryRetryDelayMs } from './integrations/n8n-delivery.js';
@@ -715,17 +716,20 @@ app.post('/api/integrations/waha/webhook', async (request, reply) => {
   const messageId = String(payload.id || '');
   const chatId = String(payload.chatId || (payload.fromMe ? payload.to : payload.from) || '');
   if (!messageId || !chatId) return reply.code(202).send({ data: { ignored: true } });
-  const [conversation] = await db.select().from(workspaceRecords).where(and(
-    eq(workspaceRecords.organizationId, sessionRow.organizationId), eq(workspaceRecords.resource, 'inbox'), isNull(workspaceRecords.archivedAt),
-    sql`${workspaceRecords.data}->>'whatsappSessionId' = ${sessionRow.id}`, sql`${workspaceRecords.data}->>'whatsappChatId' = ${chatId}`,
-  )).limit(1);
   if (event === 'message.ack') {
-    if (conversation) {
-      const data = conversation.data as Record<string, any>;
-      const ack = Number(payload.ack || 0);
-      const history = Array.isArray(data.history) ? data.history as Array<Record<string, any>> : [];
-      await db.update(workspaceRecords).set({ data: { ...data, history: history.map((item) => item.providerMessageId === messageId ? { ...item, ack, status: ack >= 3 ? 'read' : ack >= 2 ? 'delivered' : item.status } : item) }, updatedAt: new Date() }).where(eq(workspaceRecords.id, conversation.id));
-    }
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${sessionRow.organizationId}), hashtext(${`${sessionRow.id}:${chatId}`}))`);
+      const [conversation] = await tx.select().from(workspaceRecords).where(and(
+        eq(workspaceRecords.organizationId, sessionRow.organizationId), eq(workspaceRecords.resource, 'inbox'), isNull(workspaceRecords.archivedAt),
+        sql`${workspaceRecords.data}->>'whatsappSessionId' = ${sessionRow.id}`, sql`${workspaceRecords.data}->>'whatsappChatId' = ${chatId}`,
+      )).limit(1).for('update');
+      if (!conversation) return;
+      const nextData = applyWahaMessageAck(conversation.data as Record<string, any>, messageId, Number(payload.ack || 0));
+      if (nextData) await tx.update(workspaceRecords).set({ data: nextData, updatedAt: new Date() }).where(and(
+        eq(workspaceRecords.id, conversation.id), eq(workspaceRecords.organizationId, sessionRow.organizationId),
+        eq(workspaceRecords.resource, 'inbox'), isNull(workspaceRecords.archivedAt),
+      ));
+    });
     return reply.code(204).send();
   }
   if (payload.fromMe === true) return reply.code(202).send({ data: { ignored: true } });
@@ -735,22 +739,38 @@ app.post('/api/integrations/waha/webhook', async (request, reply) => {
   const text = String(payload.body || (payload.hasMedia ? `[Mídia${payload.media?.filename ? `: ${payload.media.filename}` : ' recebida'}]` : '')).slice(0, 4096);
   const timestamp = Number(payload.timestamp || Date.now() / 1000);
   const at = new Date(timestamp * 1000).toISOString();
-  const currentData = (conversation?.data || {}) as Record<string, any>;
-  const oldHistory = Array.isArray(currentData.history) ? currentData.history as Array<Record<string, any>> : [];
-  if (oldHistory.some((item) => item.providerMessageId === messageId)) return reply.code(204).send();
   const clientRows = await db.select().from(clients).where(eq(clients.organizationId, sessionRow.organizationId));
   const matchingClient = clientRows.find((client) => client.phone?.replace(/\D/g, '') === normalizedPhone) || null;
   const displayName = String(payload._data?.notifyName || payload._data?.pushName || payload.pushName || matchingClient?.contactName || phone || 'WhatsApp');
-  const initials = displayName.split(/\s+/).slice(0, 2).map((part) => part[0] || '').join('').toUpperCase();
-  const history = [...oldHistory, { id: messageId, providerMessageId: messageId, side: 'received', text: text || 'Mensagem recebida', time: new Date(timestamp * 1000).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }), timestamp: at, status: 'received', ...(payload.media?.filename ? { attachment: String(payload.media.filename) } : {}) }];
-  const nextData = { ...currentData, name: currentData.name || displayName, company: matchingClient?.name || currentData.company || '', clientId: matchingClient?.id || currentData.clientId || '', phone, email: matchingClient?.email || currentData.email || '', initials, color: currentData.color || 'blue', channel: 'WhatsApp', status: 'open', whatsappSessionId: sessionRow.id, whatsappChatId: chatId, text: text || 'Mensagem recebida', time: at, unread: Number(currentData.unread || 0) + 1, history };
-  let inboxId = conversation?.id;
-  if (conversation) await db.update(workspaceRecords).set({ data: nextData, updatedAt: new Date() }).where(eq(workspaceRecords.id, conversation.id));
-  else {
-    const [created] = await db.insert(workspaceRecords).values({ organizationId: sessionRow.organizationId, resource: 'inbox', data: nextData, createdBy: null }).returning({ id: workspaceRecords.id });
-    inboxId = created?.id;
-  }
-  if (inboxId) await db.insert(activityEvents).values({ organizationId: sessionRow.organizationId, entityType: 'inbox', entityId: inboxId, action: 'received', payload: { label: displayName, preview: (text || 'Mensagem recebida').slice(0, 180), providerMessageId: messageId } });
+  await db.transaction(async (tx) => {
+    // Serializes both existing-chat updates and the first-message/no-row case.
+    // The second delivery sees the committed providerMessageId before deciding
+    // whether to append or create a conversation.
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${sessionRow.organizationId}), hashtext(${`${sessionRow.id}:${chatId}`}))`);
+    const [conversation] = await tx.select().from(workspaceRecords).where(and(
+      eq(workspaceRecords.organizationId, sessionRow.organizationId), eq(workspaceRecords.resource, 'inbox'), isNull(workspaceRecords.archivedAt),
+      sql`${workspaceRecords.data}->>'whatsappSessionId' = ${sessionRow.id}`, sql`${workspaceRecords.data}->>'whatsappChatId' = ${chatId}`,
+    )).limit(1).for('update');
+    const receivedData = appendWahaIncomingMessage((conversation?.data || null) as Record<string, any> | null, {
+      messageId, sessionId: sessionRow.id, chatId, from: phone, text, timestamp: at,
+      time: new Date(timestamp * 1000).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+      displayName, clientId: matchingClient?.id, clientName: matchingClient?.name,
+      clientEmail: matchingClient?.email, mediaFilename: payload.media?.filename ? String(payload.media.filename) : undefined,
+    });
+    if (!receivedData) return null;
+    let inboxId = conversation?.id;
+    if (conversation) {
+      await tx.update(workspaceRecords).set({ data: receivedData, updatedAt: new Date() }).where(and(
+        eq(workspaceRecords.id, conversation.id), eq(workspaceRecords.organizationId, sessionRow.organizationId),
+        eq(workspaceRecords.resource, 'inbox'), isNull(workspaceRecords.archivedAt),
+      ));
+    } else {
+      const [created] = await tx.insert(workspaceRecords).values({ organizationId: sessionRow.organizationId, resource: 'inbox', data: receivedData, createdBy: null }).returning({ id: workspaceRecords.id });
+      inboxId = created?.id;
+    }
+    if (inboxId) await tx.insert(activityEvents).values({ organizationId: sessionRow.organizationId, entityType: 'inbox', entityId: inboxId, action: 'received', payload: { label: displayName, preview: (text || 'Mensagem recebida').slice(0, 180), providerMessageId: messageId } });
+    return inboxId || null;
+  });
   return reply.code(204).send();
 });
 

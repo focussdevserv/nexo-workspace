@@ -5,6 +5,7 @@ import { Archive, ArrowDown, ArrowDownRight, ArrowRight, ArrowUpRight, Building2
 import "../screens/commercial.css";
 import { apiRequest, fetchAllRecords, useWorkspaceRecords } from "../lib/workspace-api.js";
 import { dateAfterDays } from "../lib/payment-due-date.js";
+import { createBillingRequestUuid, reuseBillingRequestKey } from "../lib/billing-request-idempotency.js";
 import { completeRequestedServiceCatalog, mergeRequestedServiceCatalog, requestedServiceCatalog } from "../data/service-catalog.js";
 import { resolveProposalServices, summarizeProposalServices } from "../data/proposal-services.js";
 import { buildServiceProject } from "../data/service-project-template.js";
@@ -1525,6 +1526,7 @@ function ClientProfileModal({
   const [fileUploading, setFileUploading] = useState(false);
   const [financeDialog, setFinanceDialog] = useState(false);
   const [financeSaving, setFinanceSaving] = useState(false);
+  const billingRequestAttempt = useRef(null);
   const [billingRefreshingId, setBillingRefreshingId] = useState("");
   const [billingCancelingId, setBillingCancelingId] = useState("");
   const billingCancelLock = useRef(new Set());
@@ -1680,10 +1682,19 @@ function ClientProfileModal({
           dueDate: financeDraft.dueDate
         })
       };
+      const operation = recurring ? "subscriptions" : "orders";
+      const idempotencyKey = financeRecord ? null : (billingRequestAttempt.current = reuseBillingRequestKey(
+        billingRequestAttempt.current,
+        operation,
+        payload,
+        createBillingRequestUuid
+      )).key;
       const result = await apiRequest(endpoint, {
         method: "POST",
+        ...(idempotencyKey ? { headers: { "Idempotency-Key": idempotencyKey } } : {}),
         body: JSON.stringify(payload)
       });
+      if (!financeRecord) billingRequestAttempt.current = null;
       const key = financeRecord ? financeDraft.kind === "revenue" ? "revenues" : "expenses" : recurring ? "subscriptions" : "billing";
       const record = financeRecord ? result.data : result.data;
       let installmentWarning = "";

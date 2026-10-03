@@ -32,3 +32,19 @@ test('payment create forms send and retain an Idempotency-Key until successful c
   assert.match(source, /['"]Idempotency-Key['"]\s*:/);
   assert.match(source, /billingRequestAttempt\.current\s*=\s*null/);
 });
+
+test('client profile charge and subscription retries reuse an idempotency key until the API confirms creation', async () => {
+  const source = await readFile(new URL('../screens/CommercialScreens.jsx', import.meta.url), 'utf8');
+  const save = source.slice(source.indexOf('const saveClientFinance = async event =>'), source.indexOf('const addClientFile = async file =>'));
+  assert.match(source, /import \{ createBillingRequestUuid, reuseBillingRequestKey \} from ["']\.\.\/lib\/billing-request-idempotency\.js["']/);
+  assert.match(save, /billingRequestAttempt\.current = reuseBillingRequestKey\(/);
+  assert.match(save, /operation,\s*payload,\s*createBillingRequestUuid/);
+  assert.match(save, /headers:\s*\{\s*["']Idempotency-Key["']:\s*idempotencyKey\s*\}/);
+
+  const requestIndex = save.indexOf('const result = await apiRequest(endpoint, {');
+  const clearIndex = save.indexOf('if (!financeRecord) billingRequestAttempt.current = null;', requestIndex);
+  const catchIndex = save.indexOf('} catch (error) {', requestIndex);
+  assert.ok(requestIndex >= 0, 'client finance create request is present');
+  assert.ok(clearIndex > requestIndex && clearIndex < catchIndex, 'key is cleared only after the create request resolves');
+  assert.doesNotMatch(save.slice(catchIndex), /billingRequestAttempt\.current\s*=\s*null/);
+});
