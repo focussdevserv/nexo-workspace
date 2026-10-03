@@ -136,3 +136,15 @@ html[data-theme='dark'] .workspace-access-card .workspace-access-brand { color: 
   .workspace-access-card { padding: 26px 22px; border-radius: 20px; }
   .workspace-access-page .workspace-theme-toggle { top: 14px; right: 14px; }
 }
+
+/* Keep login controls comfortable to tap and prevent mobile browser zoom on focus. */
+.workspace-access-page .workspace-theme-toggle,
+.workspace-access-card .workspace-access-forgot,
+.workspace-access-card .workspace-access-switch { min-height: 44px; }
+.workspace-access-card .workspace-access-forgot,
+.workspace-access-card .workspace-access-switch { display: inline-flex; align-items: center; justify-content: center; padding: 10px 12px; }
+@media (max-width: 560px) {
+  .workspace-access-card input:not([type="checkbox"]) { min-height: 46px; font-size: 16px; }
+  .workspace-access-card label { font-size: 13px; }
+  .workspace-access-submit { min-height: 48px; }
+}

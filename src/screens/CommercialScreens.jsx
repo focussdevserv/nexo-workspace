@@ -36,6 +36,7 @@ import { averageProposalApprovalDays, countLeadsWithoutNextAction, formatElapsed
 import { buildLeadFollowUpTaskData, findOpenLeadFollowUpTask, isTerminalLeadStage } from "../lib/lead-follow-up-task.js";
 import { isCommercialDateWithinNextDays } from "../lib/commercial-date.js";
 import { confirmWorkspaceDelete, useWorkspacePreferences } from "../lib/workspace-preferences.js";
+import { normalizeCommercialScreenRows } from "../lib/commercial-screen-data.js";
 const datasets = {
   leads: [],
   clients: [],
@@ -393,7 +394,17 @@ export default function CommercialScreen({
     notes: ""
   };
   const [draft, setDraft] = useState(emptyDraft);
-  const data = Array.isArray(records[recordType]) ? records[recordType].filter(item => item && typeof item === "object" && !Array.isArray(item)) : dataFor(localPage);
+  const sourceRows = records[recordType];
+  const data = useMemo(() => Array.isArray(sourceRows) ? normalizeCommercialScreenRows(recordType, sourceRows) : normalizeCommercialScreenRows(recordType, dataFor(localPage)), [sourceRows, recordType, localPage]);
+  const displayRows = useMemo(() => ({
+    leads: normalizeCommercialScreenRows("leads", records.leads || datasets.leads),
+    clients: normalizeCommercialScreenRows("clients", records.clients || []),
+    companies: normalizeCommercialScreenRows("companies", records.companies || []),
+    contacts: normalizeCommercialScreenRows("contacts", records.contacts || []),
+    proposals: normalizeCommercialScreenRows("proposals", records.proposals || []),
+    services: normalizeCommercialScreenRows("services", records.services || []),
+    contracts: normalizeCommercialScreenRows("contracts", records.contracts || []),
+  }), [records.leads, records.clients, records.companies, records.contacts, records.proposals, records.services, records.contracts]);
   const activeStoreKey = ["crm", "pipeline"].includes(key) ? "leads" : recordType;
   const activeLoadError = recordErrors[activeStoreKey];
   const activeStoreLoading = recordLoadings[activeStoreKey];
@@ -979,19 +990,19 @@ export default function CommercialScreen({
         setSearch("");
         setFilter("Todos");
         setExtraFilters({});
-      }}><item.icon size={14} />{item.tab}</button>)}</nav>{activeLoadError && activeRecordCount > 0 && <div className="com-load-error" role="alert"><span>Não foi possível atualizar todos os dados desta área: {activeLoadError}</span><button type="button" className="com-secondary" onClick={() => refreshOneRecord(activeStoreKey)}>Tentar novamente</button></div>}{activeStoreLoading && activeRecordCount === 0 ? <div className="com-data-state" role="status">Carregando {current.title.toLocaleLowerCase("pt-BR")}...</div> : activeLoadError && activeRecordCount === 0 ? <div className="com-data-state com-data-state-error" role="alert"><strong>Não foi possível carregar {current.title.toLocaleLowerCase("pt-BR")}.</strong><span>{activeLoadError}</span><button type="button" className="com-secondary" onClick={() => refreshOneRecord(activeStoreKey)}>Tentar novamente</button></div> : key === "crm" || key === "pipeline" ? <PipelineView items={records.leads || datasets.leads} onUpdate={updateLead} onMove={moveLead} onCreateLead={stage => {
+      }}><item.icon size={14} />{item.tab}</button>)}</nav>{activeLoadError && activeRecordCount > 0 && <div className="com-load-error" role="alert"><span>Não foi possível atualizar todos os dados desta área: {activeLoadError}</span><button type="button" className="com-secondary" onClick={() => refreshOneRecord(activeStoreKey)}>Tentar novamente</button></div>}{activeStoreLoading && activeRecordCount === 0 ? <div className="com-data-state" role="status">Carregando {current.title.toLocaleLowerCase("pt-BR")}...</div> : activeLoadError && activeRecordCount === 0 ? <div className="com-data-state com-data-state-error" role="alert"><strong>Não foi possível carregar {current.title.toLocaleLowerCase("pt-BR")}.</strong><span>{activeLoadError}</span><button type="button" className="com-secondary" onClick={() => refreshOneRecord(activeStoreKey)}>Tentar novamente</button></div> : key === "crm" || key === "pipeline" ? <PipelineView items={displayRows.leads} onUpdate={updateLead} onMove={moveLead} onCreateLead={stage => {
       setDraft({
         ...emptyDraft,
         stage
       });
       setComposer(true);
-    }} onSearch={setSearch} search={search} mode={key} period={period} setPeriod={setPeriod} localDemo={localDemo} /> : key === "servicos" ? <ServicesView items={visible} totalItems={records.services?.length || 0} clients={records.clients || []} onCreateProject={async (project, tasks) => {
+    }} onSearch={setSearch} search={search} mode={key} period={period} setPeriod={setPeriod} localDemo={localDemo} /> : key === "servicos" ? <ServicesView items={visible} totalItems={records.services?.length || 0} clients={displayRows.clients} onCreateProject={async (project, tasks) => {
       await persistRecords({
         ...records,
         projects: [project, ...(records.projects || [])],
         tasks: [...tasks, ...(records.tasks || [])]
       });
-    }} onAction={notify} onUpdate={updateServiceRecord} onDelete={deleteServiceRecord} onImportCatalog={importCatalog} catalogImporting={catalogSeedState === "loading" || servicesLoading} catalogSeedState={catalogSeedState} search={search} setSearch={setSearch} preferences={preferences} /> : <ListView page={key} items={visible} relatedProjects={records.projects || []} relatedSubscriptions={relatedSubscriptions} relatedContracts={records.contracts || []} onArchive={archiveClient} openClientId={key === "clientes" ? navigationContext?.clientId : ""} onClientOpened={onNavigationContextConsumed} search={search} setSearch={setSearch} filter={filter} setFilter={setFilter} extraFilterFields={extraFilterFields} extraFilters={extraFilters} setExtraFilters={setExtraFilters} onAction={notify} onAccept={acceptProposal} onSendProposal={sendProposal} localDemo={localDemo} onRefreshRecords={refreshRecords} onUpdate={updateCommercialRecord} onDelete={deleteCommercialRecord} clients={records.clients || []} companies={records.companies || []} contacts={records.contacts || []} services={records.services || []} tasks={records.tasks || []} totalItems={data.length} preferences={preferences} />}{composer && <div className="com-modal-backdrop" onMouseDown={event => {
+    }} onAction={notify} onUpdate={updateServiceRecord} onDelete={deleteServiceRecord} onImportCatalog={importCatalog} catalogImporting={catalogSeedState === "loading" || servicesLoading} catalogSeedState={catalogSeedState} search={search} setSearch={setSearch} preferences={preferences} /> : <ListView page={key} items={visible} relatedProjects={records.projects || []} relatedSubscriptions={relatedSubscriptions} relatedContracts={displayRows.contracts} onArchive={archiveClient} openClientId={key === "clientes" ? navigationContext?.clientId : ""} onClientOpened={onNavigationContextConsumed} search={search} setSearch={setSearch} filter={filter} setFilter={setFilter} extraFilterFields={extraFilterFields} extraFilters={extraFilters} setExtraFilters={setExtraFilters} onAction={notify} onAccept={acceptProposal} onSendProposal={sendProposal} localDemo={localDemo} onRefreshRecords={refreshRecords} onUpdate={updateCommercialRecord} onDelete={deleteCommercialRecord} clients={displayRows.clients} companies={displayRows.companies} contacts={displayRows.contacts} services={displayRows.services} tasks={records.tasks || []} totalItems={data.length} preferences={preferences} />}{composer && <div className="com-modal-backdrop" onMouseDown={event => {
       if (event.target === event.currentTarget) setComposer(false);
     }}><form className="com-create-modal" onSubmit={createRecord}><header><div><small>{current.eyebrow}</small><h2>{createLabel}</h2></div><button type="button" aria-label="Fechar" onClick={() => setComposer(false)}><X size={15} /></button></header>{key === "clientes" && <label>Tipo de cadastro<select value={draft.clientType} onChange={e => setDraft({
             ...draft,

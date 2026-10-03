@@ -85,6 +85,10 @@ function sumMonth(rows, month, realized, currentMonth) {
   return rows.filter((row) => {
     const status = String(row.status || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
     if (cancelledStatuses.has(status) || settledStatuses.has(status) !== realized) return false;
+    // Failed/expired/rejected payments are not future cash, even though they
+    // are neither settled nor cancelled. Keep open and overdue receivables in
+    // the forecast until they are paid or explicitly closed.
+    if (!realized && !isFinanceReceivableOpen(row)) return false;
     const date = asLocalDate(realized ? row.settledAt || row.date : row.dueDate || row.date);
     if (Number.isNaN(date.valueOf())) return false;
     if (!realized && date < currentMonth) date.setTime(currentMonth.getTime());

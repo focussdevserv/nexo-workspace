@@ -51,6 +51,17 @@ test('places date-only values in the intended month in the local timezone', () =
   assert.equal(months.find((item) => item.month.getMonth() === 0).incomeRealized, 10);
 });
 
+test('cashflow forecast excludes failed, rejected, expired and authorized payments', () => {
+  const statuses = ['failed', 'Falhou', 'rejected', 'Recusada', 'expired', 'Expirada', 'authorized', 'processed'];
+  const rows = statuses.map((status, index) => ({ id: String(index), amount: 100, status, dueDate: '2026-04-10' }));
+  rows.push({ id: 'pending', amount: 75, status: 'Pendente', dueDate: '2026-04-10' });
+  rows.push({ id: 'overdue', amount: 25, status: 'Atrasada', dueDate: '2026-02-10' });
+
+  const months = buildCashflowMonths(rows, [], new Date(2026, 2, 15));
+  assert.equal(months.find((item) => item.month.getMonth() === 3).incomeForecast, 75);
+  assert.equal(months.find((item) => item.month.getMonth() === 2).incomeForecast, 25);
+});
+
 test('classifies past-due pending income and expenses as overdue without changing stored status', () => {
   const today = new Date(2026, 2, 15, 10);
   assert.equal(isFinanceRecordOverdue({ status: 'Pendente', dueDate: '2026-03-14' }, today), true);

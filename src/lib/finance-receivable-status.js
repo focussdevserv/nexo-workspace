@@ -4,6 +4,8 @@ const closedStatuses = new Set([
   'canceled', 'cancelled', 'cancelada', 'cancelado', 'refunded', 'estornada', 'estornado',
   'failed', 'failure', 'rejected', 'declined', 'refused', 'expired', 'voided', 'chargeback',
   'payment failed', 'payment rejected', 'payment expired', 'authorization failed',
+  'falhou', 'falha', 'recusada', 'recusado', 'rejeitada', 'rejeitado', 'expirada', 'expirado',
+  'autorizacao falhou', 'cobranca estornada',
 ]);
 
 export function isFinanceReceivableStatusOpen(status) {

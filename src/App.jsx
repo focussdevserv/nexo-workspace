@@ -19,6 +19,8 @@ import { mergeServerWorkspacePreferences, publishWorkspacePreferences, readCache
 import { purgeFictitiousLocalData } from './lib/demo-data.js';
 import { activateLocalDemo, exitLocalDemo, isLocalDemoActive, resetLocalDemo } from './lib/local-demo.js';
 import { completeTaskOccurrence } from './lib/task-recurrence.js';
+import { dashboardTaskCompletionBlocker } from './lib/dashboard-task-completion.js';
+import { taskDependencyBlockMessage } from './lib/task-dependency.js';
 import { shouldRefreshDashboardOnNavigation } from './lib/dashboard-navigation.js';
 import { dashboardCreateContext } from './lib/dashboard-create-context.js';
 import { dashboardEventNavigationContext } from './lib/dashboard-event-navigation.js';
@@ -600,6 +602,8 @@ function WorkspaceShell() {
     if (updatingTaskIds.has(id)) return;
     const task = tasks.find((item) => String(item.id) === String(id));
     if (!task) return;
+    const blocker = dashboardTaskCompletionBlocker(tasks, task);
+    if (blocker) { notify(taskDependencyBlockMessage(blocker)); return; }
     const reopening = isCompletedTask(task);
     const state = reopening ? 'Pendente' : 'Conclu\u00edda';
     const transition = completeTaskOccurrence(tasks, id);
