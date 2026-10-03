@@ -13,7 +13,7 @@ import ReportsScreen from './ReportsScreen.jsx';
 import TeamScreen from './TeamScreen.jsx';
 import { ClientPortalAdmin } from './ClientPortalScreens.jsx';
 import { repositoryRegistrationIssue } from '../lib/repository-registration.js';
-import { normalizeRepositoryActivity } from '../lib/repository-activity.js';
+import { normalizeRepositoryActivity, repositoryActivityIdentityChanged } from '../lib/repository-activity.js';
 import { repositoryConnectionState } from '../lib/repository-connection.js';
 import { updateKeyedBusyState } from '../lib/keyed-busy-state.js';
 import { canStartRepositoryOperation } from '../lib/repository-operation.js';
@@ -70,8 +70,13 @@ export default function AdminScreen({ page, navigationContext = null, onNavigati
     setRepoError('');
     try {
       const payload = { ...repoDraft, name, owner, project: repoDraft.project.trim(), branch: repoDraft.branch.trim() || 'main' };
-      if (editingRepo) await updateRepo(editingRepo.id, payload);
-      else await createRepo({ ...payload, status: 'Aguardando conexao' });
+      if (editingRepo) {
+        await updateRepo(editingRepo.id, payload);
+        if (repositoryActivityIdentityChanged(editingRepo, payload)) {
+          setRepoActivity((current) => { const next = { ...current }; delete next[editingRepo.id]; return next; });
+          setRepoSyncError((current) => { const next = { ...current }; delete next[editingRepo.id]; return next; });
+        }
+      } else await createRepo({ ...payload, status: 'Aguardando conexao' });
       setRepoDraft({ name: '', owner: '', project: '', branch: 'main' });
       setEditingRepo(null);
       setRepoModal(false);

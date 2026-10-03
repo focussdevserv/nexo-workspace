@@ -1,6 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeRepositoryActivity, safeRepositoryExternalUrl } from './repository-activity.js';
+import { normalizeRepositoryActivity, repositoryActivityIdentityChanged, safeRepositoryExternalUrl } from './repository-activity.js';
+
+test('invalidates cached activity only when an edit changes repository identity', () => {
+  const original = { owner: 'Acme', name: 'site', project: 'Old project', branch: 'main' };
+  assert.equal(repositoryActivityIdentityChanged(original, { ...original, project: 'New project' }), false);
+  assert.equal(repositoryActivityIdentityChanged(original, { ...original, owner: ' acme ' }), false);
+  assert.equal(repositoryActivityIdentityChanged(original, { ...original, name: 'new-site' }), true);
+  assert.equal(repositoryActivityIdentityChanged(original, { ...original, owner: 'other-org' }), true);
+});
 
 test('repository and deployment links accept credential-free HTTPS URLs only', () => {
   assert.equal(safeRepositoryExternalUrl('https://github.com/acme/site'), 'https://github.com/acme/site');

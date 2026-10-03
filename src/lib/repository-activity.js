@@ -1,5 +1,14 @@
 const asText = (value) => typeof value === 'string' ? value : '';
 
+/** Cached GitHub activity belongs to a repository identity, not the workspace record ID. */
+export function repositoryActivityIdentityChanged(previous, next) {
+  const identity = (repository) => [repository?.owner, repository?.name]
+    .map((value) => String(value || '').trim().toLocaleLowerCase('en-US'));
+  const before = identity(previous);
+  const after = identity(next);
+  return before[0] !== after[0] || before[1] !== after[1];
+}
+
 /** GitHub activity can contain user-controlled deployment URLs; only link to credential-free HTTPS destinations. */
 export function safeRepositoryExternalUrl(value) {
   if (typeof value !== 'string' || /[\\\u0000-\u001f]/.test(value)) return '';

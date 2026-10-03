@@ -1,3 +1,5 @@
+import { resolveCommercialServiceByName } from './commercial-service-link.js';
+
 const commercialEditorFields = {
   empresas: [
     { key: 'name', label: 'Empresa', required: true },
@@ -167,12 +169,15 @@ export function buildCommercialRecordEditorPatch(page, draft, clients = [], reco
   }
 
   if (page === 'propostas' && patch.service !== undefined && patch.service !== record.service) {
-    const service = services.find((item) => normalizeName(item.name) === normalizeName(patch.service));
+    const { service, ambiguous } = resolveCommercialServiceByName(services, patch.service);
+    if (ambiguous) return { error: 'Há mais de um serviço com esse nome. Renomeie os serviços para diferenciá-los antes de vincular.' };
     patch.serviceId = service?.id || '';
     patch.serviceIds = service ? [service.id] : [];
   }
   if (page === 'contratos' && patch.service !== undefined && patch.service !== record.service) {
-    patch.serviceId = services.find((item) => normalizeName(item.name) === normalizeName(patch.service))?.id || '';
+    const { service, ambiguous } = resolveCommercialServiceByName(services, patch.service);
+    if (ambiguous) return { error: 'Há mais de um serviço com esse nome. Renomeie os serviços para diferenciá-los antes de vincular.' };
+    patch.serviceId = service?.id || '';
   }
 
   return { patch };

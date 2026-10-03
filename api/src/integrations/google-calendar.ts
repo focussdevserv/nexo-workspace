@@ -56,7 +56,9 @@ export function mapGoogleCalendarEvents(input: unknown, timeZone = 'America/Sao_
       googleHtmlLink: typeof event.htmlLink === 'string' ? event.htmlLink : '',
       date: start.date,
       time: start.time,
-      end: end.date === start.date ? end.time : '23:59',
+      // Timed events can cross midnight; `endDate` carries the civil date,
+      // while `end` must remain the actual local clock time on that date.
+      end: allDay ? '23:59' : end.time,
       endDate: end.date,
       allDay,
       title: typeof event.summary === 'string' && event.summary.trim() ? event.summary.trim() : 'Evento sem título',

@@ -44,3 +44,16 @@ test('maps timed events using a workspace-selected timezone', () => {
   assert.equal(event.time, '10:00');
   assert.equal(event.end, '11:00');
 });
+
+test('preserves the local end time for timed events crossing midnight', () => {
+  const [event] = mapGoogleCalendarEvents([{
+    id: 'overnight123', summary: 'Plantão',
+    start: { dateTime: '2026-10-03T02:00:00Z' },
+    end: { dateTime: '2026-10-03T04:00:00Z' },
+  }], 'America/Sao_Paulo');
+
+  assert.equal(event.date, '2026-10-02');
+  assert.equal(event.time, '23:00');
+  assert.equal(event.endDate, '2026-10-03');
+  assert.equal(event.end, '01:00');
+});

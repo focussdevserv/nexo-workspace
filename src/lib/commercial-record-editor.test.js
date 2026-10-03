@@ -218,6 +218,21 @@ test('rejects malformed proposal prices without modifying the original record', 
   assert.equal(record.title, 'Proposta');
 });
 
+test('proposal and contract edits reject ambiguous service names rather than linking the first match', () => {
+  const duplicateServices = [
+    { id: 'service-a', name: 'Landing Page' },
+    { id: 'service-b', name: 'Landing Page' },
+  ];
+  const proposal = buildCommercialRecordEditorPatch('propostas', {
+    title: 'Nova landing', clientId: '12', service: 'Landing Page',
+  }, clients, { title: 'Nova landing', client: 'Nexo Ltda', clientId: 12, service: 'Site' }, duplicateServices);
+  const contract = buildCommercialRecordEditorPatch('contratos', {
+    title: 'Contrato landing', clientId: '12', service: 'Landing Page', progress: '0',
+  }, clients, { title: 'Contrato landing', client: 'Nexo Ltda', clientId: 12, service: 'Site' }, duplicateServices);
+  assert.match(proposal.error, /mais de um servi/i);
+  assert.match(contract.error, /mais de um servi/i);
+});
+
 test('proposal acceptance requires a live canonical client and propagates its ID to generated records', async () => {
   const source = await readFile(new URL('../screens/CommercialScreens.jsx', import.meta.url), 'utf8');
   const start = source.indexOf('const acceptProposal = async proposal => {');
@@ -228,5 +243,6 @@ test('proposal acceptance requires a live canonical client and propagates its ID
   assert.match(acceptance, /if \(!linkedClient\)[\s\S]*?return false;/);
   assert.match(acceptance, /client: linkedClient\.name,[\s\S]*?clientId: linkedClient\.id/);
   assert.match(acceptance, /clientId: linkedClient\.id,[\s\S]*?sourceProposalId: proposal\.id/);
+  assert.match(acceptance, /resolveCommercialServiceByName\(records\.services \|\| datasets\.services, proposal\.service\)\.service/);
   assert.match(acceptance, /apiRequest\(`\/api\/workspace\/proposals\/\$\{encodeURIComponent\(proposal\.id\)\}\/accept`/);
 });

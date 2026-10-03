@@ -20,6 +20,7 @@ import { commercialContractCode } from "../lib/commercial-contract-code.js";
 import { activeContractMonthlyRevenue } from "../lib/commercial-contract-revenue.js";
 import { commercialStatusPatch } from "../lib/commercial-status-patch.js";
 import { commercialServicePayload } from "../lib/commercial-service-payload.js";
+import { resolveCommercialServiceByName } from "../lib/commercial-service-link.js";
 import { commercialServicePricingInput, validateCommercialServicePricing } from "../lib/commercial-service-pricing.js";
 import { parseCatalogPrice } from "../lib/catalog-price.js";
 import { filterLeadsByPeriod } from "../lib/lead-period-filter.js";
@@ -901,7 +902,8 @@ export default function CommercialScreen({
     const now = (new Date()).toISOString();
     const selectedServices = resolveProposalServices(records.services || datasets.services, proposal.serviceIds, proposal.serviceId);
     const serviceSummary = summarizeProposalServices(selectedServices);
-    const serviceTemplate = selectedServices[0] || (records.services || datasets.services).find(item => String(item.name || "").toLocaleLowerCase("pt-BR") === String(proposal.service || "").toLocaleLowerCase("pt-BR"));
+    const legacyService = resolveCommercialServiceByName(records.services || datasets.services, proposal.service).service;
+    const serviceTemplate = selectedServices[0] || legacyService;
     const contract = {
       title: proposal.title,
       client: linkedClient.name,

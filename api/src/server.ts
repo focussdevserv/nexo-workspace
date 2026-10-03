@@ -50,6 +50,7 @@ import { passwordResetDeliveryReadiness } from './auth/password-reset-readiness.
 import { shouldRenewPersistentWorkspaceSession, workspaceSessionCookieOptions, workspaceSessionPolicy, workspaceSessionVersionIsCurrent } from './auth/session-policy.js';
 import { normalizeAccountEmail } from './auth/account-email.js';
 import { mapGitHubRepositoryActivity } from './integrations/github.js';
+import { githubRepositoryRegistrationAccess } from './integrations/github-repository-access.js';
 import { googleCalendarTestDisposition } from './integrations/google-health.js';
 import { sameMercadoPagoPaymentSnapshot } from './integrations/mercadopago.js';
 import { matchesMercadoPagoExternalReference, mercadoPagoAccountMatchesRecord, mercadoPagoWebhookResource } from './integrations/mercadopago-webhook.js';
@@ -1395,10 +1396,26 @@ app.get('/api/integrations/github/repos/:owner/:repo/activity', { preHandler: ap
   const repoPattern = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,98}[A-Za-z0-9])?$/;
   const params = z.object({ owner: z.string().max(39).regex(ownerPattern), repo: z.string().max(100).regex(repoPattern) }).safeParse(request.params);
   if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Proprietário ou repositório GitHub inválido.' });
+  const { owner, repo } = params.data;
+  const registeredRepositories = await db.select({ id: workspaceRecords.id, organizationId: workspaceRecords.organizationId, data: workspaceRecords.data, archivedAt: workspaceRecords.archivedAt })
+    .from(workspaceRecords)
+    .where(and(
+      eq(workspaceRecords.organizationId, request.user.organizationId),
+      eq(workspaceRecords.resource, 'repositories'),
+      isNull(workspaceRecords.archivedAt),
+      sql`lower(btrim(${workspaceRecords.data}->>'owner')) = ${owner.toLocaleLowerCase('en-US')}`,
+      sql`lower(btrim(${workspaceRecords.data}->>'name')) = ${repo.toLocaleLowerCase('en-US')}`,
+    ))
+    .limit(2);
+  const registration = githubRepositoryRegistrationAccess(registeredRepositories, request.user.organizationId, owner, repo, request.user.permissions?.scope);
+  if (!registration.allowed) {
+    if (registration.reason === 'outside_scope') return reply.code(403).send({ error: 'record_scope_denied', message: 'Este repositório não pertence ao escopo atribuído.' });
+    if (registration.reason === 'ambiguous_registration') return reply.code(409).send({ error: 'github_repository_registration_ambiguous', message: 'Há cadastros duplicados deste repositório neste workspace. Corrija os duplicados antes de sincronizar.' });
+    return reply.code(404).send({ error: 'github_repository_not_registered', message: 'Cadastre este repositório no workspace antes de consultar sua atividade.' });
+  }
   const token = process.env.GITHUB_TOKEN;
   if (!token) return reply.code(503).send({ error: 'github_not_configured', message: 'Configure GITHUB_TOKEN no serviço API do Coolify.' });
   if (!await isIntegrationEnabled(request.user.organizationId, 'github')) return reply.code(409).send({ error: 'integration_disconnected', message: 'GitHub está desconectado no Focusshub. Reative em Integrações para sincronizar.' });
-  const { owner, repo } = params.data;
   const prefix = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
   const githubRequest = async (path: string) => {
     const response = await fetch(`https://api.github.com${path}`, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' }, signal: AbortSignal.timeout(15_000) });
