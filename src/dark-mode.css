@@ -1125,7 +1125,7 @@ html[data-theme='light'] .app-shell :is(
 html[data-theme='light'] .app-shell :is(
   .primary-button,.module-create-button,.com-primary,.admin-primary,.work-button-primary,.ns-primary,.settings-save-button,.workspace-access-submit
 ):hover:not(:disabled) { background: #303830 !important; border-color: #303830 !important; }
-html[data-theme='light'] .app-shell :is(.com-secondary,.admin-secondary,.work-button:not(.work-button-primary),.ns-secondary,.icon-button,.ns-icon-button,.com-icon-action) {
+html[data-theme='light'] .app-shell :is(.com-secondary,.admin-secondary,.work-button:not(.work-button-primary):not(.work-button-approve):not(.file-remove),.ns-secondary,.icon-button,.ns-icon-button,.com-icon-action) {
   background: #fff !important;
   border-color: #e1e6df !important;
   color: #303830 !important;
