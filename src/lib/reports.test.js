@@ -52,6 +52,18 @@ test('paid billing reports keep using the stored approval date after later refre
   assert.equal(inPeriod(order, 'month', new Date('2026-10-02T13:00:00.000Z'), 'paid'), false);
 });
 
+test('paid billing reports use nested settlement timestamps before later update dates', () => {
+  const now = new Date('2026-10-02T15:00:00.000Z');
+  const order = {
+    status: 'paid',
+    paymentDetails: { settled_at: '2026-09-30T22:00:00.000Z' },
+    updatedAt: '2026-10-02T12:30:00.000Z',
+  };
+
+  assert.equal(dateOf(order, 'paid').toISOString(), '2026-09-30T22:00:00.000Z');
+  assert.equal(inPeriod(order, 'month', now, 'paid'), false);
+});
+
 test('paid manual revenues are reported in their settlement period, not creation period', () => {
   const now = new Date('2026-10-02T15:00:00.000Z');
   const revenues = [

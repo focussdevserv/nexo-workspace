@@ -1,7 +1,7 @@
 export const dateOf = (item, field = 'default') => {
   const candidates = field === 'created' ? [item.createdAt, item.created_at, item.date, item.updatedAt, item.updated_at]
     : field === 'expense' ? [item.date, item.createdAt, item.created_at, item.updatedAt, item.updated_at]
-      : field === 'paid' ? [item.settledAt, item.settled_at, item.paidAt, item.paid_at, item.paymentDetails?.paidAt, item.updatedAt, item.updated_at, item.createdAt, item.created_at]
+    : field === 'paid' ? [item.settledAt, item.settled_at, item.paymentDetails?.settledAt, item.paymentDetails?.settled_at, item.paidAt, item.paid_at, item.paymentDetails?.paidAt, item.paymentDetails?.paid_at, item.updatedAt, item.updated_at, item.createdAt, item.created_at]
       : field === 'completed' ? [item.completedAt, item.completed_at, item.updatedAt, item.updated_at, item.createdAt, item.created_at]
           : field === 'work' ? [item.startedAt, item.started_at, item.endedAt, item.ended_at, item.createdAt, item.created_at, item.date]
             : field === 'task' ? [item.due, item.dueAt, item.due_at, item.createdAt, item.created_at, item.date, item.updatedAt, item.updated_at]

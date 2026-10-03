@@ -20,7 +20,7 @@ import { filterFinanceAccountTransactions, financeAccountTransactionSignedAmount
 import { resolveFinanceClientLink } from '../lib/finance-client-link.js';
 import { parseDisplayAmount } from '../lib/client-billing-summary.js';
 import { filterInboxConversations } from '../lib/inbox-filter.js';
-import { buildInboxReadPatch } from '../lib/inbox-read-state.js';
+import { markInboxConversationRead } from '../lib/inbox-read-state.js';
 import { preferredInboxSessionId } from '../lib/inbox-session.js';
 import { gmailThreadMetadataRecord, hostingerThreadMetadataRecord, mergeGmailThreadMetadata, mergeHostingerThreadMetadata } from '../lib/gmail-thread-metadata.js';
 import { matchConversationClient } from '../lib/conversation-client-match.js';
@@ -429,7 +429,7 @@ function FinanceList({ page, notify, navigationContext = null, onNavigationConte
 }
 function Inbox({ notify, forceWhatsapp = false, navigationContext = null, onNavigationContextConsumed = () => {} }) {
   const localDemo = isLocalDemoActive();
-  const [messages, setMessages, refreshMessages, messagesLoading] = useStoredArray('nexo.support.conversations.v1', initialMessages);
+  const [messages, , refreshMessages, messagesLoading] = useStoredArray('nexo.support.conversations.v1', initialMessages);
   const clientsStore = useWorkspaceRecords('clients');
   const contactsStore = useWorkspaceRecords('contacts');
   const [selectedId, setSelectedId] = useState('');
@@ -499,9 +499,12 @@ function Inbox({ notify, forceWhatsapp = false, navigationContext = null, onNavi
       apiRequest(readUrl, { method: 'POST', body: JSON.stringify({}) }).then(loadGmail).catch((error) => setEmailError(error.message || 'Não foi possível marcar este e-mail como lido.'));
     }
     if (channel === 'WhatsApp' && Number(item.unread || 0) > 0) {
-      setMessages((items) => items.map((row) => String(row.id) === String(item.id) ? { ...row, unread: 0 } : row));
       try {
-        await apiRequest(`/api/workspace/inbox/${encodeURIComponent(item.id)}`, { method: 'PATCH', body: JSON.stringify({ data: buildInboxReadPatch(item) }) });
+        const result = await markInboxConversationRead(item, {
+          update: (data) => apiRequest(`/api/workspace/inbox/${encodeURIComponent(item.id)}`, { method: 'PATCH', body: JSON.stringify({ data }) }),
+          refresh: refreshMessages,
+        });
+        if (!result.refreshed) notify('Conversa marcada como lida, mas a lista não atualizou. Recarregue para conferir.');
       } catch (error) {
         await refreshMessages().catch(() => {});
         notify(error.message || 'Não foi possível marcar esta conversa como lida.');

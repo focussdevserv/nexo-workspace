@@ -33,6 +33,7 @@ import { buildClientRelationshipHistory, clientRelationshipHistoryDateLabel } fr
 import { buildCommercialRecordEditorPatch, companyContactCount, commercialRecordEditorDraft, commercialRecordEditorFields, commercialRecordEditorIsDirty } from "../lib/commercial-record-editor.js";
 import { filterCommercialRecords } from "../lib/commercial-record-filter.js";
 import { averageProposalApprovalDays, countLeadsWithoutNextAction, formatElapsedDays } from "../lib/commercial-cycle-metrics.js";
+import { isCommercialDateWithinNextDays } from "../lib/commercial-date.js";
 const datasets = {
   leads: [],
   clients: [],
@@ -139,17 +140,6 @@ function serviceFrequencyLabel(value) {
     12: "anual"
   }[interval] || `a cada ${interval} meses`;
   return "a definir";
-}
-function dateIsWithinNextDays(value, days = 30) {
-  const text = String(value || "").slice(0, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return false;
-  const date = new Date(`${text}T00:00:00`);
-  if (Number.isNaN(date.getTime())) return false;
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const limit = new Date(today);
-  limit.setDate(limit.getDate() + days);
-  return date >= today && date <= limit;
 }
 function useCommercialRecords() {
   const leads = useWorkspaceRecords("leads");
@@ -2472,7 +2462,7 @@ function ListView({
       });
     }, 0);
   };
-  const upcomingRenewals = (relatedContracts || []).filter(contract => dateIsWithinNextDays(contract.renewal || contract.renewalDate) && !["Cancelado", "Concluído", "Concluido"].includes(String(contract.status || "")) && items.some(client => belongsToClient(contract, client, contract.client))).length;
+  const upcomingRenewals = (relatedContracts || []).filter(contract => isCommercialDateWithinNextDays(contract.renewal || contract.renewalDate) && !["Cancelado", "Concluído", "Concluido"].includes(String(contract.status || "")) && items.some(client => belongsToClient(contract, client, contract.client))).length;
   const contractMonthlyRevenue = activeContractMonthlyRevenue(items);
   const clientRevenueLabel = client => {
     const amount = clientRevenueAmount(client);
@@ -2496,7 +2486,7 @@ function ListView({
   const stats = page === "leads" ? [["Leads ativos", String(items.filter(item => !["Fechado", "Perdido"].includes(item.stage)).length), `${items.length} no cadastro`, Users, "blue"], ["Valor no pipeline", brl.format(leadPipelineValue), "soma das oportunidades abertas", CircleDollarSign, "green"], ["Taxa de conversão", `${Math.round(items.filter(item => item.stage === "Fechado").length / Math.max(items.length, 1) * 100)}%`, "negócios fechados", ArrowUpRight, "purple"], ["Sem pr\u00f3xima a\u00e7\u00e3o", String(countLeadsWithoutNextAction(items)), "leads abertos sem pr\u00f3ximo passo", Clock3, "amber"]] : page === "clientes" ? [["Clientes ativos", String(items.filter(item => item.status === "Ativo").length), `${items.length} na carteira`, Building2, "blue"], ["Receita recorrente", amountLabel, "média mensal dos serviços recorrentes", Wallet, "green"], ["Projetos ativos", String(clientProjectCount), "projetos ativos vinculados à carteira", FileText, "purple"], ["Renovações próximas", String(upcomingRenewals), "contratos nos próximos 30 dias", CalendarDays, "amber"]] : page === "propostas" ? [["Em aberto", String(items.filter(item => !["Aprovada", "Recusada", "Expirada"].includes(item.status)).length), "aguardando ou em negociação", FileText, "blue"], ["Valor proposto", amountLabel, "soma das propostas", CircleDollarSign, "green"], ["Taxa de aprovação", `${Math.round(items.filter(item => item.status === "Aprovada").length / Math.max(items.length, 1) * 100)}%`, "propostas aprovadas", CheckCircle2, "purple"], ["Tempo m\u00e9dio de aceite", formatElapsedDays(proposalApprovalCycle.days), proposalApprovalCycle.count ? String(proposalApprovalCycle.count) + (proposalApprovalCycle.count === 1 ? " proposta aprovada com datas" : " propostas aprovadas com datas") : "Sem datas de aprova\u00e7\u00e3o registradas", Clock3, "amber"]] : page === "contratos" ? [["Contratos ativos", String(items.filter(item => ["Ativo", "Assinado"].includes(item.status)).length), `${items.length} contratos`, FileCheck2, "blue"], ["Receita mensal", new Intl.NumberFormat("pt-BR", {
     style: "currency",
     currency: "BRL"
-  }).format(contractMonthlyRevenue), "somente termos recorrentes", CircleDollarSign, "green"], ["Renovam em breve", String(items.filter(item => dateIsWithinNextDays(item.renewal || item.renewalDate) && !["Cancelado", "Concluído", "Concluido"].includes(String(item.status || ""))).length), "nos próximos 30 dias", CalendarDays, "amber"], ["Valor contratado", amountLabel, "soma dos valores informados", Wallet, "purple"]] : null;
+  }).format(contractMonthlyRevenue), "somente termos recorrentes", CircleDollarSign, "green"], ["Renovam em breve", String(items.filter(item => isCommercialDateWithinNextDays(item.renewal || item.renewalDate) && !["Cancelado", "Concluído", "Concluido"].includes(String(item.status || ""))).length), "nos próximos 30 dias", CalendarDays, "amber"], ["Valor contratado", amountLabel, "soma dos valores informados", Wallet, "purple"]] : null;
   return <Fragment>{stats && <div className="com-metrics">{stats.map(([label2, value, detail, Icon, tone]) => <Metric key={label2} {...{
         label: label2,
         value,

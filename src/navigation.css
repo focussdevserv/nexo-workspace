@@ -60,3 +60,7 @@
 @media (max-width: 1120px) {
   .side-nav-link { min-height: 42px; font-size: 13px; }
 }
+
+.side-nav-close{display:none}@media(max-width:1080px){.side-nav#workspace-mobile-navigation.mobile-open .side-nav-close{position:absolute;top:17px;right:12px;z-index:2;width:34px;height:34px;display:grid;place-items:center;border:1px solid #dfe4eb;border-radius:9px;background:#fff;color:#334155;cursor:pointer}.side-nav-close:focus-visible{outline:3px solid #a9c5f3;outline-offset:2px}}@media(max-width:760px){.side-nav#workspace-mobile-navigation.mobile-open .side-nav-close{top:14px}}
+
+@media(max-width:1080px){html[data-theme='dark'] .side-nav#workspace-mobile-navigation .side-brand:hover{background:#222720}html[data-theme='light'] .side-nav#workspace-mobile-navigation .side-brand:hover{background:#f3f6fa}}
