@@ -4,6 +4,11 @@ const commercialEditorFields = {
     { key: 'segment', label: 'Segmento' },
     { key: 'city', label: 'Cidade' },
     { key: 'size', label: 'Porte' },
+    { key: 'email', label: 'E-mail', type: 'email' },
+    { key: 'phone', label: 'Telefone', type: 'tel' },
+    { key: 'website', label: 'Site' },
+    { key: 'address', label: 'Endereço' },
+    { key: 'notes', label: 'Observações', type: 'textarea', wide: true },
   ],
   contatos: [
     { key: 'name', label: 'Nome', required: true },

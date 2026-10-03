@@ -1,3 +1,5 @@
+import { normalizePaymentStatus } from './payment-status.js';
+
 function dueTimestamp(item) {
   const value = item.dueAt || item.dueDate;
   if (!value) return Number.NaN;
@@ -16,18 +18,18 @@ function dueTimestamp(item) {
 
 export function filterPayments(items, { status = 'Todos', due = 'Todos', now = Date.now() } = {}) {
   let rows = items;
-  if (status !== 'Todos') rows = rows.filter((item) => item.status === status);
+  if (status !== 'Todos') rows = rows.filter((item) => normalizePaymentStatus(item.status) === normalizePaymentStatus(status));
   if (due === 'Vencidas') {
     rows = rows.filter((item) => {
-      const currentStatus = String(item.status || '').trim().toLocaleLowerCase('pt-BR');
-      const explicitlyOverdue = ['overdue', 'vencida', 'atrasada'].includes(currentStatus);
+      const currentStatus = normalizePaymentStatus(item.status);
+      const explicitlyOverdue = currentStatus === 'overdue';
       const dueAt = dueTimestamp(item);
       return explicitlyOverdue || (currentStatus === 'pending' && Number.isFinite(dueAt) && dueAt < now);
     });
   } else if (due === 'Próximos 7 dias') {
     rows = rows.filter((item) => {
       const dueAt = dueTimestamp(item);
-      return String(item.status || '').toLowerCase() === 'pending' && Number.isFinite(dueAt) && dueAt >= now && dueAt <= now + 7 * 24 * 60 * 60 * 1000;
+      return normalizePaymentStatus(item.status) === 'pending' && Number.isFinite(dueAt) && dueAt >= now && dueAt <= now + 7 * 24 * 60 * 60 * 1000;
     });
   } else if (due === 'Sem vencimento') rows = rows.filter((item) => !Number.isFinite(dueTimestamp(item)));
   return rows;

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { fetchAllRecords, useWorkspaceRecords } from '../lib/workspace-api.js';
-import { useWorkspacePreferences } from '../lib/workspace-preferences.js';
+import { confirmWorkspaceDelete, useWorkspacePreferences } from '../lib/workspace-preferences.js';
 import { calculateGoalMetric, goalMetricDefinitions } from '../lib/goal-metrics.js';
 import { guardGoalsNavigation } from '../lib/goals-navigation.js';
 import { Activity, ArrowDown, ArrowUp, Check, CircleDollarSign, Clock3, Flag, Pencil, Plus, Target, Trash2, TrendingUp, Users, X } from 'lucide-react';
@@ -146,7 +146,7 @@ export default function GoalsScreen({ notify }) {
     setGoals(next); setDirty(true);
   };
   const removeGoal = (goal) => {
-    if (!window.confirm(`Excluir a meta “${goal.name}”?`)) return;
+    if (!confirmWorkspaceDelete(`Excluir a meta “${goal.name}”?`, preferences)) return;
     setGoals((current) => current.filter((item) => item.id !== goal.id)); setDirty(true);
   };
   const periodLabel = period === 'month' ? new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric' }).format(new Date()) : 'semana atual';

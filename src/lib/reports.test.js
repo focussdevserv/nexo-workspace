@@ -153,6 +153,21 @@ test('90-day chart uses weekly buckets that cover the full selected range', () =
   assert.equal(buckets.reduce((sum, bucket) => sum + bucket.value, 0), 100);
 });
 
+test('monthly report chart groups receipts into calendar weeks instead of one misleading total bar', () => {
+  const now = new Date(2026, 9, 10, 12);
+  const buckets = buildChartBuckets('month', now, [
+    { createdAt: '2026-10-01T09:00:00', amount: 100 },
+    { createdAt: '2026-10-08T09:00:00', amount: 250 },
+    { createdAt: '2026-10-11T09:00:00', amount: 500 },
+    { createdAt: '2026-11-01T09:00:00', amount: 800 },
+  ], (row) => row.amount, 'created');
+
+  assert.equal(buckets.length, 5);
+  assert.equal(buckets.reduce((sum, bucket) => sum + bucket.value, 0), 350);
+  assert.deepEqual(buckets.map((bucket) => bucket.value), [100, 250, 0, 0, 0]);
+  assert.match(buckets[0].label, /^01/);
+});
+
 test('project report lists dated tasks and work-hour records alongside projects', () => {
   const now = new Date(2026, 9, 2, 12);
   const rows = buildProjectReportRows(

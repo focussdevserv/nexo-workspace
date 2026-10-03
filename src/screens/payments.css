@@ -4,3 +4,18 @@
 @media(max-width:760px){.pay-list-head{align-items:center}}
 .pay-fields .pay-field-wide{grid-column:1/-1}
 @media(max-width:760px){.pay-record-actions{flex-wrap:wrap;min-width:0;max-width:100%}.pay-record-actions>*{max-width:100%}}
+html[data-theme='dark'] .pay-toolbar h2,html[data-theme='dark'] .pay-access h2,html[data-theme='dark'] .pay-result h2,html[data-theme='dark'] .pay-record-main>b,html[data-theme='dark'] .pay-record>strong,html[data-theme='dark'] .pay-list-head>div{color:#edf3f8}
+html[data-theme='dark'] .pay-toolbar p,html[data-theme='dark'] .pay-access>p,html[data-theme='dark'] .pay-record-main small,html[data-theme='dark'] .pay-list-head small,html[data-theme='dark'] .pay-filter,html[data-theme='dark'] .pay-hint{color:#aab7c6}
+html[data-theme='dark'] .pay-method-strip,html[data-theme='dark'] .pay-record,html[data-theme='dark'] .pay-access,html[data-theme='dark'] .pay-result,html[data-theme='dark'] .pay-result-action,html[data-theme='dark'] .pay-pix{border-color:#344253;background:#172130;color:#dce6f0}
+html[data-theme='dark'] .pay-method-strip span,html[data-theme='dark'] .pay-result-action p,html[data-theme='dark'] .pay-pix span{color:#b9c5d3}
+html[data-theme='dark'] .pay-list-head input,html[data-theme='dark'] .pay-filter select,html[data-theme='dark'] .pay-access form label input,html[data-theme='dark'] .pay-fields input,html[data-theme='dark'] .pay-fields select{border-color:#3b4a5d;background:#111a27;color:#eef4fa;color-scheme:dark}
+html[data-theme='dark'] .pay-empty{border-color:#3b4a5d;color:#a9b6c5}
+html[data-theme='dark'] .pay-empty b{color:#e5edf6}
+html[data-theme='dark'] .pay-security-note{background:#182b29;color:#b2c9c0}
+html[data-theme='dark'] .pay-security-note svg{color:#6fd3a2}
+html[data-theme='dark'] .pay-error-banner{border-color:#633a42;background:#2c1e25;color:#ffb5b7}
+html[data-theme='dark'] .status-paid,html[data-theme='dark'] .status-authorized{background:#18352a;color:#7ee0a7}
+html[data-theme='dark'] .status-pending,html[data-theme='dark'] .status-creating,html[data-theme='dark'] .status-processing{background:#382e1d;color:#f0c16f}
+html[data-theme='dark'] .status-failed,html[data-theme='dark'] .status-canceled,html[data-theme='dark'] .status-rejected,html[data-theme='dark'] .status-expired{background:#3b2428;color:#ffaaa5}
+html[data-theme='dark'] .status-refunded{background:#302742;color:#c5a8f4}
+.pay-workspace button:focus-visible,.pay-workspace a:focus-visible,.pay-workspace input:focus-visible,.pay-workspace select:focus-visible,.pay-access button:focus-visible,.pay-access input:focus-visible,.pay-result button:focus-visible{outline:3px solid #b9ed45;outline-offset:2px}

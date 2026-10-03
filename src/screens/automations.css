@@ -15,3 +15,67 @@
 
 .ns-delivery-row{grid-template-columns:minmax(0,1fr) auto auto;border:1px solid #edf0f3;border-radius:9px;margin:6px 0;padding:9px 11px}.ns-delivery-row>.ns-flow-main{display:grid;min-width:0;gap:3px}.ns-delivery-row>.ns-flow-main small{overflow-wrap:anywhere}.ns-delivery-row>button{min-height:29px;align-self:center;font-size:12px!important}@media(max-width:720px){.ns-delivery-row{grid-template-columns:minmax(0,1fr) auto}.ns-delivery-row>.ns-flow-main{grid-column:1/-1}.ns-delivery-row>button{justify-self:end}}
 .ns-automation-load-more{display:flex;justify-content:center;padding:8px 0 2px}
+
+/* Automation cards use explicit white surfaces in the light theme. Give the
+   same grouped structure dark surfaces without changing their light palette. */
+html[data-theme='dark'] #root .app-shell .ns-screen .ns-automation-list,
+html[data-theme='dark'] #root .app-shell .ns-screen .ns-automation-history,
+html[data-theme='dark'] #root .app-shell .ns-screen .ns-automation-template,
+html[data-theme='dark'] #root .app-shell .ns-screen .ns-n8n-workflow-row,
+html[data-theme='dark'] #root .app-shell .ns-screen .ns-delivery-row {
+  border-color: #353d36 !important;
+  background: #171b17 !important;
+  color: #e7ece3 !important;
+  box-shadow: none;
+}
+html[data-theme='dark'] #root .app-shell .ns-screen .ns-automation-row {
+  border-color: #303730 !important;
+  background: transparent !important;
+}
+html[data-theme='dark'] #root .app-shell .ns-screen .ns-flow-main b,
+html[data-theme='dark'] #root .app-shell .ns-screen .ns-flow-trigger b,
+html[data-theme='dark'] #root .app-shell .ns-screen .ns-flow-run b,
+html[data-theme='dark'] #root .app-shell .ns-screen .ns-automation-template h3,
+html[data-theme='dark'] #root .app-shell .ns-screen .ns-automation-empty b,
+html[data-theme='dark'] #root .app-shell .ns-screen .ns-run-row b {
+  color: #edf1e9 !important;
+}
+html[data-theme='dark'] #root .app-shell .ns-screen .ns-flow-main small,
+html[data-theme='dark'] #root .app-shell .ns-screen .ns-flow-trigger small,
+html[data-theme='dark'] #root .app-shell .ns-screen .ns-flow-run small,
+html[data-theme='dark'] #root .app-shell .ns-screen .ns-automation-template-system,
+html[data-theme='dark'] #root .app-shell .ns-screen .ns-automation-template > p,
+html[data-theme='dark'] #root .app-shell .ns-screen .ns-automation-empty span,
+html[data-theme='dark'] #root .app-shell .ns-screen .ns-run-row,
+html[data-theme='dark'] #root .app-shell .ns-screen .ns-run-row small,
+html[data-theme='dark'] #root .app-shell .ns-screen .ns-empty-history {
+  color: #a1a99e !important;
+}
+html[data-theme='dark'] #root .app-shell .ns-screen .ns-automation-template-flow {
+  border-color: #353d36 !important;
+  background: #202620 !important;
+}
+html[data-theme='dark'] #root .app-shell .ns-screen .ns-automation-template-flow b,
+html[data-theme='dark'] #root .app-shell .ns-screen .ns-automation-template-flow small {
+  color: #bac3b4 !important;
+}
+html[data-theme='dark'] #root .app-shell .ns-screen .ns-automation-status {
+  border-color: #394236 !important;
+  background: #202620 !important;
+  color: #b7c0b2 !important;
+}
+html[data-theme='dark'] #root .app-shell .ns-screen .ns-automation-status.is-active {
+  border-color: #435633 !important;
+  background: #26331f !important;
+  color: #d0edaa !important;
+}
+html[data-theme='dark'] #root .app-shell .ns-screen .ns-automation-empty {
+  border-color: #46523d !important;
+  background: #1b211a !important;
+  color: #c3cdbb !important;
+}
+html[data-theme='dark'] #root .app-shell .ns-screen .ns-delivery-queue {
+  border-color: #354332 !important;
+  background: #1b211a !important;
+  color: #c2cdbb !important;
+}

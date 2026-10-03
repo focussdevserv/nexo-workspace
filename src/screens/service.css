@@ -350,3 +350,34 @@ html[data-theme='dark'] .ns-waha-qr-error { color:#f1aaaa; }
   .ns-screen .ns-waha-qr { min-width:0; max-width:100%; }
 }
 @media(max-width:600px){.ns-filter-tabs{flex-wrap:wrap;overflow:visible;white-space:normal}}
+
+/* These service surfaces keep a distinct incoming / outgoing conversation
+   hierarchy in light mode, while staying legible on the graphite dark theme. */
+html[data-theme='dark'] #root .app-shell .ns-screen .ns-message.received {
+  border-color: #353d36 !important;
+  background: #202620 !important;
+  color: #e9eee5 !important;
+  box-shadow: none !important;
+}
+html[data-theme='dark'] #root .app-shell .ns-screen .ns-message.sent {
+  border-color: #425235 !important;
+  background: #29381f !important;
+  color: #edf4e6 !important;
+  box-shadow: none !important;
+}
+html[data-theme='dark'] #root .app-shell .ns-screen .ns-message > small {
+  color: #a7b09f !important;
+}
+html[data-theme='dark'] #root .app-shell .ns-screen .ns-link-task {
+  border-color: #394236 !important;
+  background: #1d231d !important;
+  color: #c9eb9a !important;
+}
+html[data-theme='dark'] #root .app-shell .ns-screen .ns-link-task:hover:not(:disabled) {
+  border-color: #596b45 !important;
+  background: #252e21 !important;
+  color: #e0f6ba !important;
+}
+html[data-theme='dark'] #root .app-shell .ns-screen .ns-link-task:disabled {
+  color: #929a8d !important;
+}

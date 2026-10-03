@@ -128,6 +128,28 @@ html[data-theme='dark'] .app-shell .ns-screen .ns-integration-configure,
 html[data-theme='dark'] .app-shell .ns-screen .ns-integration-toggle { background:var(--nexo-surface-raised);border-color:var(--nexo-border);color:var(--nexo-text); }
 html[data-theme='dark'] .app-shell .ns-screen .ns-integration-toggle.disconnect { border-color:#71454b;color:#f0a0a5; }
 html[data-theme='dark'] .app-shell .ns-screen .ns-integration-toggle.reconnect { border-color:#3c674e;color:#9de3b1; }
+
+/* Directory and repository surfaces live inside the shared management screen. */
+html[data-theme='dark'] .admin-screen :is(.repo-card,.team-summary-card,.team-directory,.team-modal,.team-permission-editor,.team-permission-module,.team-guidance,.team-modal-note,.team-invite-notice,.team-scope-empty-warning) {
+  background: var(--nexo-surface);
+  border-color: var(--nexo-border);
+  color: var(--nexo-text);
+}
+html[data-theme='dark'] .admin-screen :is(.repo-card h3,.repo-card>p,.team-summary-card b,.team-directory-row,.team-directory-person b,.team-role-cell b,.team-permission-editor h3,.team-permission-module>b,.team-modal>header h2,.team-modal-fields label,.team-record-scope,.team-scope-selects>label) { color: var(--nexo-text); }
+html[data-theme='dark'] .admin-screen :is(.repo-card>small,.repo-branch,.team-summary-card small,.team-summary-card em,.team-directory-head p,.team-directory-person small,.team-role-cell small,.team-number-cell,.team-directory-head p,.team-account-list-head,.team-account-row,.team-account-row small,.team-permission-editor>p,.team-permission-module>label,.team-modal-fields label,.team-scope-hint) { color: var(--nexo-muted); }
+html[data-theme='dark'] .admin-screen :is(.repo-branch,.team-directory-row,.team-account-list,.team-account-row,.team-modal>header,.team-modal>footer) { border-color: var(--nexo-border); }
+html[data-theme='dark'] .admin-screen :is(.team-directory-controls,.team-directory-labels,.team-modal-note) { background: var(--nexo-surface-raised); }
+html[data-theme='dark'] .admin-screen :is(.team-search,.team-modal-fields input,.team-modal-fields select,.team-record-scope select,.team-scope-selects select) { border-color: var(--nexo-border); background: #0d1726; color: var(--nexo-text); color-scheme: dark; }
+html[data-theme='dark'] .admin-screen .team-search input { background: transparent; color: var(--nexo-text); }
+html[data-theme='dark'] .admin-screen .team-search input::placeholder { color: var(--nexo-muted); }
+html[data-theme='dark'] .admin-screen .team-filter-tabs button:not(.active) { color: var(--nexo-muted); }
+html[data-theme='dark'] .admin-screen .team-row-menu button:hover { background: var(--nexo-hover); color: var(--nexo-text); }
+html[data-theme='dark'] .admin-screen .team-permission-module { background: var(--nexo-surface-raised); }
+html[data-theme='dark'] .admin-screen .repo-sync-error { background: #382126; border-color: #65353d; color: #ffaaa5 !important; }
+html[data-theme='dark'] .admin-screen .repo-open { color: #9abaff; }
+html[data-theme='dark'] .admin-screen .repo-status { color: #8edcad; }
+html[data-theme='dark'] .admin-screen .repo-status.amber { color: #edc06f; }
+html[data-theme='dark'] .admin-screen :is(.team-summary-card:nth-child(2)>span,.team-summary-card:nth-child(3)>span) { background: #20352d; color: #9de3b1; }
 html[data-theme='dark'] .app-shell .ns-screen .ns-integration-refresh { color:var(--nexo-muted); }
 html[data-theme='dark'] .app-shell .ns-screen .ns-integration-refresh:hover:not(:disabled) { background:var(--nexo-hover);border-color:var(--nexo-border);color:var(--nexo-text); }
 html[data-theme='dark'] .app-shell .ns-connection-badge.disconnected { background:#253044;border-color:#3b4a5e;color:#c2cede; }

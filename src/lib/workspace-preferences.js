@@ -53,6 +53,11 @@ export function readCachedWorkspacePreferences() {
   catch { return { ...defaultPreferences }; }
 }
 
+export function confirmWorkspaceDelete(message, preferences = readCachedWorkspacePreferences(), confirmAction = (value) => typeof window !== 'undefined' && typeof window.confirm === 'function' ? window.confirm(value) : true) {
+  if (preferences?.confirmDelete === false) return true;
+  return confirmAction(message);
+}
+
 export function rememberWorkspaceThemePreference(darkMode) {
   try { localStorage.setItem(themePreferenceKey, darkMode ? 'dark' : 'light'); } catch { /* The active tab can still use the selected theme. */ }
 }

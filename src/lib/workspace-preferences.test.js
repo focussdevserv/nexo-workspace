@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeWorkspacePreferences, workspacePreferencesFromSettings, workspaceStartPages } from './workspace-preferences.js';
+import { confirmWorkspaceDelete, normalizeWorkspacePreferences, workspacePreferencesFromSettings, workspaceStartPages } from './workspace-preferences.js';
 
 test('workspace preferences default to light mode and preserve dark mode', () => {
   assert.equal(normalizeWorkspacePreferences({}).darkMode, false);
@@ -27,4 +27,14 @@ test('settings reset publishes the reset timezone and week start rather than sta
   });
   assert.equal(normalizeWorkspacePreferences(reset).timezone, 'America/Sao_Paulo');
   assert.equal(normalizeWorkspacePreferences(reset).weekStart, 'monday');
+});
+
+test('delete preference skips routine confirmation only when explicitly disabled', () => {
+  let asked = 0;
+  const confirmAction = () => { asked += 1; return false; };
+  assert.equal(confirmWorkspaceDelete('Delete?', { confirmDelete: false }, confirmAction), true);
+  assert.equal(asked, 0);
+  assert.equal(confirmWorkspaceDelete('Delete?', { confirmDelete: true }, confirmAction), false);
+  assert.equal(confirmWorkspaceDelete('Delete?', {}, confirmAction), false);
+  assert.equal(asked, 2);
 });

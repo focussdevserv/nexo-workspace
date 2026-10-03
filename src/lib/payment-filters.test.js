@@ -36,6 +36,15 @@ test('filters payments by exact provider status and upcoming or missing due date
   assert.deepEqual(filterPayments(items, { due: 'Sem vencimento', now }).map((item) => item.id), ['undated']);
 });
 
+test('matches status filters regardless of case or Portuguese provider labels', () => {
+  const items = [
+    { id: 'upper', status: 'PENDING' },
+    { id: 'localized', status: 'Aguardando pagamento' },
+    { id: 'paid', status: 'paid' },
+  ];
+  assert.deepEqual(filterPayments(items, { status: 'pending' }).map((item) => item.id), ['upper', 'localized']);
+});
+
 test('uses legacy date-only dueDate values as local calendar dates', () => {
   const startOfDay = new Date(2026, 9, 1, 9, 0, 0).getTime();
   const endOfDueDay = new Date(2026, 9, 1, 23, 59, 59, 999).getTime();

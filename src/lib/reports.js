@@ -151,13 +151,13 @@ export function buildChartBuckets(periodId, now, rows, valueOf, dateField = 'def
     ? Array.from({ length: 12 }, (_, index) => new Date(now.getFullYear(), index, 1))
     : periodId === 'quarter'
       ? Array.from({ length: 13 }, (_, index) => { const date = new Date(now); date.setHours(0, 0, 0, 0); date.setDate(date.getDate() - 89 + index * 7); return date; })
-      : [new Date(now.getFullYear(), now.getMonth(), 1)];
+      : Array.from({ length: Math.ceil(new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate() / 7) }, (_, index) => new Date(now.getFullYear(), now.getMonth(), 1 + index * 7));
   return starts.map((start, index) => {
-    const end = periodId === 'year' || periodId === 'month'
+    const end = periodId === 'year'
       ? new Date(start.getFullYear(), start.getMonth() + 1, 1)
       : new Date(start.getFullYear(), start.getMonth(), start.getDate() + 7);
     const value = rows.filter((row) => { const date = dateOf(row, dateField); return date >= start && date < end && date <= now; }).reduce((sum, row) => sum + valueOf(row), 0);
-    const label = periodId === 'quarter'
+    const label = periodId !== 'year'
       ? start.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }).replace('.', '')
       : start.toLocaleDateString('pt-BR', { month: 'short' }).replace('.', '');
     return { key: `${start.toISOString()}-${index}`, label, value };

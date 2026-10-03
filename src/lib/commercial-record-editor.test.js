@@ -12,8 +12,27 @@ const clients = [{ id: 12, name: 'Nexo Ltda', email: 'financeiro@nexo.test' }];
 const companies = [{ id: 34, name: 'Acme Tecnologia' }];
 
 test('exposes editable business fields for companies and contacts', () => {
-  assert.deepEqual(commercialRecordEditorFields('empresas').map(({ key }) => key), ['name', 'segment', 'city', 'size']);
+  assert.deepEqual(commercialRecordEditorFields('empresas').map(({ key }) => key), ['name', 'segment', 'city', 'size', 'email', 'phone', 'website', 'address', 'notes']);
   assert.deepEqual(commercialRecordEditorFields('contatos').map(({ key }) => key), ['name', 'companyId', 'company', 'role', 'email', 'phone', 'last']);
+});
+
+test('company editor validates and persists its contact and location details', () => {
+  const result = buildCommercialRecordEditorPatch('empresas', {
+    name: 'Acme Tecnologia', segment: 'Tecnologia', city: 'São Paulo', size: '11–50',
+    email: 'contato@acme.test', phone: '+55 11 90000-0000', website: 'https://acme.test',
+    address: 'Rua Exemplo, 10', notes: 'Renovar cadastro em janeiro',
+  });
+  assert.equal(result.error, undefined);
+  assert.equal(result.patch.email, 'contato@acme.test');
+  assert.equal(result.patch.phone, '+55 11 90000-0000');
+  assert.equal(result.patch.website, 'https://acme.test');
+  assert.equal(result.patch.address, 'Rua Exemplo, 10');
+  assert.equal(result.patch.notes, 'Renovar cadastro em janeiro');
+
+  const invalidEmail = buildCommercialRecordEditorPatch('empresas', {
+    name: 'Acme Tecnologia', email: 'endereco-invalido',
+  });
+  assert.match(invalidEmail.error, /e-mail/i);
 });
 
 test('contact editor links a registered company and preserves legacy free-text companies', () => {

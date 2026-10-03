@@ -35,6 +35,7 @@ import { filterCommercialRecords } from "../lib/commercial-record-filter.js";
 import { averageProposalApprovalDays, countLeadsWithoutNextAction, formatElapsedDays } from "../lib/commercial-cycle-metrics.js";
 import { buildLeadFollowUpTaskData, findOpenLeadFollowUpTask, isTerminalLeadStage } from "../lib/lead-follow-up-task.js";
 import { isCommercialDateWithinNextDays } from "../lib/commercial-date.js";
+import { confirmWorkspaceDelete, useWorkspacePreferences } from "../lib/workspace-preferences.js";
 const datasets = {
   leads: [],
   clients: [],
@@ -322,6 +323,7 @@ export default function CommercialScreen({
   onNavigationContextConsumed = () => {}
 }) {
   const localDemo = isLocalDemoActive();
+  const preferences = useWorkspacePreferences();
   const externalPage = normalizePage(page || "crm");
   const [localPage, setLocalPage] = useState(externalPage);
   useEffect(() => setLocalPage(externalPage), [externalPage]);
@@ -382,6 +384,8 @@ export default function CommercialScreen({
     website: "",
     address: "",
     source: "",
+    city: "",
+    size: "",
     servicesText: "",
     billingMode: "none",
     billingFrequency: "months:1",
@@ -680,9 +684,14 @@ export default function CommercialScreen({
     } else if (key === "empresas") entry = {
       ...common,
       segment: draft.detail || "A definir",
-      city: "Nao informado",
-      size: "A definir",
+      city: (draft.city || "").trim(),
+      size: draft.size || "A definir",
       people: "1 contato",
+      email: draft.email.trim().toLowerCase(),
+      phone: draft.phone.trim(),
+      website: draft.website.trim(),
+      address: draft.address.trim(),
+      notes: draft.notes.trim(),
       status: "Prospect"
     };else if (key === "contatos") entry = {
       ...common,
@@ -943,7 +952,7 @@ export default function CommercialScreen({
         return false;
       }
     }
-    if (!window.confirm(`Excluir "${record.name || record.title}" do workspace?`)) return false;
+    if (!confirmWorkspaceDelete(`Excluir "${record.name || record.title}" do workspace?`, preferences)) return false;
     try {
       await persistRecords({
         ...records,
@@ -982,7 +991,7 @@ export default function CommercialScreen({
         projects: [project, ...(records.projects || [])],
         tasks: [...tasks, ...(records.tasks || [])]
       });
-    }} onAction={notify} onUpdate={updateServiceRecord} onDelete={deleteServiceRecord} onImportCatalog={importCatalog} catalogImporting={catalogSeedState === "loading" || servicesLoading} catalogSeedState={catalogSeedState} search={search} setSearch={setSearch} /> : <ListView page={key} items={visible} relatedProjects={records.projects || []} relatedSubscriptions={relatedSubscriptions} relatedContracts={records.contracts || []} onArchive={archiveClient} openClientId={key === "clientes" ? navigationContext?.clientId : ""} onClientOpened={onNavigationContextConsumed} search={search} setSearch={setSearch} filter={filter} setFilter={setFilter} extraFilterFields={extraFilterFields} extraFilters={extraFilters} setExtraFilters={setExtraFilters} onAction={notify} onAccept={acceptProposal} onSendProposal={sendProposal} localDemo={localDemo} onRefreshRecords={refreshRecords} onUpdate={updateCommercialRecord} onDelete={deleteCommercialRecord} clients={records.clients || []} companies={records.companies || []} contacts={records.contacts || []} services={records.services || []} tasks={records.tasks || []} totalItems={data.length} />}{composer && <div className="com-modal-backdrop" onMouseDown={event => {
+    }} onAction={notify} onUpdate={updateServiceRecord} onDelete={deleteServiceRecord} onImportCatalog={importCatalog} catalogImporting={catalogSeedState === "loading" || servicesLoading} catalogSeedState={catalogSeedState} search={search} setSearch={setSearch} preferences={preferences} /> : <ListView page={key} items={visible} relatedProjects={records.projects || []} relatedSubscriptions={relatedSubscriptions} relatedContracts={records.contracts || []} onArchive={archiveClient} openClientId={key === "clientes" ? navigationContext?.clientId : ""} onClientOpened={onNavigationContextConsumed} search={search} setSearch={setSearch} filter={filter} setFilter={setFilter} extraFilterFields={extraFilterFields} extraFilters={extraFilters} setExtraFilters={setExtraFilters} onAction={notify} onAccept={acceptProposal} onSendProposal={sendProposal} localDemo={localDemo} onRefreshRecords={refreshRecords} onUpdate={updateCommercialRecord} onDelete={deleteCommercialRecord} clients={records.clients || []} companies={records.companies || []} contacts={records.contacts || []} services={records.services || []} tasks={records.tasks || []} totalItems={data.length} preferences={preferences} />}{composer && <div className="com-modal-backdrop" onMouseDown={event => {
       if (event.target === event.currentTarget) setComposer(false);
     }}><form className="com-create-modal" onSubmit={createRecord}><header><div><small>{current.eyebrow}</small><h2>{createLabel}</h2></div><button type="button" aria-label="Fechar" onClick={() => setComposer(false)}><X size={15} /></button></header>{key === "clientes" && <label>Tipo de cadastro<select value={draft.clientType} onChange={e => setDraft({
             ...draft,
@@ -1107,7 +1116,7 @@ export default function CommercialScreen({
           }}><option value="">Selecione um serviço</option>{(records.services || []).map(item => <option value={item.id}>{item.catalogGroup ? `${item.catalogGroup} · ` : ""}{item.name}{item.price ? ` · ${item.price}` : " · preço a definir"}</option>)}</select></label> : <label>{key === "servicos" ? "Categoria" : key === "empresas" ? "Segmento" : key === "contatos" ? "Cargo" : "Serviço / observações"}<input value={draft.detail} onChange={e => setDraft({
             ...draft,
             detail: e.target.value
-          })} /></label>}<footer><button type="button" className="com-secondary" onClick={() => setComposer(false)}>Cancelar</button><button type="submit" className="com-primary"><Check size={15} />Salvar</button></footer></form></div>}<Feedback message={toast} onClose={() => setToast("")} /></main>;
+          })} /></label>}{key === "empresas" && <Fragment><label>Cidade<input value={draft.city || ""} onChange={e => setDraft({ ...draft, city: e.target.value })} /></label><label>Porte<select value={draft.size || ""} onChange={e => setDraft({ ...draft, size: e.target.value })}><option value="">Selecione o porte</option><option>1 pessoa</option><option>2 a 10 pessoas</option><option>11 a 50 pessoas</option><option>51 a 200 pessoas</option><option>Mais de 200 pessoas</option></select></label><label>E-mail<input type="email" value={draft.email} onChange={e => setDraft({ ...draft, email: e.target.value })} /></label><label>Telefone<input type="tel" value={draft.phone} onChange={e => setDraft({ ...draft, phone: e.target.value })} /></label><label>Site<input type="url" value={draft.website} onChange={e => setDraft({ ...draft, website: e.target.value })} placeholder="https://" /></label><label>Endereco<input value={draft.address} onChange={e => setDraft({ ...draft, address: e.target.value })} /></label><label className="wide">Observacoes<textarea rows={3} value={draft.notes} onChange={e => setDraft({ ...draft, notes: e.target.value })} /></label></Fragment>}<footer><button type="button" className="com-secondary" onClick={() => setComposer(false)}>Cancelar</button><button type="submit" className="com-primary"><Check size={15} />Salvar</button></footer></form></div>}<Feedback message={toast} onClose={() => setToast("")} /></main>;
 }
 function Metric({
   label,
@@ -1443,7 +1452,8 @@ function ClientProfileModal({
   onClose,
   onUpdate,
   onArchive,
-  onAction
+  onAction,
+  preferences
 }) {
   const localDemo = isLocalDemoActive();
   const fileUploadRef = useRef(null);
@@ -1889,7 +1899,7 @@ function ClientProfileModal({
     }
   };
   const deleteContact = async person => {
-    if (contactSaving || !window.confirm(`Remover ${person.name} dos contatos de ${client.name}?`)) return;
+    if (contactSaving || !confirmWorkspaceDelete(`Remover ${person.name} dos contatos de ${client.name}?`, preferences)) return;
     setContactSaving(true);
     try {
       const updated = removeClientContact(client, person);
@@ -1931,7 +1941,7 @@ function ClientProfileModal({
     }
   };
   const deleteManualFinance = async (resource, item) => {
-    if (!window.confirm(`Excluir o lançamento “${item.description || "sem descrição"}” do financeiro deste cliente?`)) return;
+    if (!confirmWorkspaceDelete(`Excluir o lançamento “${item.description || "sem descrição"}” do financeiro deste cliente?`, preferences)) return;
     try {
       await apiRequest(`/api/workspace/${resource}/${item.id}`, {
         method: "DELETE"
@@ -2265,6 +2275,7 @@ function ListView({
   services = [],
   tasks = [],
   totalItems = 0,
+  preferences,
   openClientId = "",
   onClientOpened = () => {}
 }) {
@@ -2530,7 +2541,7 @@ function ListView({
           }}><Download size={15} /> Exportar CSV</button></div></div><Toolbar search={search} setSearch={setSearch} filter={filter} setFilter={setFilter} filters={filters} placeholder={`Buscar ${label}...`} extraFilterFields={extraFilterFields} extraFilters={extraFilters} onExtraFilterChange={(field, value) => setExtraFilters(currentFilters => ({
         ...currentFilters,
         [field]: value
-      }))} /><div className="com-table-wrap"><table className={`com-table com-table-${page}`}><thead><tr>{titles[page].map(title => <th key={title}>{title}</th>)}<th aria-label="Ações" /></tr></thead><tbody>{items.map((item, index) => <tr key={item.id ?? index}><td>{page === "leads" ? <Identity name={item.name} sub={item.email} initials={item.initials} tone={item.tone} /> : page === "clientes" || page === "empresas" || page === "contatos" ? <Identity name={item.name} sub={page === "contatos" ? item.role : page === "clientes" ? item.since : item.segment} initials={item.initials} tone={item.tone} /> : <div className="com-table-primary"><b>{item.title}</b><small>{item.code}</small></div>}</td>{page === "leads" && <Fragment><td><b>{item.company}</b><small>{item.service}</small></td><td><Badge tone={item.source === "Instagram" ? "purple" : item.source === "Indicação" ? "green" : "blue"}>{item.source}</Badge></td><td><Badge tone={stageTone(item.stage)}>{item.stage}</Badge></td><td className="com-amount">{item.value}</td><td className="com-muted">{item.date}</td></Fragment>}{page === "clientes" && <Fragment><td><b>{item.person}</b><small>{item.email}</small></td><td><span className="com-text-line">{item.segment}</span><small>{item.email}</small></td><td>{item.projects}</td><td className="com-amount">{clientRevenueLabel(item)}</td><td><Badge tone={item.status === "Ativo" ? "green" : "amber"}>{item.archivedAt ? "Arquivado" : item.status}</Badge></td></Fragment>}{page === "empresas" && <Fragment><td>{item.segment}</td><td>{item.city}</td><td>{item.size}</td><td>{companyContactCount(item, contacts, companies)} {companyContactCount(item, contacts, companies) === 1 ? "contato" : "contatos"}</td><td><Badge tone={item.status === "Cliente" ? "green" : "blue"}>{item.status}</Badge></td></Fragment>}{page === "contatos" && <Fragment><ContactChannelCells item={item} /><td className="com-muted">{item.last}</td><td><Badge tone={item.status === "Decisor" || item.status === "Decisora" ? "purple" : "blue"}>{item.status}</Badge></td></Fragment>}{(page === "propostas" || page === "contratos") && <Fragment><td><b>{item.client}</b><small>{item.code}</small></td><td className="com-amount">{item.value}</td>{page === "propostas" ? <Fragment><td><Badge tone={item.tone}>{item.status}</Badge></td><td className="com-muted">{item.date}</td></Fragment> : <Fragment><td><div className="com-contract-progress"><div className="com-progress"><i style={{
+      }))} /><div className="com-table-wrap"><table className={`com-table com-table-${page}`}><thead><tr>{titles[page].map(title => <th key={title}>{title}</th>)}<th aria-label="Ações" /></tr></thead><tbody>{items.map((item, index) => <tr key={item.id ?? index}><td>{page === "leads" ? <Identity name={item.name} sub={item.email} initials={item.initials} tone={item.tone} /> : page === "clientes" || page === "empresas" || page === "contatos" ? <Identity name={item.name} sub={page === "contatos" ? item.role : page === "clientes" ? item.since : item.segment} initials={item.initials} tone={item.tone} /> : <div className="com-table-primary"><b>{item.title}</b><small>{item.code}</small></div>}</td>{page === "leads" && <Fragment><td><b>{item.company}</b><small>{item.service}</small></td><td><Badge tone={item.source === "Instagram" ? "purple" : item.source === "Indicação" ? "green" : "blue"}>{item.source}</Badge></td><td><Badge tone={stageTone(item.stage)}>{item.stage}</Badge></td><td className="com-amount">{item.value}</td><td className="com-muted">{item.date}</td></Fragment>}{page === "clientes" && <Fragment><td><b>{item.person}</b><small>{item.email}</small></td><td><span className="com-text-line">{item.segment}</span><small>{item.email}</small></td><td>{item.projects}</td><td className="com-amount">{clientRevenueLabel(item)}</td><td><Badge tone={item.status === "Ativo" ? "green" : "amber"}>{item.archivedAt ? "Arquivado" : item.status}</Badge></td></Fragment>}{page === "empresas" && <Fragment><td>{item.segment}</td><td><span className="com-text-line">{item.city || "Cidade nao informada"}</span><small>{item.email || item.phone || "Sem contato cadastrado"}</small></td><td>{item.size}</td><td>{companyContactCount(item, contacts, companies)} {companyContactCount(item, contacts, companies) === 1 ? "contato" : "contatos"}</td><td><Badge tone={item.status === "Cliente" ? "green" : "blue"}>{item.status}</Badge></td></Fragment>}{page === "contatos" && <Fragment><ContactChannelCells item={item} /><td className="com-muted">{item.last}</td><td><Badge tone={item.status === "Decisor" || item.status === "Decisora" ? "purple" : "blue"}>{item.status}</Badge></td></Fragment>}{(page === "propostas" || page === "contratos") && <Fragment><td><b>{item.client}</b><small>{item.code}</small></td><td className="com-amount">{item.value}</td>{page === "propostas" ? <Fragment><td><Badge tone={item.tone}>{item.status}</Badge></td><td className="com-muted">{item.date}</td></Fragment> : <Fragment><td><div className="com-contract-progress"><div className="com-progress"><i style={{
                           width: `${item.progress}%`
                         }} /></div><small>{item.renewal}</small></div></td><td><Badge tone={item.tone}>{item.status}</Badge></td></Fragment>}</Fragment>}<td><button className="com-row-more" aria-label={`Ações para ${item.name || item.title}`} onClick={() => {
                   setSelectedItem(item);
@@ -2557,7 +2568,7 @@ function ListView({
       const saved = await scheduleLeadFollowUp(selectedItem, patch, due);
       if (saved) setSelectedItem(null);
       return saved;
-    }} tasks={tasks} /> : page === "clientes" ? <ClientProfileModal client={selectedItem} onClose={() => setSelectedItem(null)} onArchive={onArchive} onUpdate={updated => onUpdate?.(selectedItem, updated)} onAction={onAction} /> : <div className="com-modal-backdrop" onMouseDown={event => {
+    }} tasks={tasks} /> : page === "clientes" ? <ClientProfileModal client={selectedItem} onClose={() => setSelectedItem(null)} onArchive={onArchive} onUpdate={updated => onUpdate?.(selectedItem, updated)} onAction={onAction} preferences={preferences} /> : <div className="com-modal-backdrop" onMouseDown={event => {
       if (event.target === event.currentTarget) closeRecordEditor();
     }}><section className="com-create-modal com-edit-modal" data-commercial-editor-dirty={recordDirty ? "true" : "false"}><header><div><small>{page.toUpperCase()} · REGISTRO</small><h2>{selectedItem.name || selectedItem.title}</h2></div><button type="button" aria-label="Fechar" onClick={closeRecordEditor} disabled={recordSaving}><X size={15} /></button></header>{editableFields.length === 0 && <div className="com-record-details"><span>Cliente / empresa<b>{selectedItem.client || selectedItem.company || selectedItem.name || "?"}</b></span><span>Valor<b>{selectedItem.value || selectedItem.price || "A definir"}</b></span><span>Contato<b>{selectedItem.email || selectedItem.person || selectedItem.role || "?"}</b></span><span>Detalhes<b>{selectedItem.service || selectedItem.segment || selectedItem.description || selectedItem.code || "?"}</b></span></div>}{editableFields.length > 0 && <form className="com-commercial-editor" onSubmit={event => event.preventDefault()}><div className="com-commercial-editor-heading"><strong>Dados comerciais</strong><span>As alterações só serão aplicadas ao salvar.</span></div><div className="com-commercial-editor-grid">{editableFields.map(field => {
           const locked = (page === "propostas" && selectedItem.status === "Aprovada") || (page === "contratos" && Boolean(selectedItem.clicksign?.envelopeId || isLockedContractStatus(selectedItem.status)) && !["renewal", "progress"].includes(field.key));
@@ -2839,7 +2850,8 @@ function ServicesView({
   search,
   setSearch,
   catalogImporting = false,
-  catalogSeedState = "idle"
+  catalogSeedState = "idle",
+  preferences
 }) {
   const blank = {
     name: "",
@@ -2905,7 +2917,7 @@ function ServicesView({
     if (saving) return;
     setSaving(true);
     try {
-      if (!window.confirm(`Excluir o serviço "${selected.name}"?`)) return;
+      if (!confirmWorkspaceDelete(`Excluir o serviço "${selected.name}"?`, preferences)) return;
       const deleted = await onDelete(selected);
       if (deleted !== false) setSelected(null);
     } catch (error) {

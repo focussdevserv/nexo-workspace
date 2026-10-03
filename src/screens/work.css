@@ -414,6 +414,7 @@ html[data-theme='dark'] .work-screen .agenda-v2 .agenda-time-header { background
 html[data-theme='dark'] .work-screen .agenda-v2 .agenda-time-column { background-image: repeating-linear-gradient(to bottom, transparent 0, transparent calc(var(--hour-height) - 1px), #353d36 calc(var(--hour-height) - 1px), #353d36 var(--hour-height)) !important; }
 html[data-theme='dark'] .work-screen .agenda-v2 .agenda-time-column.is-today { background-color: #171c18 !important; }
 html[data-theme='dark'] #root .app-shell .work-screen .agenda-v2 .agenda-time-date.selected { background: #242a25 !important; color: #e8eee8 !important; border-color: #353d36 !important; }
+html[data-theme='dark'] .work-screen .agenda-v2-mini-grid > button.selected > i { background: #c6f542 !important; }
 
 @media(max-width:760px){.approval-info{min-width:0}.approval-project{min-width:0}.approval-title-line h3{min-width:0;flex:1}.approval-title-line>.status-pill{flex:0 1 auto;min-width:0;max-width:100%;white-space:normal;text-align:center}}
 
