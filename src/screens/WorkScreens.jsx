@@ -289,6 +289,8 @@ function WorkScreen({ page, navigationContext = null, onNavigationContextConsume
   const [approvals, setApprovals, approvalsError, approvalsLoaded] = useLocalState('nexo.work.approvals.v1', approvalsSeed);
   const approvalActionLocks = useRef(null);
   if (!approvalActionLocks.current) approvalActionLocks.current = createKeyedActionLock();
+  const taskCompletionLocks = useRef(null);
+  if (!taskCompletionLocks.current) taskCompletionLocks.current = createKeyedActionLock();
   const [workspaceClients, setWorkspaceClients] = useState([]);
   const [files, setFiles, filesError, filesLoaded, refreshFiles] = useLocalState('nexo.work.files.v1', filesSeed);
   const [hours, setHours, hoursError, hoursLoaded, refreshHours] = useLocalState('nexo.work.hours.v1', []);
@@ -547,7 +549,7 @@ function WorkScreen({ page, navigationContext = null, onNavigationContextConsume
   const completedTasks = tasks.length - openTasks;
   const taskCompletion = tasks.length ? Math.round(completedTasks / tasks.length * 100) : 0;
 
-  const toggleTask = async (id) => {
+  const toggleTask = async (id) => taskCompletionLocks.current.run(id, async () => {
     const task = tasks.find((item) => String(item.id) === String(id));
     if (task && !taskIsCompleted(task)) {
       const blocker = taskDependencyBlocker(tasks, task);
@@ -562,7 +564,7 @@ function WorkScreen({ page, navigationContext = null, onNavigationContextConsume
     const completionSaved = await setTasks(result.tasks);
     if (!completionSaved.ok) { notify(`N\u00e3o foi poss\u00edvel concluir a tarefa: ${completionSaved.error?.message || 'erro na API.'}`); return; }
     notify(`Tarefa concluída. Próxima ocorrência criada para ${new Date(`${result.occurrence.due}T12:00:00`).toLocaleDateString('pt-BR')}.`);
-  };
+  });
   const saveTaskDetails = async (patch) => {
     const transition = prepareTaskDetailsUpdate(tasks, selectedTask.id, patch);
     if (!transition.ok) return transition;

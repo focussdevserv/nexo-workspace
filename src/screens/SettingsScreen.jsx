@@ -13,7 +13,7 @@ import { confirmSettingsNavigation } from '../lib/navigation-guards.js';
 import { enableBrowserNotifications } from './settings-browser-notifications.js';
 import { confirmSettingsImport, normalizeImportedSettings } from '../lib/settings-import.js';
 import { workspaceStartPages } from '../lib/workspace-preferences.js';
-import { settingsBaseline, settingsDraftHasChanges } from '../lib/settings-draft.js';
+import { resolveSettingsDraftUpdate, settingsBaseline, settingsDraftHasChanges } from '../lib/settings-draft.js';
 import { resolveSettingsHydration } from '../lib/settings-hydration.js';
 import { validateWorkspaceSettings } from '../lib/settings-validation.js';
 
@@ -42,7 +42,7 @@ export default function SettingsScreen({ notify, navigationContext = null, onNav
   const savedSettings = records.find((item) => item.key === 'workspace-preferences');
   const [settings, setSettingsState] = useState(structuredClone(defaults));
   const settingsRevision = useRef(0);
-  const setSettings = (next) => { settingsRevision.current += 1; setSettingsState(next); };
+  const setSettings = (next) => { settingsRevision.current += 1; setSettingsState((current) => resolveSettingsDraftUpdate(current, next)); };
   const [active, setActive] = useState('workspace');
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);

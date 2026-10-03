@@ -8,3 +8,7 @@ export function settingsBaseline(defaults, savedSettings) {
 export function settingsDraftHasChanges(draft, baseline) {
   return JSON.stringify(draft) !== JSON.stringify(baseline);
 }
+
+export function resolveSettingsDraftUpdate(current, update) {
+  return typeof update === 'function' ? update(current) : update;
+}

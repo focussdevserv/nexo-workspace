@@ -159,8 +159,9 @@ html[data-theme='dark'] .app-shell .ns-connection-badge.pending { background:#43
 html[data-theme='dark'] .app-shell .ns-connection-badge.error { background:#482a30;border-color:#75444a;color:#f0a0a5; }
 html[data-theme='dark'] .app-shell .integration-setup-content code { display:block;padding:9px 11px;border:1px solid var(--nexo-border);border-radius:8px;background:#0d1726;color:#c8d9f5; }
 html[data-theme='dark'] .app-shell .ns-info-note { background:var(--nexo-surface-raised);border-color:var(--nexo-border);color:var(--nexo-muted); }
-html[data-theme='dark'] button:not(.primary-button):not(.whatsapp-action):not(.rail-link.active):not(.selected),
-html[data-theme='dark'] a { color: inherit; }
+/* Reset only unstyled controls; classed buttons and links own their semantic colors. */
+html[data-theme='dark'] button:not([class]),
+html[data-theme='dark'] a:not([class]) { color: inherit; }
 html[data-theme='dark'] .icon-button:hover,
 html[data-theme='dark'] .rail-link:hover,
 html[data-theme='dark'] .more-button:hover,

@@ -30,3 +30,22 @@ test('keeps independent record actions independent and releases after errors', a
   await assert.rejects(locks.run('approval-1', async () => { throw new Error('failed'); }), /failed/);
   assert.deepEqual(await locks.run('approval-1', async () => ({ ok: true })), { ok: true });
 });
+
+test('rapid completion clicks cannot create duplicate recurring task occurrences', async () => {
+  const locks = createKeyedActionLock();
+  let releaseSave;
+  let occurrenceCount = 0;
+  const complete = () => locks.run('recurring-task-1', async () => {
+    occurrenceCount += 1;
+    await new Promise((resolve) => { releaseSave = resolve; });
+    return { ok: true };
+  });
+
+  const firstClick = complete();
+  assert.deepEqual(await complete(), { ok: false, skipped: true });
+  assert.equal(occurrenceCount, 1);
+  releaseSave();
+  assert.deepEqual(await firstClick, { ok: true });
+  assert.deepEqual(await locks.run('recurring-task-1', async () => ({ ok: true, retry: true })), { ok: true, retry: true });
+  assert.equal(occurrenceCount, 1);
+});

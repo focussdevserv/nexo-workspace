@@ -1,12 +1,25 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { resolveSettingsHydration } from './settings-hydration.js';
+import { resolveSettingsDraftUpdate } from './settings-draft.js';
 import { workspacePreferencesFromSettings } from './workspace-preferences.js';
 
 const defaults = {
   workspace: { agency: '', timezone: 'America/Sao_Paulo', weekStart: 'monday' },
   preferences: { compact: false, darkMode: false, startPage: 'Meu Dia' },
 };
+
+test('settings updates accept functional drafts used by agency logo actions', () => {
+  const current = { workspace: { agency: 'Focusshub', brandLogo: 'old-logo' }, preferences: { darkMode: true } };
+  const next = resolveSettingsDraftUpdate(current, (draft) => ({
+    ...draft,
+    workspace: { ...draft.workspace, brandLogo: 'new-logo' },
+  }));
+
+  assert.deepEqual(next, { workspace: { agency: 'Focusshub', brandLogo: 'new-logo' }, preferences: { darkMode: true } });
+  assert.equal(current.workspace.brandLogo, 'old-logo', 'the previous settings object remains unchanged');
+  assert.deepEqual(resolveSettingsDraftUpdate(current, { workspace: { agency: 'Imported' } }), { workspace: { agency: 'Imported' } });
+});
 
 test('successful settings fetch hydrates saved values that the app consumes', () => {
   const resolved = resolveSettingsHydration({
