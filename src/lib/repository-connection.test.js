@@ -15,3 +15,14 @@ test('distinguishes missing, disabled, configured, and verified GitHub credentia
   assert.equal(repositoryConnectionState({ status: { configured: true, enabled: true } }).label, 'Token presente');
   assert.equal(repositoryConnectionState({ status: { configured: true, enabled: true, lastTestStatus: 'connected' } }).available, true);
 });
+
+test('surfaces a failed or incomplete GitHub test without hiding the available retry action', () => {
+  assert.deepEqual(repositoryConnectionState({ status: {
+    configured: true, enabled: true, lastTestStatus: 'error', lastTestMessage: 'GitHub respondeu com HTTP 401.',
+  } }), {
+    label: 'Falha no teste', hint: 'GitHub respondeu com HTTP 401.', available: true,
+  });
+  assert.deepEqual(repositoryConnectionState({ status: { configured: true, enabled: true, lastTestStatus: 'setup_required' } }), {
+    label: 'Configuração pendente', hint: 'A conexão precisa de uma configuração adicional.', available: true,
+  });
+});

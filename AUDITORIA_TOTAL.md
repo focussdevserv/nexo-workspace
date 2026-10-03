@@ -527,3 +527,14 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - Validação automatizada: 540 testes frontend e 221 testes API passaram; lint, build frontend, build TypeScript da API e `git diff --check` passaram.
 - Navegador local: 29 destinos do menu abriram sem tela de erro; 14 combinações de Meu Dia, Agenda, CRM, Tickets, Arquivos, WhatsApp e Configurações foram avaliadas em claro/escuro e 1440/390 px, sem overflow horizontal ou tela de erro. Console: zero erros e zero avisos.
 - Nenhum provedor externo ou dado real foi alterado durante a validação. Esta onda ainda não está publicada: o acesso SSH ao GitHub retornou `Permission denied (publickey)`.
+
+## Onda 6 - financeiros, projetos e repositórios - 03/10/2026
+
+- **Contas:** movimentos avulsos agora têm remoção confirmada; a API existente reverte o saldo de forma atômica. Transferências pareadas não oferecem remoção unilateral.
+- **Projetos:** contagem, ícone e estilo das tarefas concluídas agora consideram estados legados e os estados atuais aceitos pelo modelo.
+- **Repositórios:** a área agora mostra a falha real do último teste de conexão e distingue configuração pendente; sincronizar/tentar novamente continua acessível quando há credencial.
+- **Validação:** 546 testes frontend e 221 API passaram; lint, build frontend, build da API e `git diff --check` passaram.
+- **Navegador em demonstração local:** 29 rotas do menu abriram sem tela de erro ou overflow horizontal a 1440 px. O cancelamento do diálogo de remoção preservou as 10 linhas financeiras; a ficha de projeto exibiu corretamente 1/3 tarefas concluídas. O único erro de console observado foi `/api/auth/me` HTTP 500 no Vite isolado sem backend local; os dados fictícios funcionaram pelo modo local, sem alterar dados reais.
+- **GitHub por projeto:** reutilizei a chave já existente `nexo-workspace deploy key`, que autenticou como `focussdevserv/nexo-workspace` e está autorizada para escrita. Configurei `core.sshCommand` apenas em `.git/config` deste checkout. `git ls-remote origin HEAD` passou; nenhuma conta global foi trocada.
+- **Publicação anterior:** commit `7e5681ce32f183cddf69305e05a455a858438953` foi publicado; workflow `37096657169` passou e confirmou produção na mesma revisão, `/api/health` com banco conectado, HTML e bundle HTTP 200 e `/api/auth/me` sem sessão HTTP 401.
+- Esta onda 6 ainda está local até o próximo push e deploy confirmados.
