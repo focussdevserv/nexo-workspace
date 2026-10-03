@@ -25,3 +25,15 @@ test('Mercado Pago webhook does not overwrite an order changed while the provide
   assert.match(route, /eq\(billingOrders\.id, local\.id\), eq\(billingOrders\.updatedAt, local\.updatedAt\)/);
   assert.match(route, /if \(saved && !duplicateSnapshot\)/);
 });
+
+test('subscription webhook conditionally applies its provider snapshot only to the version it read', async () => {
+  const source = await readFile(new URL('../src/server.ts', import.meta.url), 'utf8');
+  const start = source.indexOf("app.post('/api/integrations/mercadopago/webhook'");
+  const end = source.indexOf("app.post('/api/integrations/", start + 1);
+  const route = source.slice(start, end > start ? end : undefined);
+
+  assert.ok(start >= 0);
+  const subscriptionBranch = route.slice(route.indexOf("mercadoPagoWebhookResource(topic) === 'subscription'"));
+  assert.match(subscriptionBranch, /updatedAt: billingSubscriptions\.updatedAt/);
+  assert.match(subscriptionBranch, /eq\(billingSubscriptions\.id, local\.id\), eq\(billingSubscriptions\.updatedAt, local\.updatedAt\)/);
+});

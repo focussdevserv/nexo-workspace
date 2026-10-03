@@ -7,6 +7,7 @@ import { acquireClientPortalActionAfterConfirmation, appendSentPortalMessage, ca
 import { recordBelongsToPortalClient } from '../lib/client-portal-scope.js';
 import { isApprovalPending } from '../lib/approval-status.js';
 import { buildClientPortalPaymentPreview } from '../lib/client-portal-payment-preview.js';
+import { clearClientPortalSession, getClientPortalSessionStorage, readClientPortalSession, writeClientPortalSession } from '../lib/client-portal-session.js';
 
 const money = (value) => Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const relatedTo = (row, client) => Boolean(client?.id) && recordBelongsToPortalClient(row, client.id);
@@ -141,7 +142,8 @@ export function PublicClientPortal({ slug }) {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
   const [approvalNotes, setApprovalNotes] = useState({});
-  const [accessToken, setAccessToken] = useState('');
+  const [portalSession, setPortalSession] = useState(() => ({ slug, token: readClientPortalSession(getClientPortalSessionStorage(), slug) }));
+  const accessToken = portalSession.slug === slug ? portalSession.token : '';
   const [requiresVerification, setRequiresVerification] = useState(false);
   const [identifier, setIdentifier] = useState('');
   const [challengeId, setChallengeId] = useState('');
@@ -151,6 +153,13 @@ export function PublicClientPortal({ slug }) {
   const [reloadVersion, setReloadVersion] = useState(0);
   const noticeTimer = useRef(null);
   const actionLock = useRef(createClientPortalActionLock());
+  useEffect(() => {
+    setPortalSession({ slug, token: readClientPortalSession(getClientPortalSessionStorage(), slug) });
+  }, [slug]);
+  const setAccessToken = (token) => {
+    writeClientPortalSession(getClientPortalSessionStorage(), slug, token);
+    setPortalSession({ slug, token });
+  };
   React.useEffect(() => {
     let active = true;
     const controller = new window.AbortController();
@@ -221,7 +230,7 @@ export function PublicClientPortal({ slug }) {
   if (requiresVerification && !data) return <main className="cp-empty-state cp-public-access-state"><section className="cp-login-card"><span className="cp-overline">ACESSO SEGURO AO PORTAL</span><h1>Confirme sua identidade</h1>{verificationStep === 'identify' ? <form onSubmit={requestCode}><p>Informe o e-mail, CPF/CNPJ ou telefone cadastrado. O código será enviado ao e-mail da conta.</p><label>Identificador<input autoFocus required minLength={3} value={identifier} onChange={(event) => setIdentifier(event.target.value)} placeholder="E-mail, CPF/CNPJ ou telefone" /></label><button className="admin-primary" disabled={verificationBusy}>{verificationBusy ? 'Solicitando...' : 'Enviar c\u00f3digo por e-mail'}</button></form> : <form onSubmit={verifyCode}><p>Se os dados corresponderem, o c&#243;digo chegar&#225; ao e-mail cadastrado.{notice ? ` ${notice}` : ''}</p><label>Código de 6 dígitos<input autoFocus required inputMode="numeric" pattern="[0-9]{6}" maxLength={6} value={verificationCode} onChange={(event) => setVerificationCode(event.target.value.replace(/\D/g, '').slice(0, 6))} /></label><button className="admin-primary" disabled={verificationBusy || verificationCode.length !== 6}>{verificationBusy ? 'Verificando...' : 'Entrar no portal'}</button><button type="button" className="admin-secondary" disabled={verificationBusy} onClick={() => { setVerificationStep('identify'); setChallengeId(''); setVerificationCode(''); }}>Usar outro identificador</button></form>}</section>{notice && <div className="cp-toast" role="status">{notice}</div>}</main>;
   if (error || !client) return <main className="cp-empty-state cp-public-access-state"><section className="cp-login-card" role="alert"><h1>Portal indisponível</h1><p>{error || 'Este link não corresponde a um portal publicado.'}</p><button type="button" className="admin-secondary" onClick={() => setReloadVersion((version) => version + 1)}>Tentar novamente</button></section></main>;
   const { pending: pendingApprovals, history: approvalHistory } = splitClientPortalApprovals(data.approvals);
-  return <main className="cp-public-page"><header className="cp-public-header"><span className="cp-brand">{data.branding?.logo && <img width={28} height={28} src={data.branding.logo} alt="" />}<i /> Portal do cliente</span><span className="cp-client-chip">{client.name}</span>{accessToken && <button type="button" className="admin-secondary" onClick={() => { setAccessToken(''); setData(null); setRequiresVerification(true); setVerificationStep('identify'); }}>Sair do portal</button>}</header><section className="cp-public-welcome"><span className="cp-overline">ÁREA DO CLIENTE</span><h1>Olá, {(client.person || client.name).split(' ')[0]}</h1><p>Acompanhe os serviços contratados com a Focuss Dev.</p></section><section className="cp-public-content"><div className="cp-public-grid">
+  return <main className="cp-public-page"><header className="cp-public-header"><span className="cp-brand">{data.branding?.logo && <img width={28} height={28} src={data.branding.logo} alt="" />}<i /> Portal do cliente</span><span className="cp-client-chip">{client.name}</span>{accessToken && <button type="button" className="admin-secondary" onClick={() => { clearClientPortalSession(getClientPortalSessionStorage(), slug); setPortalSession({ slug, token: '' }); setData(null); setRequiresVerification(true); setVerificationStep('identify'); }}>Sair do portal</button>}</header><section className="cp-public-welcome"><span className="cp-overline">ÁREA DO CLIENTE</span><h1>Olá, {(client.person || client.name).split(' ')[0]}</h1><p>Acompanhe os serviços contratados com a Focuss Dev.</p></section><section className="cp-public-content"><div className="cp-public-grid">
     {(data.projects || []).map((item) => <article className="cp-info-card cp-project-card" key={item.id}><div className="cp-card-heading"><span className="cp-card-icon green"><FolderKanban size={17} /></span><small>PROJETO</small><span>{item.status}</span></div><h3>{item.name || item.title}</h3><p>Próxima entrega: {item.due || 'em definição'}</p><div className="cp-project-progress"><div><i style={{ width: `${Math.min(100, Math.max(0, Number(item.progress) || 0))}%` }} /></div><b>{Number(item.progress) || 0}%</b></div></article>)}
     {(data.contracts || []).map((item) => <article className="cp-info-card" key={item.id}><div className="cp-card-heading"><span className="cp-card-icon blue"><FileCheck2 size={17} /></span><small>CONTRATO</small><span>{item.status}</span></div><h3>{item.title || item.name}</h3><p>{item.code} · {item.renewal || 'Vigência conforme documento'}</p></article>)}
     {(data.payments || []).map((item) => <article className="cp-info-card" key={item.id}><div className="cp-card-heading"><span className="cp-card-icon amber"><CircleDollarSign size={17} /></span><small>PAGAMENTO</small><span>{item.status}</span></div><h3>{item.description}</h3><strong className="cp-payment-amount">{money(item.amount)}</strong>{item.paymentDetails?.pixCode && <button className="cp-action-button" onClick={() => copyPixCode(item.paymentDetails.pixCode)}>Copiar Pix <Copy size={12} /></button>}{safeClientPortalHref(item.paymentDetails?.ticketUrl) && <a className="cp-action-button" href={safeClientPortalHref(item.paymentDetails.ticketUrl)} target="_blank" rel="noopener noreferrer">Abrir boleto <ExternalLink size={12} /></a>}</article>)}

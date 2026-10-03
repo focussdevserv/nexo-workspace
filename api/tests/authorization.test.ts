@@ -25,6 +25,15 @@ test('workspace backups are restricted to the owner even when members have broad
   assert.equal(isWorkspaceRequestAllowed('member', 'POST', '/api/workspace/backup/restore', broad), false);
 });
 
+test('operational team directory stays owner-only even when non-owners have broad delivery grants', () => {
+  const broadDelivery = { delivery: { read: true, write: true, delete: true } };
+  for (const method of ['GET', 'POST', 'PATCH', 'DELETE'] as const) {
+    assert.equal(isWorkspaceRequestAllowed('admin', method, '/api/workspace/team', broadDelivery), false, `admin ${method}`);
+    assert.equal(isWorkspaceRequestAllowed('member', method, '/api/workspace/team/person-123?include=all', broadDelivery), false, `member ${method}`);
+    assert.equal(isWorkspaceRequestAllowed('owner', method, '/api/workspace/team/person-123', broadDelivery), true, `owner ${method}`);
+  }
+});
+
 test('admins can run agency workflows but cannot manage accounts or integrations', () => {
   assert.equal(isWorkspaceRequestAllowed('admin', 'POST', '/api/workspace/projects'), true);
   assert.equal(isWorkspaceRequestAllowed('admin', 'POST', '/api/integrations/waha/send'), true);

@@ -86,6 +86,7 @@ import { normalizeBrowserNotificationPreferences, notificationAccessPath, resolv
 import { googleCalendarAttendeesPayload, mapGoogleCalendarEvents } from './integrations/google-calendar.js';
 import { isValidCalendarTimeZone, localDateTimeToIso, nextCalendarDate, normalizeCalendarTimeZone } from './integrations/calendar-time-zone.js';
 import { buildGoogleAuthorizationUrl, googleOAuthStateRecordIsActive } from './integrations/google-oauth.js';
+import { buildOAuthResultRedirectUrl } from './integrations/oauth-result-redirect.js';
 import { buildMercadoPagoAuthorizationUrl, createPkcePair, mercadoPagoOAuthStateIsActive, parseMercadoPagoTokenSet, type MercadoPagoTokenSet } from './integrations/mercadopago-oauth.js';
 import { integrationControlAllowsUse } from './integrations/integration-control.js';
 import { canApplyClicksignWebhookStatus, clicksignContractStatus, clicksignWebhookEnvelopeStatus, clicksignWebhookIsReady, parseClicksignWebhookEvent, verifyClicksignWebhook } from './integrations/clicksign-webhook.js';
@@ -852,10 +853,7 @@ app.get('/api/integrations/mercadopago/callback', { config: { rateLimit: { max: 
   reply.clearCookie('nexo_mp_oauth_state', cookieOptions);
   reply.clearCookie('nexo_mp_oauth_verifier', cookieOptions);
   const redirectToApp = (result: string, reason?: string) => {
-    const target = new URL('/', allowedOrigins[0]);
-    target.searchParams.set('mercadopago', result);
-    if (reason) target.searchParams.set('reason', reason);
-    return reply.redirect(target.toString());
+    return reply.redirect(buildOAuthResultRedirectUrl(allowedOrigins[0]!, 'mercadopago', result === 'connected' ? 'connected' : 'error', reason));
   };
   if (!query.success || !query.data.state || !stateCookie || !verifier || query.data.state !== stateCookie) return redirectToApp('error', 'state_invalid');
   let claims: { sub?: string; organizationId?: string; purpose?: string; verifierHash?: string; stateId?: string };
@@ -901,10 +899,7 @@ app.get('/api/integrations/google/callback', { config: { rateLimit: { max: 20, t
   const stateCookie = request.cookies.nexo_google_oauth_state;
   reply.clearCookie('nexo_google_oauth_state', { path: '/api/integrations', httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax' });
   const redirectToApp = (result: string, reason?: string) => {
-    const target = new URL('/', allowedOrigins[0]);
-    target.searchParams.set('google', result);
-    if (reason) target.searchParams.set('reason', reason);
-    return reply.redirect(target.toString());
+    return reply.redirect(buildOAuthResultRedirectUrl(allowedOrigins[0]!, 'google', result === 'connected' ? 'connected' : 'error', reason));
   };
   if (!query.success || !query.data.state || !stateCookie || query.data.state !== stateCookie) return redirectToApp('error', 'state_invalid');
   let claims: { sub?: string; organizationId?: string; purpose?: string; nonce?: string; stateId?: string };
@@ -2987,10 +2982,17 @@ app.post('/api/integrations/mercadopago/webhook', async (request, reply) => {
         }
       }
     } else if (mercadoPagoWebhookResource(topic) === 'subscription') {
-      const [local] = await db.select({ id: billingSubscriptions.id, organizationId: billingSubscriptions.organizationId, mercadoPagoAccountId: billingSubscriptions.mercadoPagoAccountId }).from(billingSubscriptions).where(eq(billingSubscriptions.mpSubscriptionId, resourceId)).limit(1);
+      const [local] = await db.select({ id: billingSubscriptions.id, organizationId: billingSubscriptions.organizationId, mercadoPagoAccountId: billingSubscriptions.mercadoPagoAccountId, updatedAt: billingSubscriptions.updatedAt }).from(billingSubscriptions).where(eq(billingSubscriptions.mpSubscriptionId, resourceId)).limit(1);
       if (!local || !await mercadoPagoRecordBelongsToCurrentAccount(local.organizationId, local.mercadoPagoAccountId)) return reply.code(200).send({ received: true });
       const remote = await mercadoPago<Record<string, any>>(local.organizationId, `/preapproval/${encodeURIComponent(resourceId)}`);
-      if (matchesMercadoPagoExternalReference(remote.external_reference, local.id)) await db.update(billingSubscriptions).set({ status: String(remote.status ?? 'pending'), nextPaymentAt: remote.next_payment_date ? new Date(String(remote.next_payment_date)) : null, updatedAt: new Date() }).where(eq(billingSubscriptions.id, local.id));
+      if (matchesMercadoPagoExternalReference(remote.external_reference, local.id)) {
+        // The provider snapshot may have been fetched before a local pause or
+        // cancellation completed. Do not let that older response restore a
+        // stale subscription status or next payment date.
+        await db.update(billingSubscriptions).set({ status: String(remote.status ?? 'pending'), nextPaymentAt: remote.next_payment_date ? new Date(String(remote.next_payment_date)) : null, updatedAt: new Date() }).where(and(
+          eq(billingSubscriptions.id, local.id), eq(billingSubscriptions.updatedAt, local.updatedAt),
+        ));
+      }
     }
     return reply.code(200).send({ received: true });
   } catch { return reply.code(500).send({ error: 'webhook_processing_failed' }); }

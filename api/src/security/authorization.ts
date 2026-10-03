@@ -76,6 +76,10 @@ export function isWorkspaceRequestAllowed(role: WorkspaceRole, method: string, r
   const verb = method.toUpperCase();
   const path = requestUrl.split('?', 1)[0] || '/';
   if (role === 'owner') return true;
+  // The Team screen includes the operational directory and is intentionally
+  // owner-only in the workspace navigation. A broad delivery-module grant
+  // must not make its underlying records available through direct API calls.
+  if (path === '/api/workspace/team' || path.startsWith('/api/workspace/team/')) return false;
   if (path === '/api/workspace/backup' || path === '/api/workspace/backup/restore') return false;
   if (path === '/api/auth/me' || path === '/api/auth/logout') return true;
   // OAuth and disconnect actions change the workspace's shared provider

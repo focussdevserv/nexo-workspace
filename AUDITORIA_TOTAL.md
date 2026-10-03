@@ -604,3 +604,13 @@ Esta revisão combinou inspeção estática, compilação e health check. Não e
 - **Validação automatizada:** 695 testes frontend e 272 API passaram; lint, build web (2.093 módulos), build TypeScript da API e `git diff --check` passaram.
 - **Integridade:** nenhuma conta, sessão, arquivo Drive, convite, pagamento ou provedor real foi alterado. Login e entrega de convite/e-mail dependem de uma conta de teste controlada e configuração externa.
 - **Publicação:** esta onda aguarda commit e deploy; a produção confirmada no momento é `8fc04cdf49656af023bca1d293ac04eb52340dd0`.
+
+## Onda 12 - portal, integracoes, financeiro e demonstracao - 03/10/2026
+
+- **Portal do cliente:** a sessao autenticada sobrevive a recarga na mesma aba por ate oito horas, isolada por link; logout, expiracao, resposta 401 e estado armazenado invalido limpam o token. A indisponibilidade de `sessionStorage` nao impede a tela de carregar.
+- **Acesso da equipe:** o endpoint da equipe operacional agora permanece exclusivo do proprietario, mesmo quando um administrador ou membro recebe permissoes amplas de Projetos.
+- **Mercado Pago:** atualizacao de webhook aplica o retrato da assinatura somente se o registro nao mudou enquanto o provedor era consultado; respostas atrasadas nao revertem pausa ou cancelamento recente.
+- **OAuth:** callbacks de Google e Mercado Pago retornam para Integracoes com resultado e motivo, onde a interface apresenta o feedback.
+- **Demonstracao local:** contatos ficticios agora tem email e telefone distintos; uma migracao corrige somente os campos que ainda correspondem ao fixture antigo e preserva personalizacoes.
+- **Validacao desta revisao:** 700 testes frontend e 276 testes API passaram; lint, build frontend, build API e `git diff --check` passaram. Nenhuma conta, pagamento ou integracao real foi alterada.
+- **Publicacao:** em andamento; apos publicar, confirmar manifesto, API, banco, pagina inicial e rotas protegidas sem sessao.

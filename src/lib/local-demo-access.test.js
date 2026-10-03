@@ -35,6 +35,16 @@ test('production demo mode is explicitly opt-in, isolated to browser storage, an
     const clients = await apiRequest('/api/workspace/clients?limit=200&offset=0');
     assert.ok(clients.data.length >= 6, 'the preview includes populated workspace data');
     assert.ok(clients.data.every((client) => client.demo === true));
+    const contacts = await apiRequest('/api/workspace/contacts?limit=200&offset=0');
+    assert.equal(contacts.data.length, 9);
+    assert.equal(new Set(contacts.data.map((contact) => contact.email.toLowerCase())).size, contacts.data.length, 'each sample contact has a distinct email');
+    assert.equal(new Set(contacts.data.map((contact) => contact.phone)).size, contacts.data.length, 'each sample contact has a distinct phone number');
+    const legacyStore = JSON.parse(values.get('focusshub.local-demo.v1'));
+    legacyStore.contacts[8] = { ...legacyStore.contacts[8], email: legacyStore.contacts[0].email, phone: legacyStore.contacts[0].phone };
+    values.set('focusshub.local-demo.v1', JSON.stringify(legacyStore));
+    const migratedContacts = await apiRequest('/api/workspace/contacts?limit=200&offset=0');
+    assert.equal(migratedContacts.data[8].email, 'paula@aurora.local');
+    assert.notEqual(migratedContacts.data[8].phone, migratedContacts.data[0].phone, 'legacy sample duplicate is repaired without restoring all demo data');
     const integration = await apiRequest('/api/integrations/waha/status');
     assert.equal(integration.status, 'demo_only');
     assert.equal(networkCalls, 0, 'demo reads and integration requests stay in the browser');

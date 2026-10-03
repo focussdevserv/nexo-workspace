@@ -82,7 +82,7 @@ function buildSeed() {
   const simple = (resource, count, make) => [resource, Array.from({ length: count }, (_, index) => row(`${resource}-${index + 1}`, make(index)))];
   return Object.fromEntries([
     recordSet('clients', clients), recordSet('leads', leads), recordSet('projects', projects), recordSet('tasks', tasks), recordSet('events', events), recordSet('proposals', proposals), recordSet('services', services), recordSet('contracts', contracts), recordSet('billing-orders', billing), recordSet('billing-subscriptions', subscriptions),
-    simple('contacts', 9, (i) => ({ name: ['Marina Costa', 'Rafael Mendes', 'Camila Rocha', 'André Lima', 'Bianca Alves', 'Pedro Nunes', 'Fernanda Reis', 'Lucas Prado', 'Paula Dias'][i], client: client(i).name, clientId: client(i).id, email: client(i).email, role: ['Diretora', 'Sócio', 'Marketing'][i % 3], phone: client(i).phone, demoTag: 'DEMONSTRAÇÃO LOCAL' })),
+    simple('contacts', 9, (i) => ({ name: ['Marina Costa', 'Rafael Mendes', 'Camila Rocha', 'André Lima', 'Bianca Alves', 'Pedro Nunes', 'Fernanda Reis', 'Lucas Prado', 'Paula Dias'][i], client: client(i).name, clientId: client(i).id, email: i === 8 ? 'paula@aurora.local' : client(i).email, role: ['Diretora', 'Sócio', 'Marketing'][i % 3], phone: i === 8 ? '(11) 99876-5321' : client(i).phone, demoTag: 'DEMONSTRAÇÃO LOCAL' })),
     simple('companies', 6, (i) => ({ name: client(i).name, segment: client(i).segment, contact: client(i).person, email: client(i).email, status: 'Ativa', demoTag: 'DEMONSTRAÇÃO LOCAL' })),
     simple('tickets', 6, (i) => ({ code: `TK-DEMO-${String(i + 1).padStart(3, '0')}`, title: ['Atualizar conteúdo do site', 'Dúvida sobre formulário', 'Ajuste de acesso', 'Revisar carregamento mobile', 'Configurar domínio', 'Corrigir espaçamento'][i], client: client(i).name, clientId: client(i).id, status: ['Aberto', 'Em andamento', 'Aguardando cliente', 'Resolvido'][i % 4], priority: ['Normal', 'Alta', 'Média'][i % 3], createdAt: shiftDate(-i), demoTag: 'DEMONSTRAÇÃO LOCAL' })),
     simple('approvals', 5, (i) => ({ title: ['Home — primeira versão', 'Logo principal', 'Texto institucional', 'Criativo de campanha', 'Página de contato'][i], kind: ['PDF', 'Imagem', 'Documento', 'Imagem', 'PDF'][i], client: client(i).name, clientId: client(i).id, project: projects[i].name, status: ['Aguardando', 'Aprovado', 'Aguardando', 'Alterações solicitadas', 'Aguardando'][i], reviewer: ['Ana Martins', 'Focuss Dev', 'Lucas Costa', 'Ana Martins', 'Rafaela Nunes'][i], initials: ['AM', 'FD', 'LC', 'AM', 'RN'][i], sent: shiftDate(-i), comments: [], demoTag: 'DEMONSTRAÇÃO LOCAL' })),
@@ -119,6 +119,16 @@ function readStore() {
       const defaults = seedById.get(String(record?.id));
       if (!defaults || !record || typeof record !== 'object') return record;
       const enriched = { ...defaults, ...record };
+      // Repair the exact original duplicate on the ninth sample contact while
+      // preserving custom edits to either contact field.
+      if (resource === 'contacts' && String(record.id) === 'demo-contacts-9' && enriched.name === 'Paula Dias') {
+        const firstContact = store.contacts?.find((contact) => String(contact?.id) === 'demo-contacts-1');
+        const seededContact = seed.contacts?.find((contact) => String(contact?.id) === 'demo-contacts-9');
+        if (firstContact && seededContact) {
+          if (record.email === firstContact.email) enriched.email = seededContact.email;
+          if (record.phone === firstContact.phone) enriched.phone = seededContact.phone;
+        }
+      }
       if (resource === 'contracts') Object.assign(enriched, migrateLegacyDemoContractValue(record, defaults));
       for (const [field, value] of Object.entries(defaults)) {
         if ((enriched[field] === undefined || enriched[field] === null || enriched[field] === '') && value !== undefined) enriched[field] = value;
