@@ -1,4 +1,5 @@
 import { isFinanceReceivableStatusOpen } from './finance-receivable-status.js';
+import { formatWorkspaceCurrency } from './workspace-formatting.js';
 
 const settledStatuses = new Set(['recebida', 'recebido', 'paga', 'pago', 'settled', 'paid', 'received']);
 const cancelledStatuses = new Set(['cancelada', 'cancelado', 'cancelled', 'canceled', 'estornada', 'refunded']);
@@ -68,7 +69,7 @@ export function sortFinanceActivity(records, limit = 8) {
   }).slice(0, Math.max(0, limit));
 }
 
-export function financeOverviewActivityRows(incomeRows, expenseRows, limit = 8) {
+export function financeOverviewActivityRows(incomeRows, expenseRows, limit = 8, preferences = {}) {
   return sortFinanceActivity([
     ...incomeRows.map((row) => ({ ...row, entryType: 'income' })),
     ...expenseRows.map((row) => ({ ...row, entryType: 'expense' })),
@@ -76,7 +77,7 @@ export function financeOverviewActivityRows(incomeRows, expenseRows, limit = 8) 
     row.description || row.code || row.id || '',
     row.counterparty || row.category || '',
     row.date || '',
-    `${row.entryType === 'income' ? '+' : '-'} ${new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(row.amount) || 0)}`,
+    `${row.entryType === 'income' ? '+' : '-'} ${formatWorkspaceCurrency(Number(row.amount) || 0, preferences)}`,
     row.status || 'Pendente',
   ]);
 }

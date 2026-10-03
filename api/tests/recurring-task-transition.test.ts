@@ -18,6 +18,22 @@ test('accepts a matching open next occurrence after completion', () => {
   assert.equal(validNextTaskOccurrence('task-1', current, { status: 'Concluída', state: 'Concluída' }, next), true);
 });
 
+test('keeps client, project, priority, and other task details on the next occurrence', () => {
+  const linked = {
+    ...current, project: 'Site', projectId: 'project-1', client: 'Cliente A', clientId: 'client-1',
+    assignee: 'Ana', priority: 'Alta', description: 'Conferir entrega', checklist: [{ title: 'Revisar', done: true }],
+  };
+  const nextLinked = {
+    ...next, project: 'Site', projectId: 'project-1', client: 'Cliente A', clientId: 'client-1',
+    assignee: 'Ana', priority: 'Alta', description: 'Conferir entrega', checklist: [{ title: 'Revisar', done: false }],
+  };
+  assert.equal(validNextTaskOccurrence('task-1', linked, { status: 'Done', state: 'Done' }, nextLinked), true);
+  assert.equal(validNextTaskOccurrence('task-1', linked, { status: 'Done' }, { ...nextLinked, clientId: 'client-2' }), false);
+  assert.equal(validNextTaskOccurrence('task-1', linked, { status: 'Done' }, { ...nextLinked, projectId: 'project-2' }), false);
+  assert.equal(validNextTaskOccurrence('task-1', linked, { status: 'Done' }, { ...nextLinked, priority: 'Urgente' }), false);
+  assert.equal(validNextTaskOccurrence('task-1', linked, { status: 'Done' }, { ...nextLinked, injected: true }), false);
+});
+
 test('rejects a mismatched series, sequence, title, completed next task, or invalid date', () => {
   const patch = { status: 'Concluída', state: 'Concluída' };
   assert.equal(validNextTaskOccurrence('task-1', current, patch, { ...next, recurrenceId: 'other' }), false);
@@ -36,4 +52,6 @@ test('accepts a retry only when the existing next occurrence is the same record'
   assert.equal(taskOccurrenceMatches({ ...next, title: 'Outro' }, next), false);
   assert.equal(taskOccurrenceMatches({ ...next, due: '2026-10-03' }, next), false);
   assert.equal(taskOccurrenceMatches({ ...next, recurrenceSequence: 3 }, next), false);
+  assert.equal(taskOccurrenceMatches({ ...next, clientId: 'client-2' }, { ...next, clientId: 'client-1' }), false);
+  assert.equal(taskOccurrenceMatches({ ...next, assignee: 'Bia' }, { ...next, assignee: 'Ana' }), false);
 });

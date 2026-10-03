@@ -20,11 +20,25 @@ export function fileAssociationDraft(file = {}, clients = [], projects = []) {
   const client = clientIds.length
     ? uniqueMatch(clients, (item) => clientIds.every((id) => id === String(item.id)))
     : uniqueMatch(clients, (item) => normalizeName(item.name || item.title) === normalizeName(file.client));
-  const project = uniqueMatch(projects, (item) => String(item.id) === String(file.projectId || ''))
-    || uniqueMatch(projects, (item) => normalizeName(item.name || item.title) === normalizeName(file.project));
+  const projectId = String(file.projectId || '').trim();
+  // A stale stable ID is evidence that the old relationship needs review. Do
+  // not silently relink it by a duplicate-prone display name.
+  const project = projectId
+    ? uniqueMatch(projects, (item) => String(item.id) === projectId)
+    : uniqueMatch(projects, (item) => normalizeName(item.name || item.title) === normalizeName(file.project));
   const projectClient = project && findProjectClient(project, clients);
-  const resolvedClient = client && projectClient && String(client.id) !== String(projectClient.id) ? projectClient : client || projectClient;
-  return { clientId: String(resolvedClient?.id || ''), projectId: String(project?.id || '') };
+  const conflictingClientIds = clientIds.length > 1 && !client;
+  const mismatch = client && projectClient && String(client.id) !== String(projectClient.id);
+  const associationError = conflictingClientIds ? 'file_client_ids_conflict'
+    : clientIds.length > 0 && !client ? 'file_client_not_found'
+      : projectId && !project ? 'file_project_not_found'
+        : mismatch ? 'file_project_client_mismatch' : '';
+  const resolvedClient = mismatch ? client : client || projectClient;
+  return {
+    clientId: String(resolvedClient?.id || ''),
+    projectId: String(project?.id || ''),
+    ...(associationError ? { associationError } : {}),
+  };
 }
 
 export function resolveFileAssociation(draft = {}, clients = [], projects = []) {

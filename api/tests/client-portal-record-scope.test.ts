@@ -3,7 +3,11 @@ import test from 'node:test';
 import { recordBelongsToPortalClient } from '../src/security/client-portal-record-scope.js';
 
 test('portal record scope accepts each supported client reference field', () => {
-  for (const field of ['clientId', 'workspaceClientId', 'clientRecordId']) {
+  for (const field of [
+    'clientId', 'workspaceClientId', 'clientRecordId', 'client_id', 'workspace_client_id', 'client_record_id',
+    'companyId', 'workspaceCompanyId', 'companyRecordId', 'company_id', 'workspace_company_id', 'company_record_id',
+    'customerId', 'workspaceCustomerId', 'customerRecordId', 'customer_id', 'workspace_customer_id', 'customer_record_id',
+  ]) {
     assert.equal(recordBelongsToPortalClient({ [field]: 'client-a' }, 'client-a'), true, field);
   }
 });

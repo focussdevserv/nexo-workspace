@@ -51,6 +51,13 @@ test('places date-only values in the intended month in the local timezone', () =
   assert.equal(months.find((item) => item.month.getMonth() === 0).incomeRealized, 10);
 });
 
+test('finance overview activity amounts follow the workspace currency preference', () => {
+  const [row] = financeOverviewActivityRows([
+    { description: 'Service', amount: 12.5, date: '2026-10-02', status: 'Pendente' },
+  ], [], 8, { language: 'en-US', currency: 'USD' });
+  assert.equal(row[3], '+ $12.50');
+});
+
 test('cashflow forecast excludes failed, rejected, expired and authorized payments', () => {
   const statuses = ['failed', 'Falhou', 'rejected', 'Recusada', 'expired', 'Expirada', 'authorized', 'processed'];
   const rows = statuses.map((status, index) => ({ id: String(index), amount: 100, status, dueDate: '2026-04-10' }));

@@ -4558,14 +4558,8 @@ app.get('/api/public/client-portal/:token', async (request, reply) => {
   const resources = ['projects', 'tasks', 'contracts', 'approvals'];
   const relatedRows = await Promise.all(resources.map((resource) => db.select().from(workspaceRecords).where(and(
     eq(workspaceRecords.organizationId, claims.organizationId), eq(workspaceRecords.resource, resource), isNull(workspaceRecords.archivedAt),
-    or(
-      sql`nullif(${workspaceRecords.data}->>'clientId', '') = ${record.id}`,
-      sql`nullif(${workspaceRecords.data}->>'workspaceClientId', '') = ${record.id}`,
-      sql`nullif(${workspaceRecords.data}->>'clientRecordId', '') = ${record.id}`,
-    ),
-    sql`(nullif(${workspaceRecords.data}->>'clientId', '') is null or nullif(${workspaceRecords.data}->>'clientId', '') = ${record.id})`,
-    sql`(nullif(${workspaceRecords.data}->>'workspaceClientId', '') is null or nullif(${workspaceRecords.data}->>'workspaceClientId', '') = ${record.id})`,
-    sql`(nullif(${workspaceRecords.data}->>'clientRecordId', '') is null or nullif(${workspaceRecords.data}->>'clientRecordId', '') = ${record.id})`,
+    or(...workspaceClientReferenceFields.map((field) => sql`nullif(${workspaceRecords.data}->>${field}, '') = ${record.id}`))!,
+    ...workspaceClientReferenceFields.map((field) => sql`(nullif(${workspaceRecords.data}->>${field}, '') is null or nullif(${workspaceRecords.data}->>${field}, '') = ${record.id})`),
   )).orderBy(desc(workspaceRecords.updatedAt)).limit(300)));
   const related = Object.fromEntries(resources.map((resource, index) => [resource, relatedRows[index]!.map((row) => {
     const data = row.data as Record<string, unknown>;

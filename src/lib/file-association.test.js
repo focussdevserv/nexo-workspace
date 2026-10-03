@@ -19,7 +19,24 @@ test('preserves client associations stored in legacy workspaceClientId or client
 
 test('does not guess a client name when stored client IDs conflict', () => {
   assert.deepEqual(fileAssociationDraft({ clientId: 'client-1', clientRecordId: 'client-2', client: clients[0].name }, clients, []), {
-    clientId: '', projectId: '',
+    clientId: '', projectId: '', associationError: 'file_client_ids_conflict',
+  });
+});
+
+test('does not relink a deleted project by a duplicate display name', () => {
+  const duplicateNameProjects = [
+    { id: 'project-1', name: 'Site institucional', clientId: 'client-1' },
+    { id: 'project-2', name: 'Site institucional', clientId: 'client-2' },
+  ];
+  assert.deepEqual(fileAssociationDraft({ projectId: 'deleted-project', project: 'Site institucional' }, clients, duplicateNameProjects), {
+    clientId: '', projectId: '', associationError: 'file_project_not_found',
+  });
+});
+
+test('flags a saved client and project that point to different clients for review', () => {
+  const linked = fileAssociationDraft({ clientId: 'client-2', projectId: 'project-1' }, clients, projects);
+  assert.deepEqual(linked, {
+    clientId: 'client-2', projectId: 'project-1', associationError: 'file_project_client_mismatch',
   });
 });
 
