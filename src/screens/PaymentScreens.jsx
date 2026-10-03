@@ -93,6 +93,8 @@ export function PaymentConsole({ kind = 'orders', notify = () => {}, navigationC
   const [clients, setClients] = useState([]);
   const [methods, setMethods] = useState([]);
   const [busy, setBusy] = useState(false);
+  const [loadingRecords, setLoadingRecords] = useState(true);
+  const [recordsLoadError, setRecordsLoadError] = useState(false);
   const [cancelingId, setCancelingId] = useState('');
   const [refreshingId, setRefreshingId] = useState('');
   const [subscriptionBusyId, setSubscriptionBusyId] = useState('');
@@ -162,6 +164,8 @@ export function PaymentConsole({ kind = 'orders', notify = () => {}, navigationC
   }, []);
   const refresh = useCallback(async () => {
     if (!token) return;
+    setLoadingRecords(true);
+    setRecordsLoadError(false);
     setError('');
     try {
       const [records, availableMethods, clientResult, settings] = await Promise.all([
@@ -180,7 +184,8 @@ export function PaymentConsole({ kind = 'orders', notify = () => {}, navigationC
         setForm((current) => current.dueDate === dateAfterDays(7) ? { ...current, dueDate: dateAfterDays(days) } : current);
       }
       setError(paymentSupportWarning({ clientError: clientResult.error, methodsError: availableMethods.error }));
-    } catch (err) { setError(err.message); }
+    } catch (err) { setRecordsLoadError(true); setError(err.message); }
+    finally { setLoadingRecords(false); }
   }, [demoMode, endpoint, request, subscriptionMode, token]);
   const persistInstallmentProgress = useCallback(async () => {
     if (subscriptionMode || !installmentContext) return '';
@@ -342,7 +347,11 @@ export function PaymentConsole({ kind = 'orders', notify = () => {}, navigationC
           {item.paymentDetails?.ticketUrl && <a className="ns-secondary" href={item.paymentDetails.ticketUrl} target="_blank" rel="noreferrer">Boleto <ArrowUpRight size={14} /></a>}
         </div>}
       </article>)}
-      {!filtered.length && <div className="pay-empty"><Activity size={20} /><b>Nenhum registro encontrado</b><span>Crie uma cobrança ou assinatura para ela aparecer aqui.</span></div>}
+      {!filtered.length && (loadingRecords
+        ? <div className="pay-empty" role="status" aria-live="polite"><LoaderCircle className="spin" size={20} /><b>Carregando cobranças</b><span>Buscando os registros mais recentes do workspace.</span></div>
+        : recordsLoadError
+          ? <div className="pay-empty" role="alert"><AlertCircle size={20} /><b>Não foi possível carregar os registros</b><span>Confira sua conexão e tente novamente.</span><button className="ns-secondary" type="button" onClick={refresh}>Tentar novamente</button></div>
+          : <div className="pay-empty"><Activity size={20} /><b>Nenhum registro encontrado</b><span>Crie uma cobrança ou assinatura para ela aparecer aqui.</span></div>)}
     </div>
     <div className="pay-security-note"><ShieldCheck size={17} /><span>Credenciais privadas ficam no servidor. Dados de cartão são tokenizados pelo Mercado Pago e não passam pelos servidores do Focusshub.</span></div>
     {modal && <div className="ns-integration-modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) setModal(false); }}><form ref={paymentModalRef} className="ns-integration-modal pay-create-modal" role="dialog" aria-modal="true" aria-labelledby="payment-create-title" aria-busy={busy} onSubmit={submit}><header><span className="ns-integration-logo mercado">{subscriptionMode ? <RefreshCw size={18} /> : <CreditCard size={18} />}</span><div><h2 id="payment-create-title">{subscriptionMode ? 'Nova assinatura recorrente' : 'Nova cobrança'}</h2><p>{subscriptionMode ? 'O cliente autoriza o método no Mercado Pago.' : 'Selecione como o cliente pagará.'}</p></div><button type="button" aria-label="Fechar" disabled={busy} onClick={() => setModal(false)}><X size={17} /></button></header><div className="ns-integration-fields pay-fields"><label>Cliente cadastrado<select value={form.clientId} onChange={(event) => { const client = clients.find((item) => String(item.id) === String(event.target.value)); setForm((current) => ({ ...current, clientId: client?.id || '', clientName: client?.name || '', payerEmail: client?.email || current.payerEmail })); }}><option value="">Selecionar cliente (opcional)</option>{clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}</select></label><label>Nome do cliente<input required value={form.clientName} onChange={(e) => setForm((current) => ({ ...current, clientId: '', clientName: e.target.value }))} /></label><label>E-mail do pagador<input required type="email" value={form.payerEmail} onChange={(e) => setForm((current) => updatePaymentField(current, 'payerEmail', e.target.value))} /></label><label>Descrição<input required value={form.description} onChange={(e) => setForm((current) => updatePaymentField(current, 'description', e.target.value))} /></label><label>Valor (R$)<input required type="number" min="0.01" step="0.01" value={form.amount} onChange={(e) => setForm((current) => updatePaymentField(current, 'amount', e.target.value))} /></label>

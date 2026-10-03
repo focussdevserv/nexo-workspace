@@ -34,6 +34,14 @@ export function readWorkspaceAccessMode(hash) {
   return params.get('access') === 'reset-request' ? 'reset-request' : 'login';
 }
 
+export function readWorkspaceAccessLocation(search, hash) {
+  return {
+    invite: readWorkspaceInvite(search, hash),
+    resetToken: readPasswordResetToken(hash),
+    accessMode: readWorkspaceAccessMode(hash),
+  };
+}
+
 export function workspaceAccessModeUrl(href, mode) {
   const url = new URL(href);
   url.searchParams.delete('invite');

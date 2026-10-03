@@ -3,7 +3,7 @@ import { ArrowRight, KeyRound, LoaderCircle, LockKeyhole, Moon, ShieldCheck, Spa
 import { apiRequest, parseApiResponse } from '../lib/workspace-api.js';
 import { activateLocalDemo, getLocalDemoUser, isLocalDemoActive, isLocalDemoRequested } from '../lib/local-demo.js';
 import { applyWorkspaceTheme, publishWorkspacePreferences, readCachedWorkspacePreferences, rememberWorkspaceThemePreference } from '../lib/workspace-preferences.js';
-import { normalizeAuthEmail, passwordConfirmationMatches, prefillRecoveryEmail, readPasswordResetToken, readWorkspaceAccessMode, readWorkspaceInvite, shouldAutoEnterLocalDemo, stripWorkspaceAccessTokens, workspaceAccessModeUrl } from './workspace-access-helpers.js';
+import { normalizeAuthEmail, passwordConfirmationMatches, prefillRecoveryEmail, readPasswordResetToken, readWorkspaceAccessLocation, readWorkspaceAccessMode, readWorkspaceInvite, shouldAutoEnterLocalDemo, stripWorkspaceAccessTokens, workspaceAccessModeUrl } from './workspace-access-helpers.js';
 import './workspace-access.css';
 
 function isValidWorkspaceProfile(profile) {
@@ -63,9 +63,14 @@ export default function WorkspaceAccess({ children }) {
   }, []);
 
   useEffect(() => {
-    const syncAccessMode = () => setAccessMode(readWorkspaceAccessMode(window.location.hash));
-    window.addEventListener('popstate', syncAccessMode);
-    return () => window.removeEventListener('popstate', syncAccessMode);
+    const syncAccessLocation = () => {
+      const location = readWorkspaceAccessLocation(window.location.search, window.location.hash);
+      setAccessMode(location.accessMode);
+      setResetToken(location.resetToken);
+      setInvite(location.invite);
+    };
+    window.addEventListener('popstate', syncAccessLocation);
+    return () => window.removeEventListener('popstate', syncAccessLocation);
   }, []);
 
   const navigateAccessMode = (mode, replace = false) => {
