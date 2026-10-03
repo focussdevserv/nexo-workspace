@@ -1,6 +1,28 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { canAuthorizeOAuthIntegrations, canManageIntegrationSettings, googleAuthorizationButtonState, googleReauthorizationButtonState, integrationCredentialFlow, integrationOAuthRedirectUri, integrationStatusLabel, integrationStatusTone, mercadoPagoAuthorizationButtonState, navigateToOAuthConsent, oauthAccountIsConfigured } from './integration-auth-state.js';
+import { readFileSync } from 'node:fs';
+import { canAuthorizeOAuthIntegrations, canManageIntegrationSettings, googleAuthorizationButtonState, googleReauthorizationButtonState, integrationCredentialFlow, integrationOAuthRedirectUri, integrationStatusLabel, integrationStatusTone, mercadoPagoAuthorizationButtonState, navigateToOAuthConsent, oauthAccountIsConfigured, oauthIntegrationProviders } from './integration-auth-state.js';
+
+test('every OAuth provider declared by the API has a consent CTA route and a registered callback', () => {
+  const server = readFileSync(new URL('../../api/src/server.ts', import.meta.url), 'utf8');
+  const serviceScreen = readFileSync(new URL('../screens/ServiceScreens.jsx', import.meta.url), 'utf8');
+  const apiAuthorizeProviders = [...server.matchAll(/app\.get\('\/api\/integrations\/([^/]+)\/authorize'/g)].map((match) => match[1]).sort();
+  const apiCallbackProviders = [...server.matchAll(/app\.get\('\/api\/integrations\/([^/]+)\/callback'/g)].map((match) => match[1]).sort();
+  assert.deepEqual(oauthIntegrationProviders.map((item) => item.provider).sort(), apiAuthorizeProviders);
+  assert.deepEqual(oauthIntegrationProviders.map((item) => item.provider).sort(), apiCallbackProviders);
+
+  for (const provider of oauthIntegrationProviders) {
+    assert.equal(integrationCredentialFlow(provider.name).type, 'oauth');
+    assert.ok(serviceScreen.includes(`oauthIntegrationProvider('${provider.name}')`), `${provider.name} screen handler must use its registered route`);
+    const authorizationState = provider.provider === 'google'
+      ? googleAuthorizationButtonState({ oauthAvailable: true, enabled: true })
+      : mercadoPagoAuthorizationButtonState({ oauthAvailable: true, enabled: true });
+    assert.equal(authorizationState.action, 'authorize', `${provider.name} card must offer consent`);
+    const navigations = [];
+    assert.equal(navigateToOAuthConsent({ path: provider.authorizePath, navigate: (path) => navigations.push(path) }), true);
+    assert.deepEqual(navigations, [provider.authorizePath]);
+  }
+});
 
 test('only the workspace owner can start provider OAuth consent', () => {
   assert.equal(canAuthorizeOAuthIntegrations('owner'), true);

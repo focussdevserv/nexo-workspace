@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { canDeleteTaskRecords, canWriteDeliveryRecords } from './work-screen-permissions.js';
+import { canDeleteTaskRecords, canWriteDeliveryRecords, projectDetailControlState } from './work-screen-permissions.js';
 
 test('delivery controls follow member overrides while keeping the API baseline', () => {
   assert.equal(canWriteDeliveryRecords('member'), true);
@@ -18,4 +18,16 @@ test('task deletion follows the API delete override independently of write acces
   assert.equal(canDeleteTaskRecords('member', { delivery: { read: true, write: true } }), false);
   assert.equal(canDeleteTaskRecords('member', { delivery: { read: true, delete: true } }), true);
   assert.equal(canDeleteTaskRecords('owner', { delivery: { delete: false } }), true);
+});
+
+test('project detail disables every write action for read-only profiles and while saving', () => {
+  assert.deepEqual(projectDetailControlState({ canWrite: false, canArchive: false }), {
+    editDisabled: true, addTaskDisabled: true, addCommentDisabled: true, archiveDisabled: true, saveDisabled: true,
+  });
+  assert.deepEqual(projectDetailControlState({ canWrite: true, canArchive: false }), {
+    editDisabled: false, addTaskDisabled: false, addCommentDisabled: false, archiveDisabled: true, saveDisabled: false,
+  });
+  assert.deepEqual(projectDetailControlState({ canWrite: true, canArchive: true, saving: true }), {
+    editDisabled: true, addTaskDisabled: true, addCommentDisabled: true, archiveDisabled: true, saveDisabled: true,
+  });
 });

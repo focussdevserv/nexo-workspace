@@ -13,3 +13,14 @@ export function canDeleteTaskRecords(role, permissions) {
   const delivery = permissions?.delivery;
   return delivery == null || delivery.delete === true;
 }
+
+export function projectDetailControlState({ canWrite, canArchive, saving = false }) {
+  const editDisabled = !canWrite || saving;
+  return {
+    editDisabled,
+    addTaskDisabled: editDisabled,
+    addCommentDisabled: editDisabled,
+    archiveDisabled: editDisabled || !canArchive,
+    saveDisabled: editDisabled,
+  };
+}

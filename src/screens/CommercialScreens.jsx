@@ -893,14 +893,19 @@ export default function CommercialScreen({
       notify("Uma proposta recusada ou expirada não pode ser aceita.");
       return false;
     }
+    const linkedClient = resolveCommercialClient(records.clients || [], proposal.clientId, proposal.client);
+    if (!linkedClient) {
+      notify("Vincule esta proposta a um cliente cadastrado antes de aceitá-la.");
+      return false;
+    }
     const now = (new Date()).toISOString();
     const selectedServices = resolveProposalServices(records.services || datasets.services, proposal.serviceIds, proposal.serviceId);
     const serviceSummary = summarizeProposalServices(selectedServices);
     const serviceTemplate = selectedServices[0] || (records.services || datasets.services).find(item => String(item.name || "").toLocaleLowerCase("pt-BR") === String(proposal.service || "").toLocaleLowerCase("pt-BR"));
     const contract = {
       title: proposal.title,
-      client: proposal.client,
-      clientId: proposal.clientId,
+      client: linkedClient.name,
+      clientId: linkedClient.id,
       sourceProposalId: proposal.id,
       code: commercialContractCode(proposal.id, new Date(now)),
       value: proposal.value,
@@ -921,8 +926,8 @@ export default function CommercialScreen({
     const project = {
       id: Date.now(),
       name: proposal.title,
-      client: proposal.client,
-      clientId: proposal.clientId,
+      client: linkedClient.name,
+      clientId: linkedClient.id,
       sourceProposalId: proposal.id,
       type: serviceSummary.label || proposal.service || "Projeto comercial",
       services: serviceSummary.names,
@@ -940,7 +945,7 @@ export default function CommercialScreen({
       project: project.name,
       projectId: project.id,
       client: project.client,
-      clientId: proposal.clientId,
+      clientId: linkedClient.id,
       sourceProposalId: proposal.id,
       due: proposal.deadline || "A definir",
       assignee: serviceSummary.responsible.join(", "),

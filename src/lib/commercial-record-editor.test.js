@@ -217,3 +217,16 @@ test('rejects malformed proposal prices without modifying the original record', 
   assert.match(result.error, /valor válido/i);
   assert.equal(record.title, 'Proposta');
 });
+
+test('proposal acceptance requires a live canonical client and propagates its ID to generated records', async () => {
+  const source = await readFile(new URL('../screens/CommercialScreens.jsx', import.meta.url), 'utf8');
+  const start = source.indexOf('const acceptProposal = async proposal => {');
+  const end = source.indexOf('const updateCommercialRecord', start);
+  const acceptance = source.slice(start, end);
+  assert.ok(start >= 0 && end > start, 'acceptance handler is present');
+  assert.match(acceptance, /resolveCommercialClient\(records\.clients \|\| \[\], proposal\.clientId, proposal\.client\)/);
+  assert.match(acceptance, /if \(!linkedClient\)[\s\S]*?return false;/);
+  assert.match(acceptance, /client: linkedClient\.name,[\s\S]*?clientId: linkedClient\.id/);
+  assert.match(acceptance, /clientId: linkedClient\.id,[\s\S]*?sourceProposalId: proposal\.id/);
+  assert.match(acceptance, /apiRequest\(`\/api\/workspace\/proposals\/\$\{encodeURIComponent\(proposal\.id\)\}\/accept`/);
+});

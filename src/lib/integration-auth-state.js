@@ -1,3 +1,13 @@
+/** OAuth consent endpoints implemented by the API and exposed in Integrations. */
+export const oauthIntegrationProviders = Object.freeze([
+  Object.freeze({ name: 'Google Workspace', provider: 'google', authorizePath: '/api/integrations/google/authorize', callbackPath: '/api/integrations/google/callback' }),
+  Object.freeze({ name: 'Mercado Pago', provider: 'mercadopago', authorizePath: '/api/integrations/mercadopago/authorize', callbackPath: '/api/integrations/mercadopago/callback' }),
+]);
+
+export function oauthIntegrationProvider(name) {
+  return oauthIntegrationProviders.find((item) => item.name === name) || null;
+}
+
 /** Decide whether Mercado Pago can start OAuth or must open server setup. */
 export function mercadoPagoAuthorizationButtonState(state, loading = false, statusError = false) {
   if (loading) return { disabled: true, action: null, label: 'Consultando…' };
@@ -87,7 +97,8 @@ export function canManageIntegrationSettings(role) {
 
 /** Describe the actual credential flow so token-only providers are never presented as OAuth logins. */
 export function integrationCredentialFlow(name) {
-  if (name === 'Google Workspace' || name === 'Mercado Pago') return { type: 'oauth', actionLabel: name === 'Google Workspace' ? 'Autorizar Google' : 'Autorizar conta' };
+  const oauthProvider = oauthIntegrationProvider(name);
+  if (oauthProvider) return { type: 'oauth', actionLabel: name === 'Google Workspace' ? 'Autorizar Google' : 'Autorizar conta' };
   if (name === 'WAHA') return { type: 'qr', actionLabel: 'Conectar número / QR Code' };
   if (name === 'Hostinger E-mail') return { type: 'mailbox', actionLabel: 'Conectar caixa postal' };
   return { type: 'server_token', actionLabel: 'Configurar token e testar' };
