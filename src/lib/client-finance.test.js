@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { advanceClientInstallmentProgress, buildClientFinanceHistory, clientBillingRecordState, clientFinanceDateKey, clientFinanceDueDateLabel, clientFinanceEditPatch, clientFinanceFailedResources, clientFinanceFilterCounts, clientFinanceFilterForPage, clientFinanceLegacyClientValue, clientFinanceOpenBillingCount, isClientFinanceCancelled, isClientFinanceSettled, manualFinanceSettlementPatch, normalizeClientSubscriptionTerms, prepareClientContractTrackingPatch, prepareClientServiceChargeUpdate, safeClientFinanceExternalHref } from './client-finance.js';
+import { readFile } from 'node:fs/promises';
+import { advanceClientInstallmentProgress, buildClientFinanceHistory, clientBillingRecordState, clientFinanceDateKey, clientFinanceDueDateLabel, clientFinanceEditPatch, clientFinanceFailedResources, clientFinanceFilterCounts, clientFinanceFilterForPage, clientFinanceLegacyClientValue, clientFinanceOpenBillingCount, isClientFinanceCancelled, isClientFinanceSettled, manualFinanceSettlementPatch, normalizeClientSubscriptionTerms, prepareClientContractTrackingPatch, prepareClientServiceChargeUpdate, resolveClientInstallmentRequest, safeClientFinanceExternalHref } from './client-finance.js';
 import { belongsToClient } from '../data/client-link.js';
 
 test('client finance shortcuts map to an in-profile filter', () => {
@@ -157,6 +158,33 @@ test('editing a pending client finance record does not silently mark it paid', (
   assert.equal(explicitSettlement.status, 'Recebida');
   assert.equal(explicitSettlement.settledAt, now.toISOString());
   assert.equal(explicitSettlement.paidAt, now.toISOString());
+});
+
+test('installment retries reuse an open or failed intent, and canceled installments receive a new intent key', async () => {
+  const first = await resolveClientInstallmentRequest([], 'client-1', 'service-1', 0);
+  const retry = await resolveClientInstallmentRequest([{ id: 'order-1', workspaceClientId: 'client-1', requestIdempotencyKey: first.key, status: 'pending' }], 'client-1', 'service-1', 0);
+  assert.equal(retry.key, first.key);
+  assert.equal(retry.existing.id, 'order-1');
+  const failed = await resolveClientInstallmentRequest([{ id: 'order-2', workspaceClientId: 'client-1', requestIdempotencyKey: first.key, status: 'failed' }], 'client-1', 'service-1', 0);
+  assert.equal(failed.key, first.key);
+  assert.equal(failed.existing.status, 'failed');
+  const canceled = await resolveClientInstallmentRequest([{ id: 'order-3', workspaceClientId: 'client-1', requestIdempotencyKey: first.key, status: 'cancelled' }], 'client-1', 'service-1', 0);
+  assert.notEqual(canceled.key, first.key);
+  assert.equal(canceled.existing, null);
+  const legacy = await resolveClientInstallmentRequest([{ id: 'legacy-order', workspaceClientId: 'client-1', requestIdempotencyKey: 'legacy-key', description: 'Site - parcela 1/3', status: 'pending' }], 'client-1', 'service-1', 0, 'Site - parcela 1/3');
+  assert.equal(legacy.existing.id, 'legacy-order');
+  assert.equal(legacy.key, 'legacy-key');
+  assert.notEqual(canceled.key, (await resolveClientInstallmentRequest([], 'client-1', 'service-1', 1)).key);
+  assert.match(first.key, /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+});
+
+test('client profile retries a failed installment-progress save without posting a second provider charge', async () => {
+  const source = await readFile(new URL('../screens/CommercialScreens.jsx', import.meta.url), 'utf8');
+  const save = source.slice(source.indexOf('const saveClientFinance = async event =>'), source.indexOf('const addClientFile = async file =>'));
+  assert.match(save, /resolveClientInstallmentRequest\(related\.billing \|\| \[\], client\.id, financeDraft\.installmentServiceId, financeDraft\.installmentIndex, financeDraft\.description\)/);
+  assert.match(save, /recoveredInstallmentOrder\s*\?\s*\{\s*data: recoveredInstallmentOrder/);
+  assert.match(save, /await apiRequest\(endpoint/);
+  assert.match(source, /disabled=\{Boolean\(financeDraft\.installmentServiceId\)\}/);
 });
 
 test('editing a client finance record preserves its existing CRM link fields', () => {

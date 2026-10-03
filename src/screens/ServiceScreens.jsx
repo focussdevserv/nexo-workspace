@@ -734,13 +734,19 @@ function Inbox({ notify, forceWhatsapp = false, navigationContext = null, onNavi
       try {
         const attachments = attachment ? [{ filename: attachment.name, mimeType: attachment.type || 'application/octet-stream', contentBase64: await encodeAttachmentFile(attachment) }] : [];
         const payload = { to: newContact.email.trim(), subject: newContact.subject.trim(), text: newContact.body.trim(), attachments };
-        if (emailProvider === 'hostinger') await apiRequest('/api/integrations/hostinger/send', { method: 'POST', body: JSON.stringify(payload) });
-        else await apiRequest('/api/integrations/google/gmail/send', { method: 'POST', body: JSON.stringify(payload) });
-        await loadGmail();
-        setAttachment(null);
-        setNewOpen(false);
-        setNewContact({ name: '', company: '', phone: '', email: '', subject: '', body: '' });
-        notify(`E-mail enviado por ${emailProvider === 'hostinger' ? 'Hostinger' : 'Gmail'}.`);
+        const providerName = emailProvider === 'hostinger' ? 'Hostinger' : 'Gmail';
+        const result = await sendInboxMessage({
+          deliver: () => emailProvider === 'hostinger'
+            ? apiRequest('/api/integrations/hostinger/send', { method: 'POST', body: JSON.stringify(payload) })
+            : apiRequest('/api/integrations/google/gmail/send', { method: 'POST', body: JSON.stringify(payload) }),
+          onSent: () => {
+            setAttachment(null);
+            setNewOpen(false);
+            setNewContact({ name: '', company: '', phone: '', email: '', subject: '', body: '' });
+          },
+          refresh: loadGmail,
+        });
+        notify(result.refreshed ? `E-mail enviado por ${providerName}.` : `E-mail enviado por ${providerName}, mas a caixa não atualizou. Atualize para conferir.`);
       } catch (error) {
         setConversationError(error.message || 'Não foi possível enviar o e-mail. Revise a conexão e tente novamente.');
       } finally { setSending(false); }

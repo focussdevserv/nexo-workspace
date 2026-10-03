@@ -12,9 +12,11 @@ import { apiRequest, fetchAllRecords } from '../lib/workspace-api.js';
 import { useWorkspacePreferences } from '../lib/workspace-preferences.js';
 import { completeTaskOccurrence } from '../lib/task-recurrence.js';
 import { saveTaskDetailsOnce } from '../lib/task-edit-transition.js';
+import { createRequestUuid } from '../lib/request-id.js';
 import { taskIsCompleted, taskMatchesStatus, taskStatusForEdit, withTaskStatus } from '../lib/task-status.js';
 import { taskDependencyBlocker, taskDependencyBlockMessage, tasksDependingOn } from '../lib/task-dependency.js';
 import { parseAgendaAttendees, validateAgendaAttendees, validateAgendaEvent } from '../lib/agenda-event-validation.js';
+import { deleteAgendaEvent } from '../lib/agenda-event-delete.js';
 import { agendaEventDurationMinutes, agendaEventEndDate } from '../lib/agenda-event-interval.js';
 import { isAgendaAllDayEvent } from '../lib/agenda-event-presentation.js';
 import { agendaNavigationEventDate, resolveAgendaNavigationEvent } from '../lib/agenda-navigation.js';
@@ -392,6 +394,7 @@ function WorkScreen({ page, navigationContext = null, onNavigationContextConsume
   const recurringAgendaSeriesRef = useRef(null);
   const [savingProject, setSavingProject] = useState(false);
   const projectCreateLockRef = useRef(false);
+  const projectCreateAttemptRef = useRef(null);
   const [savingTask, setSavingTask] = useState(false);
   const taskCreateLockRef = useRef(false);
   const uploadRef = useRef(null);
@@ -691,20 +694,38 @@ function WorkScreen({ page, navigationContext = null, onNavigationContextConsume
     try {
       const client = workspaceClients.find((item) => String(item.id) === String(draft.clientId));
       const temporaryId = globalThis.crypto?.randomUUID?.() || `project-${Date.now()}`;
-      const project = { id: temporaryId, name: draft.title.trim(), client: String(client?.name || client?.title || 'Sem cliente'), clientId: client?.id || '', type: draft.type || 'Projeto', status: 'Em andamento', progress: 0, due: draft.due || 'A definir', team: [draft.assignee].filter(Boolean), tone: 'lime' };
+      const projectData = { name: draft.title.trim(), client: String(client?.name || client?.title || 'Sem cliente'), clientId: client?.id || '', type: draft.type || 'Projeto', status: 'Em andamento', progress: 0, due: draft.due || 'A definir', team: [draft.assignee].filter(Boolean), tone: 'lime' };
+      const project = { id: temporaryId, ...projectData };
+      const templateTasks = buildProjectTemplateTasks(draft.templateId, project, (index) => `${temporaryId}-task-${index + 1}`);
+      if (!localDemo) {
+        const taskData = templateTasks.map(({ id, ...task }) => ({ ...task, projectId: '' }));
+        const fingerprint = JSON.stringify({ project: projectData, tasks: taskData });
+        if (projectCreateAttemptRef.current?.fingerprint !== fingerprint) {
+          projectCreateAttemptRef.current = { fingerprint, requestId: createRequestUuid() };
+        }
+        const response = await apiRequest('/api/workspace/projects/with-tasks', {
+          method: 'POST',
+          body: JSON.stringify({ requestId: projectCreateAttemptRef.current.requestId, project: projectData, tasks: taskData }),
+        });
+        projectCreateAttemptRef.current = null;
+        await Promise.all([refreshProjects(), refreshTasks()]);
+        setSelectedProject(response.data.project);
+        notify(templateTasks.length ? `Projeto criado com ${response.data.tasks.length} tarefas iniciais do modelo.` : 'Projeto criado e salvo.');
+        return true;
+      }
       const projectSave = await setProjects((items) => [project, ...items]);
       if (!projectSave.ok) { notify(`Não foi possível salvar o projeto: ${projectSave.error?.message || 'erro na API.'}`); return false; }
       const savedProject = resolveCreatedWorkspaceRecord(projectSave, temporaryId);
       if (!savedProject) { notify('Projeto criado, mas não foi possível confirmar o vínculo para as tarefas do modelo. Atualize a lista antes de continuar.'); return true; }
-      const templateTasks = buildProjectTemplateTasks(draft.templateId, savedProject, (index) => `${temporaryId}-task-${index + 1}`);
-      if (templateTasks.length) {
-        const tasksSave = await setTasks((items) => [...templateTasks, ...items]);
+      const localTemplateTasks = buildProjectTemplateTasks(draft.templateId, savedProject, (index) => `${temporaryId}-task-${index + 1}`);
+      if (localTemplateTasks.length) {
+        const tasksSave = await setTasks((items) => [...localTemplateTasks, ...items]);
         if (!tasksSave.ok) {
           setSelectedProject(savedProject);
           notify(`Projeto criado, mas as tarefas de “${projectTemplateChoices().find((item) => item.value === draft.templateId)?.label || 'modelo'}” não foram salvas. O projeto foi aberto para você adicionar as tarefas manualmente.`);
           return true;
         }
-        notify(`Projeto criado com ${templateTasks.length} tarefas iniciais do modelo.`);
+        notify(`Projeto criado com ${localTemplateTasks.length} tarefas iniciais do modelo.`);
       } else notify('Projeto criado e salvo.');
       return true;
     } finally {
@@ -975,18 +996,24 @@ function WorkScreen({ page, navigationContext = null, onNavigationContextConsume
   };
   const deleteSelectedEvent = async () => {
     if (preferences.confirmDelete && !window.confirm('Excluir este evento da agenda?')) return;
-    const googleOnly = selectedEvent.calendarSource === 'google';
-    if (selectedEvent.googleEventId) {
-      try { await apiRequest(`/api/integrations/google/calendar/events/${selectedEvent.googleEventId}`, { method: 'DELETE' }); }
-      catch (error) { notify(error.message || 'O Google Calendar nao confirmou a exclusao.'); return; }
+    const result = await deleteAgendaEvent({
+      event: selectedEvent,
+      removeLocal: async (eventId) => setEvents((current) => current.filter((item) => String(item.id) !== eventId)),
+      deleteGoogle: (eventId) => apiRequest(`/api/integrations/google/calendar/events/${encodeURIComponent(eventId)}`, { method: 'DELETE' }),
+    });
+    if (!result.ok) {
+      notify(result.reason === 'local_delete_failed'
+        ? `Nao foi possivel remover o evento do Focusshub: ${result.error?.message || 'erro na API.'}`
+        : result.error?.message || 'O Google Calendar nao confirmou a exclusao.');
+      return;
     }
-    if (googleOnly) setGoogleCalendarEvents((current) => current.filter((item) => String(item.googleEventId) !== String(selectedEvent.googleEventId)));
-    else {
-      const deleted = await setEvents((current) => current.filter((item) => String(item.id) !== String(selectedEvent.id)));
-      if (!deleted.ok) { notify(`Nao foi possivel remover o evento do Focusshub: ${deleted.error?.message || 'erro na API.'}`); return; }
+    if (result.googleEventId && !result.remotePending) {
+      setGoogleCalendarEvents((current) => current.filter((item) => String(item.googleEventId) !== result.googleEventId));
     }
     setSelectedEvent(null);
-    notify(googleOnly ? 'Evento removido do Google Calendar.' : 'Evento removido da agenda.');
+    notify(result.remotePending
+      ? 'Evento removido do Focusshub, mas o Google Calendar nao confirmou a exclusao. Ele continua na agenda do Google e pode ser removido novamente por la.'
+      : result.googleOnly ? 'Evento removido do Google Calendar.' : 'Evento removido da agenda.');
   };
 
   return <main className="work-screen">

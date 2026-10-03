@@ -3891,6 +3891,77 @@ app.post('/api/workspace/events/recurring-series', { preHandler: app.authenticat
   } });
 });
 
+app.post('/api/workspace/projects/with-tasks', { preHandler: app.authenticate, config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {
+  const body = parseBody(z.object({
+    requestId: z.string().uuid(), project: workspaceDataSchema,
+    tasks: z.array(workspaceDataSchema).max(50),
+  }), request.body, reply);
+  if (!body) return;
+  if (!isWorkspaceRequestAllowed(request.user.role, 'POST', '/api/workspace/projects', request.user.permissions)) return reply.code(403).send({ error: 'forbidden', message: 'Você não tem permissão para criar projetos.' });
+  const projectName = typeof body.project.name === 'string' ? body.project.name.trim() : '';
+  if (!projectName || projectName.length > 180) return reply.code(400).send({ error: 'project_name_required', message: 'Informe um nome válido para o projeto.' });
+  const clientIdValue = String(body.project.clientId || '');
+  const clientId = clientIdValue ? z.string().uuid().safeParse(clientIdValue) : null;
+  if (clientId && !clientId.success) return reply.code(400).send({ error: 'project_client_invalid', message: 'O cliente vinculado ao projeto é inválido.' });
+  if (request.user.permissions?.scope?.mode === 'selected' && !recordMatchesWorkspaceScope('projects', '', body.project, request.user.permissions.scope)) return reply.code(403).send({ error: 'record_scope_denied', message: 'Vincule o projeto a um cliente do seu escopo.' });
+  if (body.tasks.some((task) => typeof task.title !== 'string' || !task.title.trim() || task.title.length > 240)) return reply.code(400).send({ error: 'project_task_title_invalid', message: 'Cada tarefa do modelo precisa ter um título válido.' });
+
+  const requestHash = createHash('sha256').update(JSON.stringify({ project: body.project, tasks: body.tasks })).digest('hex');
+  const outcome = await db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${request.user.organizationId}), hashtext(${body.requestId}))`);
+    const [previousBundle] = await tx.select({ entityId: activityEvents.entityId, payload: activityEvents.payload }).from(activityEvents).where(and(
+      eq(activityEvents.organizationId, request.user.organizationId), eq(activityEvents.entityType, 'projects'),
+      eq(activityEvents.action, 'project_bundle_created'), sql`${activityEvents.payload}->>'requestId' = ${body.requestId}`,
+    )).limit(1);
+    if (previousBundle) {
+      const payload = previousBundle.payload as Record<string, unknown>;
+      if (payload.requestHash !== requestHash) return { kind: 'conflict' as const };
+      const [project] = await tx.select().from(workspaceRecords).where(and(
+        eq(workspaceRecords.id, previousBundle.entityId!), eq(workspaceRecords.organizationId, request.user.organizationId),
+        eq(workspaceRecords.resource, 'projects'), isNull(workspaceRecords.archivedAt),
+      )).limit(1);
+      if (!project) return { kind: 'conflict' as const };
+      const tasks = await tx.select().from(workspaceRecords).where(and(
+        eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'tasks'),
+        isNull(workspaceRecords.archivedAt), sql`${workspaceRecords.data}->>'projectId' = ${project.id}`,
+      )).orderBy(asc(workspaceRecords.createdAt));
+      return { kind: 'replayed' as const, project, tasks };
+    }
+
+    if (clientId?.success) {
+      const [client] = await tx.select({ id: workspaceRecords.id }).from(workspaceRecords).where(and(
+        eq(workspaceRecords.id, clientId.data), eq(workspaceRecords.organizationId, request.user.organizationId),
+        eq(workspaceRecords.resource, 'clients'), isNull(workspaceRecords.archivedAt),
+      )).limit(1);
+      if (!client) return { kind: 'client_missing' as const };
+    }
+    const timestamp = new Date();
+    const projectData = { ...body.project, name: projectName };
+    const [project] = await tx.insert(workspaceRecords).values({
+      organizationId: request.user.organizationId, createdBy: request.user.sub, resource: 'projects', data: projectData,
+    }).returning();
+    if (!project) throw new Error('Project bundle parent was not inserted.');
+    const clientName = String(body.project.client || 'Sem cliente');
+    const taskValues = body.tasks.map((task) => {
+      const clean = Object.fromEntries(Object.entries(task).filter(([field]) => !['id', 'createdAt', 'updatedAt'].includes(field)));
+      return {
+        organizationId: request.user.organizationId, createdBy: request.user.sub, resource: 'tasks',
+        data: { ...clean, title: String(task.title).trim(), project: projectName, projectId: project.id, client: clientName, clientId: clientId?.success ? clientId.data : '' },
+      };
+    });
+    const tasks = taskValues.length ? await tx.insert(workspaceRecords).values(taskValues).returning() : [];
+    await tx.insert(activityEvents).values([
+      { organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'projects', entityId: project.id, action: 'project_bundle_created', payload: { requestId: body.requestId, requestHash, taskCount: tasks.length } },
+      ...tasks.map((task) => ({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: 'tasks', entityId: task.id, action: 'created', payload: { projectId: project.id, source: 'project_template' } })),
+    ]);
+    return { kind: 'created' as const, project, tasks };
+  });
+  if (outcome.kind === 'client_missing') return reply.code(404).send({ error: 'project_client_not_found', message: 'O cliente vinculado não foi encontrado neste workspace.' });
+  if (outcome.kind === 'conflict') return reply.code(409).send({ error: 'project_bundle_conflict', message: 'Esta tentativa de criação já foi usada com outros dados. Reabra o formulário e tente novamente.' });
+  const serialize = (row: typeof outcome.project) => ({ ...row.data, id: row.id, createdAt: row.createdAt, updatedAt: row.updatedAt });
+  return reply.code(outcome.kind === 'created' ? 201 : 200).send({ data: { project: serialize(outcome.project), tasks: outcome.tasks.map(serialize), idempotent: outcome.kind === 'replayed' } });
+});
+
 app.post('/api/workspace/:resource', { preHandler: app.authenticate }, async (request, reply) => {
   const params = z.object({ resource: workspaceResource }).safeParse(request.params);
   const body = parseBody(z.object({ data: workspaceDataSchema }), request.body, reply);

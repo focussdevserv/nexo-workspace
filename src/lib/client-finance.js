@@ -42,6 +42,49 @@ export function clientBillingRecordState(item, localDemo = false) {
   };
 }
 
+const terminalInstallmentOrderStatuses = new Set(['canceled', 'expired', 'refunded', 'rejected']);
+
+export async function clientInstallmentIdempotencyKey(clientId, serviceId, installmentIndex, generation = 0) {
+  const cryptoApi = globalThis.crypto;
+  const TextEncoderApi = globalThis.TextEncoder;
+  if (!cryptoApi?.subtle?.digest || !TextEncoderApi) {
+    throw new Error('Este navegador não oferece proteção segura para repetir esta parcela. Atualize o navegador e tente novamente.');
+  }
+  const source = `focusshub:client-installment:v1:${String(clientId)}:${String(serviceId)}:${installmentIndex}:${generation}`;
+  const digest = new Uint8Array(await cryptoApi.subtle.digest('SHA-256', new TextEncoderApi().encode(source)));
+  digest[6] = (digest[6] & 0x0f) | 0x80;
+  digest[8] = (digest[8] & 0x3f) | 0x80;
+  const hex = Array.from(digest.subarray(0, 16), (byte) => byte.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+/** Reuse an open/failed installment intent; start a new generation after a terminal cancellation. */
+export async function resolveClientInstallmentRequest(billing, clientId, serviceId, installmentIndex, description = '') {
+  if (!clientId || !serviceId || !Number.isInteger(installmentIndex) || installmentIndex < 0) {
+    return { error: 'O contexto desta parcela está incompleto. Atualize a ficha do cliente antes de continuar.' };
+  }
+  const records = Array.isArray(billing) ? billing : [];
+  for (let generation = 0; generation < 100; generation += 1) {
+    const key = await clientInstallmentIdempotencyKey(clientId, serviceId, installmentIndex, generation);
+    const existing = records.find((item) => item?.requestIdempotencyKey === key);
+    if (!existing) {
+      const legacyOrder = generation === 0 && description
+        ? records.find((item) => String(item?.workspaceClientId || '') === String(clientId)
+          && String(item?.description || '').trim() === String(description).trim()
+          && !terminalInstallmentOrderStatuses.has(normalizePaymentStatus(item?.status)))
+        : null;
+      if (legacyOrder) return { key: legacyOrder.requestIdempotencyKey || key, existing: legacyOrder, legacy: true };
+      return { key, existing: null };
+    }
+    if (String(existing.workspaceClientId || '') !== String(clientId)) {
+      return { error: 'A chave desta parcela já está vinculada a outro cliente. Atualize a ficha antes de tentar novamente.' };
+    }
+    if (terminalInstallmentOrderStatuses.has(normalizePaymentStatus(existing.status))) continue;
+    return { key, existing };
+  }
+  return { error: 'Esta parcela possui muitas tentativas encerradas. Revise o histórico financeiro antes de gerar outra cobrança.' };
+}
+
 export function clientFinanceFilterForPage(page) {
   const normalized = String(page || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLocaleLowerCase('pt-BR');
   if (normalized === 'receitas') return 'revenues';
@@ -97,6 +140,7 @@ export function prepareClientServiceChargeUpdate(charges, index, draft) {
   if (!['none', 'single', 'installments', 'recurring'].includes(billingMode)) return { error: 'Escolha uma condição de cobrança válida.' };
 
   const next = { ...current, service, billingMode };
+  const generated = Math.max(0, Number(current.generatedInstallments) || 0);
   if (billingMode !== 'none') {
     const amount = Number(String(draft.amount || '').replace(',', '.'));
     if (!Number.isFinite(amount) || amount <= 0 || amount > 1_000_000) return { error: 'Informe um valor maior que zero e de até R$ 1.000.000,00.' };
@@ -104,7 +148,6 @@ export function prepareClientServiceChargeUpdate(charges, index, draft) {
   }
   if (billingMode === 'installments') {
     const installments = Number(draft.installments);
-    const generated = Math.max(0, Number(current.generatedInstallments) || 0);
     if (!Number.isInteger(installments) || installments < 2 || installments > 24) return { error: 'O parcelamento precisa ter de 2 a 24 parcelas.' };
     if (installments < generated) return { error: `Este serviço já tem ${generated} parcelas emitidas; não reduza o total abaixo desse número.` };
     next.installments = installments;

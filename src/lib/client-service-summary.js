@@ -34,7 +34,7 @@ export function summarizeClientServices(client) {
       amountToCharge: mode === 'installments' ? installmentAmounts[installmentIndex] : amount,
       installmentIndex,
       installmentCount: installments,
-      serviceId: charge?.serviceId,
+      serviceId: charge?.serviceId ?? charge?.id,
       frequency: String(charge?.frequency || 'months:1'),
     };
   });

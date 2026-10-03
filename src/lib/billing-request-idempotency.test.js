@@ -41,10 +41,11 @@ test('client profile charge and subscription retries reuse an idempotency key un
   assert.match(save, /operation,\s*payload,\s*createBillingRequestUuid/);
   assert.match(save, /headers:\s*\{\s*["']Idempotency-Key["']:\s*idempotencyKey\s*\}/);
 
-  const requestIndex = save.indexOf('const result = await apiRequest(endpoint, {');
+  const requestIndex = save.indexOf('const result = recoveredInstallmentOrder');
   const clearIndex = save.indexOf('if (!financeRecord) billingRequestAttempt.current = null;', requestIndex);
   const catchIndex = save.indexOf('} catch (error) {', requestIndex);
   assert.ok(requestIndex >= 0, 'client finance create request is present');
+  assert.match(save.slice(requestIndex, clearIndex), /await apiRequest\(endpoint/);
   assert.ok(clearIndex > requestIndex && clearIndex < catchIndex, 'key is cleared only after the create request resolves');
   assert.doesNotMatch(save.slice(catchIndex), /billingRequestAttempt\.current\s*=\s*null/);
 });

@@ -26,6 +26,21 @@ test('keeps local demo delivery marked as simulated for truthful feedback', asyn
   assert.deepEqual(result, { sent: true, refreshed: true, simulated: true });
 });
 
+test('a newly composed email is not reported as failed or left ready for duplicate send when refresh fails', async () => {
+  let providerAcceptances = 0;
+  let composerResets = 0;
+  const result = await sendInboxMessage({
+    deliver: async () => { providerAcceptances += 1; return { data: { id: 'provider-message-1' } }; },
+    onSent: () => { composerResets += 1; },
+    refresh: async () => { throw new Error('mailbox temporarily unavailable'); },
+  });
+
+  assert.equal(result.sent, true);
+  assert.equal(result.refreshed, false);
+  assert.equal(providerAcceptances, 1);
+  assert.equal(composerResets, 1);
+});
+
 test('keeps the composer intact when WAHA reports the idempotent send is still pending', async () => {
   let clears = 0;
   let refreshes = 0;

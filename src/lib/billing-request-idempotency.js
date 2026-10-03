@@ -1,3 +1,5 @@
+import { createRequestUuid } from './request-id.js';
+
 function stableValue(value) {
   if (Array.isArray(value)) return value.map(stableValue);
   if (!value || typeof value !== 'object') return value;
@@ -18,9 +20,5 @@ export function reuseBillingRequestKey(currentAttempt, operation, payload, creat
 }
 
 export function createBillingRequestUuid() {
-  if (typeof globalThis.crypto?.randomUUID === 'function') return globalThis.crypto.randomUUID();
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (character) => {
-    const random = Math.floor(Math.random() * 16);
-    return (character === 'x' ? random : (random & 0x3) | 0x8).toString(16);
-  });
+  return createRequestUuid();
 }

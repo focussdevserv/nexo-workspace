@@ -27,7 +27,7 @@ import { splitInstallmentAmounts } from "../lib/installment-plan.js";
 import { clientMonthlyRevenue, clientMonthlyRevenueLabel, parseDisplayAmount, recurringMonthlyAmount } from "../lib/client-billing-summary.js";
 import { downloadCsvFile, recordsToCsv } from "../lib/csv.js";
 import { isLocalDemoActive } from "../lib/local-demo.js";
-import { advanceClientInstallmentProgress, buildClientFinanceHistory, clientBillingRecordState, clientFinanceDateKey, clientFinanceDueDateLabel, clientFinanceEditPatch, clientFinanceFailedResources, clientFinanceFilterCounts, clientFinanceFilterForPage, clientFinanceLegacyClientValue, clientFinanceOpenBillingCount, isClientFinanceCancelled, isClientFinanceSettled, manualFinanceSettlementPatch, normalizeClientSubscriptionTerms, prepareClientContractTrackingPatch, prepareClientServiceChargeUpdate, safeClientFinanceExternalHref } from "../lib/client-finance.js";
+import { advanceClientInstallmentProgress, buildClientFinanceHistory, clientBillingRecordState, clientFinanceDateKey, clientFinanceDueDateLabel, clientFinanceEditPatch, clientFinanceFailedResources, clientFinanceFilterCounts, clientFinanceFilterForPage, clientFinanceLegacyClientValue, clientFinanceOpenBillingCount, isClientFinanceCancelled, isClientFinanceSettled, manualFinanceSettlementPatch, normalizeClientSubscriptionTerms, prepareClientContractTrackingPatch, prepareClientServiceChargeUpdate, resolveClientInstallmentRequest, safeClientFinanceExternalHref } from "../lib/client-finance.js";
 import { clientContactActions } from "../lib/client-contact-actions.js";
 import { removeClientContact } from "../lib/client-contact-records.js";
 import { presentClientContact } from "../lib/client-contact-presentation.js";
@@ -1375,7 +1375,7 @@ function ClientPlannedChargeRecord({
         clientEmail: client.email,
         description: charge.billingMode === "installments" ? `${charge.service} - parcela ${(Number(charge.generatedInstallments) || 0) + 1}/${charge.installments}` : charge.service,
         amount: charge.billingMode === "installments" ? splitInstallmentAmounts(charge.amount, charge.installments || 2)[Number(charge.generatedInstallments) || 0] : charge.amount,
-        installmentServiceId: charge.billingMode === "installments" ? charge.serviceId : void 0,
+        installmentServiceId: charge.billingMode === "installments" ? charge.serviceId ?? charge.id : void 0,
         installmentIndex: Number(charge.generatedInstallments) || 0,
         installmentCount: charge.installments,
         action: "create",
@@ -1651,6 +1651,13 @@ function ClientProfileModal({
       const recurring = financeDraft.kind === "recurring";
       const financeRecord = ["revenue", "expense"].includes(financeDraft.kind);
       const endpoint = financeRecord ? `/api/workspace/${financeDraft.kind === "revenue" ? "revenues" : "expenses"}` : recurring ? "/api/billing/subscriptions" : "/api/billing/orders";
+      const installmentRequest = installmentProgress
+        ? await resolveClientInstallmentRequest(related.billing || [], client.id, financeDraft.installmentServiceId, financeDraft.installmentIndex, financeDraft.description)
+        : null;
+      if (installmentRequest?.error) throw new Error(installmentRequest.error);
+      const recoveredInstallmentOrder = installmentRequest?.existing && clientBillingRecordState(installmentRequest.existing).status !== "failed"
+        ? installmentRequest.existing
+        : null;
       const payload = financeRecord ? {
         data: {
           code: `${financeDraft.kind === "revenue" ? "REC" : "DES"}-${String(Date.now()).slice(-5)}`,
@@ -1683,17 +1690,19 @@ function ClientProfileModal({
         })
       };
       const operation = recurring ? "subscriptions" : "orders";
-      const idempotencyKey = financeRecord ? null : (billingRequestAttempt.current = reuseBillingRequestKey(
+      const idempotencyKey = financeRecord ? null : installmentRequest?.key || (billingRequestAttempt.current = reuseBillingRequestKey(
         billingRequestAttempt.current,
         operation,
         payload,
         createBillingRequestUuid
       )).key;
-      const result = await apiRequest(endpoint, {
-        method: "POST",
-        ...(idempotencyKey ? { headers: { "Idempotency-Key": idempotencyKey } } : {}),
-        body: JSON.stringify(payload)
-      });
+      const result = recoveredInstallmentOrder
+        ? { data: recoveredInstallmentOrder, recovered: true }
+        : await apiRequest(endpoint, {
+          method: "POST",
+          ...(idempotencyKey ? { headers: { "Idempotency-Key": idempotencyKey } } : {}),
+          body: JSON.stringify(payload)
+        });
       if (!financeRecord) billingRequestAttempt.current = null;
       const key = financeRecord ? financeDraft.kind === "revenue" ? "revenues" : "expenses" : recurring ? "subscriptions" : "billing";
       const record = financeRecord ? result.data : result.data;
@@ -1711,7 +1720,7 @@ function ClientProfileModal({
       }
       setRelated(current => ({
         ...current,
-        [key]: [record, ...(current[key] || [])]
+        [key]: [record, ...(current[key] || []).filter(item => String(item.id) !== String(record?.id))]
       }));
       setFinanceDialog(false);
       setFinanceDraft(current => ({
@@ -1721,7 +1730,9 @@ function ClientProfileModal({
         installmentServiceId: "",
         installmentIndex: null
       }));
-      const successMessage = financeRecord ? "Movimentação registrada no financeiro deste cliente." : recurring ? "Assinatura criada para este cliente." : "Cobrança criada para este cliente.";
+      const successMessage = recoveredInstallmentOrder
+        ? "A cobrança existente desta parcela foi recuperada e o progresso foi sincronizado."
+        : financeRecord ? "Movimentação registrada no financeiro deste cliente." : recurring ? "Assinatura criada para este cliente." : "Cobrança criada para este cliente.";
       onAction(`${successMessage}${installmentWarning}`);
     } catch (error) {
       onAction(error.message || "Não foi possível registrar a movimentação. Confira os dados e a conexão do financeiro.");
@@ -2181,10 +2192,10 @@ function ClientProfileModal({
                 intentId: String(client.id) + "-" + Date.now()
               })}><Plus size={14} />Criar proposta</button><button className="com-secondary" onClick={() => openTab("Contratos")}>Ver contratos</button></div></section>}{tab === "Projetos" && <section className="com-client-info"><div className="com-client-section-heading"><div><h3>Projetos e tarefas</h3><p>Entregas e pendências relacionadas a {client.name}.</p></div><button type="button" className="com-primary" onClick={() => setProjectModal(true)}><Plus size={14} />Novo projeto</button></div>{projects.map((project, index) => <article key={project.id ?? index} className="com-client-project"><div><b>{project.name}</b><small>{project.type || "Projeto"} · prazo {project.due || "a definir"}</small></div><Badge tone={project.status === "Concluído" ? "green" : "blue"}>{project.status}</Badge><div className="com-client-progress"><i style={{
                   width: `${project.progress || 0}%`
-                }} /></div><small>{project.progress || 0}% concluído</small></article>)}{tasks.map((task, index) => <article key={task.id ?? index} className="com-client-row"><CheckCircle2 size={15} /><div><b>{task.title}</b><small>{task.project} · {task.assignee}</small></div><Badge tone={task.status === "Concluída" ? "green" : "amber"}>{task.status}</Badge></article>)}{!projects.length && !tasks.length && <EmptyState noun="projetos" onClear={() => setProjectModal(true)} />}</section>}{tab === "Financeiro" && <section className="com-client-info">{financeDialog && <form className="com-client-finance-dialog" onSubmit={saveClientFinance}><header><div><h3>{financeDraft.kind === "recurring" ? "Nova assinatura" : financeDraft.kind === "revenue" ? "Nova receita" : financeDraft.kind === "expense" ? "Nova despesa" : "Nova cobrança"}</h3><p>Registrada diretamente no financeiro de {client.name}.</p></div><button type="button" className="com-close-button" aria-label="Fechar" onClick={() => setFinanceDialog(false)}><X size={15} /></button></header><div className="com-client-fields"><label>Tipo de cobrança<select value={financeDraft.kind} onChange={event => setFinanceDraft({
+                }} /></div><small>{project.progress || 0}% concluído</small></article>)}{tasks.map((task, index) => <article key={task.id ?? index} className="com-client-row"><CheckCircle2 size={15} /><div><b>{task.title}</b><small>{task.project} · {task.assignee}</small></div><Badge tone={task.status === "Concluída" ? "green" : "amber"}>{task.status}</Badge></article>)}{!projects.length && !tasks.length && <EmptyState noun="projetos" onClear={() => setProjectModal(true)} />}</section>}{tab === "Financeiro" && <section className="com-client-info">{financeDialog && <form className="com-client-finance-dialog" onSubmit={saveClientFinance}><header><div><h3>{financeDraft.kind === "recurring" ? "Nova assinatura" : financeDraft.kind === "revenue" ? "Nova receita" : financeDraft.kind === "expense" ? "Nova despesa" : "Nova cobrança"}</h3><p>Registrada diretamente no financeiro de {client.name}.</p></div><button type="button" className="com-close-button" aria-label="Fechar" onClick={() => setFinanceDialog(false)}><X size={15} /></button></header><div className="com-client-fields"><label>Tipo de cobrança<select value={financeDraft.kind} disabled={Boolean(financeDraft.installmentServiceId)} onChange={event => setFinanceDraft({
                     ...financeDraft,
                     kind: event.target.value
-                  })}><option value="single">Única</option><option value="recurring">Recorrente</option><option value="revenue">Receita</option><option value="expense">Despesa</option></select></label><label>Descrição<input required={true} minLength="2" value={financeDraft.description} onChange={event => setFinanceDraft({
+                  })}><option value="single">Única</option><option value="recurring">Recorrente</option><option value="revenue">Receita</option><option value="expense">Despesa</option></select></label><label>Descrição<input required={true} minLength="2" value={financeDraft.description} disabled={Boolean(financeDraft.installmentServiceId)} onChange={event => setFinanceDraft({
                     ...financeDraft,
                     description: event.target.value
                   })} placeholder="Ex.: Desenvolvimento do site" /></label>{["single", "recurring"].includes(financeDraft.kind) && <label>E-mail do pagador<input required={true} type="email" value={financeDraft.payerEmail} onChange={event => setFinanceDraft({

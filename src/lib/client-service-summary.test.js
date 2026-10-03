@@ -35,3 +35,8 @@ test('shows one time, installment, and not yet priced service terms', () => {
 test('keeps legacy services without duplicate rows beside charge records', () => {
   assert.deepEqual(summarizeClientServices({ services: ['Site', 'SEO'], serviceCharges: [{ service: 'Site', billingMode: 'single', amount: 1000 }] }).map((row) => row.name), ['Site', 'SEO']);
 });
+
+test('legacy installment services use their record id as a stable billing-plan id', () => {
+  const [service] = summarizeClientServices({ serviceCharges: [{ id: 'legacy-service', service: 'Support', billingMode: 'installments', amount: 200, installments: 2 }] });
+  assert.equal(service.serviceId, 'legacy-service');
+});
