@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { canAuthorizeOAuthIntegrations, googleReauthorizationButtonState, integrationStatusLabel, integrationStatusTone, mercadoPagoAuthorizationButtonState } from './integration-auth-state.js';
+import { canAuthorizeOAuthIntegrations, googleReauthorizationButtonState, integrationOAuthRedirectUri, integrationStatusLabel, integrationStatusTone, mercadoPagoAuthorizationButtonState } from './integration-auth-state.js';
 
 test('only the workspace owner can start provider OAuth consent', () => {
   assert.equal(canAuthorizeOAuthIntegrations('owner'), true);
@@ -60,6 +60,16 @@ test('does not present cached integration status as current while it is loading 
   assert.equal(integrationStatusLabel(previouslyConnected, { error: true }), 'Status indisponível');
   assert.equal(integrationStatusLabel(undefined), 'Status indisponível');
   assert.equal(integrationStatusLabel(previouslyConnected), null);
+});
+
+test('shows the API-configured Google OAuth callback instead of guessing the browser URL', () => {
+  assert.equal(integrationOAuthRedirectUri(
+    { oauthRedirectUri: 'https://api.focusshub.example/api/integrations/google/callback' },
+    'https://preview.focusshub.example',
+    'google',
+  ), 'https://api.focusshub.example/api/integrations/google/callback');
+  assert.equal(integrationOAuthRedirectUri({}, 'https://app.focusshub.example', 'google'),
+    'https://app.focusshub.example/api/integrations/google/callback');
 });
 
 test('shows provider authentication and setup failures with an actionable non-success tone', () => {

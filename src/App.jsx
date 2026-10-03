@@ -151,13 +151,16 @@ function recoverFromStaleModuleAssets(error) {
   }
 }
 
-function ModuleErrorFallback() {
+function ModuleErrorFallback({ resetError }) {
   return <section className="module-load-error" role="alert">
     <span className="module-error-mark" aria-hidden="true">!</span>
     <span className="eyebrow">FOCUSSHUB · MÓDULO</span>
     <h2>Não foi possível abrir esta tela</h2>
     <p>O restante do workspace continua disponível. Tente novamente ou abra outra área pelo menu.</p>
-    <button className="primary-button" type="button" onClick={() => window.location.reload()}>Recarregar tela</button>
+    <div className="module-error-actions">
+      <button className="primary-button" type="button" onClick={resetError}>Tentar novamente</button>
+      <button className="module-error-reload" type="button" onClick={() => window.location.reload()}>Atualizar aplicativo</button>
+    </div>
   </section>;
 }
 

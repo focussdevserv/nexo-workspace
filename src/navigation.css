@@ -51,6 +51,10 @@
 .module-load-error{min-height:360px;display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:12px;max-width:560px;margin:0 auto;padding:40px;color:var(--text-primary,#172033)}
 .module-load-error h2{margin:0;font-size:24px;letter-spacing:-.03em}
 .module-load-error p{margin:0;color:var(--text-muted,#64748b);line-height:1.6}
+.module-error-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:4px}
+.module-error-actions .module-error-reload{min-height:42px;padding:0 15px;border:1px solid var(--nexo-border,#dbe3ed);border-radius:12px;background:var(--nexo-surface,#fff);color:var(--nexo-text,#172033);font:inherit;font-size:13px;font-weight:650;cursor:pointer}
+.module-error-actions .module-error-reload:hover{background:var(--nexo-hover,#f5f7fa)}
+.module-error-actions button:focus-visible{outline:3px solid color-mix(in srgb,var(--accent,#c6f542) 58%,transparent);outline-offset:2px}
 
 /* Keep the primary workspace navigation readable at its normal desktop width. */
 .side-nav-link { min-height: 44px; font-size: 14px; }

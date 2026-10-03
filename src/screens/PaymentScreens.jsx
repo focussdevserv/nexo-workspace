@@ -11,6 +11,7 @@ import { apiRequest } from '../lib/workspace-api.js';
 import { isLocalDemoActive } from '../lib/local-demo.js';
 import { dateAfterDays } from '../lib/payment-due-date.js';
 import { buildSubscriptionSchedule, minimumSubscriptionEndDate } from '../lib/subscription-schedule.js';
+import { canSimulateSubscriptionAuthorization } from '../lib/subscription-demo.js';
 import { formatPaymentDate } from '../lib/payment-date-display.js';
 import { canCancelPaymentOrder, canCancelSubscription, normalizePaymentStatus } from '../lib/payment-status.js';
 import { copyPaymentText } from '../lib/copy-payment-text.js';
@@ -227,6 +228,16 @@ export function PaymentConsole({ kind = 'orders', notify = () => {}, navigationC
     catch (err) { setError(err.message); }
     finally { setSubscriptionBusyId(''); }
   };
+  const simulateSubscriptionAuthorization = async (item) => {
+    if (!canSimulateSubscriptionAuthorization(item, demoMode)) return;
+    setSubscriptionBusyId(item.id);
+    try {
+      await request(`/api/billing/subscriptions/${encodeURIComponent(item.id)}/status`, { method: 'PATCH', body: JSON.stringify({ status: 'authorized' }) });
+      await refresh();
+      notify('Autorização simulada apenas neste navegador. Nenhum pagamento real foi iniciado.');
+    } catch (err) { setError(err.message); }
+    finally { setSubscriptionBusyId(''); }
+  };
   const cancelOrder = async (item) => {
     if (!window.confirm(`Cancelar este pagamento de ${item.clientName} no valor de ${money(item.amount)}? O cliente não poderá mais pagar.`)) return;
     setCancelingId(item.id);
@@ -279,6 +290,7 @@ export function PaymentConsole({ kind = 'orders', notify = () => {}, navigationC
           {!subscriptionMode && (item.dueAt || item.dueDate) && <small>Vencimento · {formatPaymentDate(item.dueAt || item.dueDate)}</small>}
         </div><strong>{money(item.amount)}</strong><span className={'pay-status status-' + normalizePaymentStatus(item.status)}>{labels[normalizePaymentStatus(item.status)] || item.status}</span>
         {subscriptionMode ? <div className="pay-record-actions">
+          {canSimulateSubscriptionAuthorization(item, demoMode) && <button className="ns-secondary" disabled={subscriptionBusyId === item.id} title="Ação demonstrativa local; não contata o Mercado Pago." onClick={() => simulateSubscriptionAuthorization(item)}>{subscriptionBusyId === item.id ? <LoaderCircle className="spin" size={14} /> : <CheckCircle2 size={14} />}{subscriptionBusyId === item.id ? 'Atualizando...' : 'Simular autorização'}</button>}
           {item.checkoutUrl && normalizePaymentStatus(item.status) === 'pending' && <button className="ns-secondary" onClick={() => copy(item.checkoutUrl)}><Copy size={14} />Copiar link</button>}
           {normalizePaymentStatus(item.status) === 'authorized' && <button className="ns-secondary" disabled={subscriptionBusyId === item.id} onClick={() => toggleSubscription(item)}>{subscriptionBusyId === item.id ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}{subscriptionBusyId === item.id ? 'Atualizando...' : 'Pausar'}</button>}
           {normalizePaymentStatus(item.status) === 'paused' && <button className="ns-secondary" disabled={subscriptionBusyId === item.id} onClick={() => toggleSubscription(item)}>{subscriptionBusyId === item.id ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}{subscriptionBusyId === item.id ? 'Atualizando...' : 'Retomar'}</button>}

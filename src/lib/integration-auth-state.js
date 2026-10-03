@@ -50,6 +50,12 @@ export function integrationStatusLabel(state, { loading = false, error = false }
   return null;
 }
 
+/** Prefer the exact callback URL used by the API over a browser-origin guess. */
+export function integrationOAuthRedirectUri(state, origin, provider) {
+  if (state?.oauthRedirectUri) return state.oauthRedirectUri;
+  return new URL(`/api/integrations/${provider}/callback`, origin).toString();
+}
+
 /** OAuth consent routes are restricted by the API to the workspace owner. */
 export function canAuthorizeOAuthIntegrations(role) {
   return role === 'owner';
