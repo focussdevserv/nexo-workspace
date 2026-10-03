@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { canAuthorizeOAuthIntegrations, googleReauthorizationButtonState, integrationStatusTone, mercadoPagoAuthorizationButtonState } from './integration-auth-state.js';
+import { canAuthorizeOAuthIntegrations, googleReauthorizationButtonState, integrationStatusLabel, integrationStatusTone, mercadoPagoAuthorizationButtonState } from './integration-auth-state.js';
 
 test('only the workspace owner can start provider OAuth consent', () => {
   assert.equal(canAuthorizeOAuthIntegrations('owner'), true);
@@ -56,6 +56,10 @@ test('does not present cached integration status as current while it is loading 
   const previouslyConnected = { configured: true, enabled: true, lastTestStatus: 'connected' };
   assert.equal(integrationStatusTone(previouslyConnected, { loading: true }), 'pending');
   assert.equal(integrationStatusTone(previouslyConnected, { error: true }), 'pending');
+  assert.equal(integrationStatusLabel(previouslyConnected, { loading: true }), 'Consultando status…');
+  assert.equal(integrationStatusLabel(previouslyConnected, { error: true }), 'Status indisponível');
+  assert.equal(integrationStatusLabel(undefined), 'Status indisponível');
+  assert.equal(integrationStatusLabel(previouslyConnected), null);
 });
 
 test('shows provider authentication and setup failures with an actionable non-success tone', () => {

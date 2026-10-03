@@ -18,7 +18,7 @@ export function readPasswordResetToken(hash) {
 export function readWorkspaceAccessMode(hash) {
   if (typeof hash !== 'string') return 'login';
   const params = new URLSearchParams(hash.replace(/^#/, ''));
-  if (params.has('reset')) return 'reset-complete';
+  if (params.has('reset')) return params.get('reset') ? 'reset-complete' : 'reset-invalid';
   return params.get('access') === 'reset-request' ? 'reset-request' : 'login';
 }
 

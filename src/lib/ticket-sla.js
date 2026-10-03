@@ -1,3 +1,5 @@
+import { normalizeTicketStatus } from './ticket-status.js';
+
 export function ticketSlaDeadline(hours, now = new Date()) {
   const duration = Number(hours);
   if (![4, 8, 24, 48].includes(duration)) return null;
@@ -5,7 +7,7 @@ export function ticketSlaDeadline(hours, now = new Date()) {
 }
 
 export function ticketSlaState(ticket, now = Date.now()) {
-  if (/resolvido|conclu|fechado|closed/i.test(String(ticket.status || ''))) return { state: 'Finalizado', remainingMs: null };
+  if (normalizeTicketStatus(ticket.status) === 'Resolvido') return { state: 'Finalizado', remainingMs: null };
   const dueAt = Date.parse(ticket.slaDueAt || '');
   if (!Number.isFinite(dueAt)) return { state: 'Sem SLA', remainingMs: null };
   const remainingMs = dueAt - now;

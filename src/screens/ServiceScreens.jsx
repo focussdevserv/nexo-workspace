@@ -20,6 +20,7 @@ import { filterFinanceAccountTransactions, financeAccountTransactionSignedAmount
 import { resolveFinanceClientLink } from '../lib/finance-client-link.js';
 import { parseDisplayAmount } from '../lib/client-billing-summary.js';
 import { filterInboxConversations } from '../lib/inbox-filter.js';
+import { normalizeInboxChannel, resolveInboxConversationNavigation } from '../lib/inbox-navigation.js';
 import { markInboxConversationRead } from '../lib/inbox-read-state.js';
 import { preferredInboxSessionId } from '../lib/inbox-session.js';
 import { gmailThreadMetadataRecord, hostingerThreadMetadataRecord, mergeGmailThreadMetadata, mergeHostingerThreadMetadata } from '../lib/gmail-thread-metadata.js';
@@ -37,7 +38,7 @@ import { findTicketByActionKey } from '../lib/ticket-record-selection.js';
 import { ticketAssigneeFromOption, ticketAssigneeOptionValue } from '../lib/ticket-assignee.js';
 import { filterSupportTickets, ticketQueueFilters } from '../lib/ticket-filter.js';
 import { downloadCsvFile, rowsToCsv } from '../lib/csv.js';
-import { canAuthorizeOAuthIntegrations, googleReauthorizationButtonState, integrationStatusTone, mercadoPagoAuthorizationButtonState } from '../lib/integration-auth-state.js';
+import { canAuthorizeOAuthIntegrations, googleReauthorizationButtonState, integrationStatusLabel, integrationStatusTone, mercadoPagoAuthorizationButtonState } from '../lib/integration-auth-state.js';
 import { googleEmailErrorAction } from '../lib/google-email-error.js';
 import { appendUniqueN8nWorkflows } from '../lib/n8n-workflows.js';
 import { automationActionOptions, defaultAutomationAction } from '../lib/automation-options.js';
@@ -451,11 +452,13 @@ function Inbox({ notify, forceWhatsapp = false, navigationContext = null, onNavi
   const [teamMembers, setTeamMembers] = useState([]);
   const [emailThreads, setEmailThreads] = useState([]);
   const [emailLoading, setEmailLoading] = useState(false);
+  const [emailLoaded, setEmailLoaded] = useState(false);
   const [emailError, setEmailError] = useState(null);
   const [emailProvider, setEmailProvider] = useState('google');
   const [emailProviders, setEmailProviders] = useState([]);
   const emailLoadRequests = useRef(null);
   if (!emailLoadRequests.current) emailLoadRequests.current = createLatestRequestGuard();
+  const handledInboxNavigation = useRef('');
   const inboxRole = (() => { try { return JSON.parse(sessionStorage.getItem('nexo.api.user') || 'null')?.role || ''; } catch { return ''; } })();
   const canAuthorizeInboxGoogle = canAuthorizeOAuthIntegrations(inboxRole);
   const [selectedSessionId, setSelectedSessionId] = useState('');
@@ -487,7 +490,7 @@ function Inbox({ notify, forceWhatsapp = false, navigationContext = null, onNavi
   const loadGmail = useCallback(async () => {
     if (document.visibilityState === 'hidden') return;
     const requestId = emailLoadRequests.current.begin();
-    setEmailLoading(true); setEmailError(null);
+    setEmailLoading(true); setEmailLoaded(false); setEmailError(null);
     try {
       const status = await apiRequest('/api/integrations/status').catch(() => ({ data: [] }));
       if (!emailLoadRequests.current.isCurrent(requestId)) return;
@@ -505,7 +508,7 @@ function Inbox({ notify, forceWhatsapp = false, navigationContext = null, onNavi
         : mergeGmailThreadMetadata(result.data || [], metadata));
     }
     catch (error) { if (emailLoadRequests.current.isCurrent(requestId)) setEmailError({ code: error.code || '', message: error.message || 'N\u00e3o foi poss\u00edvel carregar a caixa de e-mail.' }); }
-    finally { if (emailLoadRequests.current.isCurrent(requestId)) setEmailLoading(false); }
+    finally { if (emailLoadRequests.current.isCurrent(requestId)) { setEmailLoading(false); setEmailLoaded(true); } }
   }, [emailProvider]);
   const selectConversation = async (item) => {
     setSelectedId(String(item.id));
@@ -553,11 +556,47 @@ function Inbox({ notify, forceWhatsapp = false, navigationContext = null, onNavi
     else if (selectedId && !activeMessages.some((item) => String(item.id) === String(selectedId))) setSelectedId(String(activeMessages[0]?.id || ''));
   }, [activeMessages, selectedId]);
   useEffect(() => { setOwner(current?.owner || ''); }, [current?.id, current?.owner]);
+  const inboxNavigationKey = navigationContext?.intentId
+    || (navigationContext?.conversationId ? `${navigationContext.channel || ''}:${navigationContext.conversationId}` : navigationContext?.clientId ? `client:${navigationContext.clientId}` : '');
   useEffect(() => {
-    if (!navigationContext?.intentId || !navigationContext?.clientId || messagesLoading || clientsStore.loading || contactsStore.loading) return;
+    if (!navigationContext || !inboxNavigationKey) {
+      handledInboxNavigation.current = '';
+      return;
+    }
+    if (handledInboxNavigation.current === inboxNavigationKey) return;
+    const targetChannel = normalizeInboxChannel(navigationContext.channel) || (navigationContext.clientId ? 'WhatsApp' : '');
+    if (targetChannel && channel !== targetChannel) {
+      setChannel(targetChannel);
+      setFilter('Todas');
+      if (targetChannel === 'E-mail') setEmailLoaded(false);
+      return;
+    }
+    if (navigationContext.conversationId) {
+      const channelLoading = targetChannel === 'E-mail' ? emailLoading || !emailLoaded : messagesLoading;
+      if (channelLoading) return;
+      const resolution = resolveInboxConversationNavigation(
+        navigationContext,
+        targetChannel === 'E-mail' ? emailThreads : whatsappMessages,
+        channel,
+        false,
+      );
+      if (resolution.status === 'pending') return;
+      if (resolution.status === 'found') {
+        setQuery('');
+        setFilter('Todas');
+        setSelectedId(String(resolution.conversation.id));
+      } else if (resolution.status === 'not_found') {
+        notify('Não encontrei essa conversa no canal solicitado. Atualize a caixa de entrada e tente novamente.');
+      }
+      handledInboxNavigation.current = inboxNavigationKey;
+      onNavigationContextConsumed();
+      return;
+    }
+    if (!navigationContext.clientId || messagesLoading || clientsStore.loading || contactsStore.loading) return;
     const client = clientsStore.records.find((item) => String(item.id) === String(navigationContext.clientId));
     if (!client) {
       notify('N\u00e3o encontrei este cliente para abrir o atendimento.');
+      handledInboxNavigation.current = inboxNavigationKey;
       onNavigationContextConsumed();
       return;
     }
@@ -573,12 +612,14 @@ function Inbox({ notify, forceWhatsapp = false, navigationContext = null, onNavi
       setNewOpen(true);
       notify('N\u00e3o existe conversa para este cliente. Revise os dados e crie o atendimento quando estiver pronto.');
     }
+    handledInboxNavigation.current = inboxNavigationKey;
     onNavigationContextConsumed();
-  }, [navigationContext?.intentId, navigationContext?.clientId, messagesLoading, clientsStore.loading, clientsStore.records, contactsStore.loading, contactsStore.records, whatsappMessages, onNavigationContextConsumed, notify]);
+  }, [navigationContext, inboxNavigationKey, channel, emailLoading, emailLoaded, emailThreads, messagesLoading, clientsStore.loading, clientsStore.records, contactsStore.loading, contactsStore.records, whatsappMessages, onNavigationContextConsumed, notify]);
   useEffect(() => {
     if (channel !== 'E-mail') {
       emailLoadRequests.current.invalidate();
       setEmailLoading(false);
+      setEmailLoaded(false);
       return undefined;
     }
     loadGmail();
@@ -1111,7 +1152,8 @@ function Integrations({ notify }) {
   };
   const connectionLabel = (item) => {
     const state = integrationStatus[item.name];
-    if (!state) return statusLoading ? 'Consultando status…' : 'Status indisponível';
+    const unavailableLabel = integrationStatusLabel(state, { loading: statusLoading, error: Boolean(statusFetchError) });
+    if (unavailableLabel) return unavailableLabel;
     if (item.name === 'Mercado Pago' && state.oauthAvailable && !state.configured) return 'Autorização necessária';
     if (!state.configured) return 'Não configurada';
     if (!state.enabled) return 'Desconectada no Focusshub';

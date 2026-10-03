@@ -23,6 +23,16 @@ test('overdue count updates as an open ticket crosses its deadline', () => {
   assert.equal(countOverdueTickets([{ ...ticket, status: 'Resolvido' }], Date.parse('2026-10-01T10:00:00.000Z')), 0);
 });
 
+test('resolved tickets using supported English status aliases are excluded from overdue SLA', () => {
+  const now = Date.parse('2026-10-01T10:00:00.000Z');
+  const pastDue = '2026-10-01T09:00:00.000Z';
+
+  for (const status of ['resolved', 'done', 'closed']) {
+    assert.deepEqual(ticketSlaState({ status, slaDueAt: pastDue }, now), { state: 'Finalizado', remainingMs: null });
+  }
+  assert.equal(countOverdueTickets(['resolved', 'done', 'closed'].map((status) => ({ status, slaDueAt: pastDue })), now), 0);
+});
+
 test('a ticket becomes overdue at the exact SLA deadline', () => {
   const now = Date.parse('2026-10-01T09:00:00.000Z');
   const ticket = { status: 'Aberto', slaDueAt: '2026-10-01T09:00:00.000Z' };

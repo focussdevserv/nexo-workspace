@@ -15,6 +15,7 @@ import { formatPaymentDate } from '../lib/payment-date-display.js';
 import { canCancelPaymentOrder, canCancelSubscription, normalizePaymentStatus } from '../lib/payment-status.js';
 import { copyPaymentText } from '../lib/copy-payment-text.js';
 import { createBillingRequestUuid, reuseBillingRequestKey } from '../lib/billing-request-idempotency.js';
+import { paymentCancellationError } from '../lib/payment-cancellation.js';
 
 const money = (value) => Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const labels = { pending: 'Aguardando pagamento', creating: 'Criando', processing: 'Em processamento', paid: 'Paga', authorized: 'Autorizada', paused: 'Pausada', canceled: 'Cancelada', cancelled: 'Cancelada', overdue: 'Vencida', failed: 'Falhou', refunded: 'Estornada', rejected: 'Recusada', expired: 'Expirada' };
@@ -224,7 +225,9 @@ export function PaymentConsole({ kind = 'orders', notify = () => {}, navigationC
     if (!window.confirm(`Cancelar este pagamento de ${item.clientName} no valor de ${money(item.amount)}? O cliente não poderá mais pagar.`)) return;
     setCancelingId(item.id);
     try {
-      await request(`/api/billing/orders/${encodeURIComponent(item.id)}/cancel`, { method: 'POST' });
+      const response = await request(`/api/billing/orders/${encodeURIComponent(item.id)}/cancel`, { method: 'POST' });
+      const cancellationError = paymentCancellationError(response);
+      if (cancellationError) throw new Error(cancellationError);
       await refresh();
       notify(demoMode ? 'Cobrança fictícia cancelada neste navegador.' : 'Cancelamento confirmado pelo Mercado Pago.');
     } catch (err) { setError(err.message || 'Não foi possível confirmar o cancelamento.'); }

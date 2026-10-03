@@ -38,6 +38,7 @@ import { isCommercialDateWithinNextDays } from "../lib/commercial-date.js";
 import { confirmWorkspaceDelete, useWorkspacePreferences } from "../lib/workspace-preferences.js";
 import { normalizeCommercialScreenRows } from "../lib/commercial-screen-data.js";
 import { createCommercialSubmissionLock } from "../lib/commercial-submission-lock.js";
+import { resolveLeadNavigation } from "../lib/lead-navigation-context.js";
 const datasets = {
   leads: [],
   clients: [],
@@ -1011,7 +1012,7 @@ export default function CommercialScreen({
         projects: [project, ...(records.projects || [])],
         tasks: [...tasks, ...(records.tasks || [])]
       });
-    }} onAction={notify} onUpdate={updateServiceRecord} onDelete={deleteServiceRecord} onImportCatalog={importCatalog} catalogImporting={catalogSeedState === "loading" || servicesLoading} catalogSeedState={catalogSeedState} search={search} setSearch={setSearch} preferences={preferences} /> : <ListView page={key} items={visible} relatedProjects={records.projects || []} relatedSubscriptions={relatedSubscriptions} relatedContracts={displayRows.contracts} onArchive={archiveClient} openClientId={key === "clientes" ? navigationContext?.clientId : ""} onClientOpened={onNavigationContextConsumed} search={search} setSearch={setSearch} filter={filter} setFilter={setFilter} extraFilterFields={extraFilterFields} extraFilters={extraFilters} setExtraFilters={setExtraFilters} onAction={notify} onAccept={acceptProposal} onSendProposal={sendProposal} localDemo={localDemo} onRefreshRecords={refreshRecords} onUpdate={updateCommercialRecord} onDelete={deleteCommercialRecord} clients={displayRows.clients} companies={displayRows.companies} contacts={displayRows.contacts} services={displayRows.services} tasks={records.tasks || []} totalItems={data.length} preferences={preferences} />}{composer && <div className="com-modal-backdrop" onMouseDown={event => {
+        }} onAction={notify} onUpdate={updateServiceRecord} onDelete={deleteServiceRecord} onImportCatalog={importCatalog} catalogImporting={catalogSeedState === "loading" || servicesLoading} catalogSeedState={catalogSeedState} search={search} setSearch={setSearch} preferences={preferences} /> : <ListView page={key} items={visible} relatedProjects={records.projects || []} relatedSubscriptions={relatedSubscriptions} relatedContracts={displayRows.contracts} onArchive={archiveClient} openClientId={key === "clientes" ? navigationContext?.clientId : ""} onClientOpened={onNavigationContextConsumed} openLeadId={key === "leads" ? navigationContext?.leadId : ""} leadRecords={displayRows.leads} leadRecordsLoading={recordLoadings.leads} leadRecordsLoadError={recordErrors.leads} onLeadOpened={onNavigationContextConsumed} search={search} setSearch={setSearch} filter={filter} setFilter={setFilter} extraFilterFields={extraFilterFields} extraFilters={extraFilters} setExtraFilters={setExtraFilters} onAction={notify} onAccept={acceptProposal} onSendProposal={sendProposal} localDemo={localDemo} onRefreshRecords={refreshRecords} onUpdate={updateCommercialRecord} onDelete={deleteCommercialRecord} clients={displayRows.clients} companies={displayRows.companies} contacts={displayRows.contacts} services={displayRows.services} tasks={records.tasks || []} totalItems={data.length} preferences={preferences} />}{composer && <div className="com-modal-backdrop" onMouseDown={event => {
       if (event.target === event.currentTarget) setComposer(false);
     }}><form className="com-create-modal" onSubmit={createRecord}><header><div><small>{current.eyebrow}</small><h2>{createLabel}</h2></div><button type="button" aria-label="Fechar" onClick={() => setComposer(false)}><X size={15} /></button></header>{key === "clientes" && <label>Tipo de cadastro<select value={draft.clientType} onChange={e => setDraft({
             ...draft,
@@ -1178,7 +1179,8 @@ function ClientFinancialRecord({
   item,
   resource,
   onUpdate,
-  onDelete
+  onDelete,
+  deleting = false
 }) {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -1227,10 +1229,10 @@ function ClientFinancialRecord({
     ...item,
     resource
   });
-  return <article className="com-client-row com-client-finance-record"><CircleDollarSign size={15} /><div><b>{item.description || (expense ? "Despesa" : "Receita")}</b><small>{item.category || "Ficha do cliente"} · {item.date || item.dueDate || "Sem data"}{item.settledAt && ` · baixa ${new Date(item.settledAt).toLocaleDateString("pt-BR")}`}</small></div><strong>{new Intl.NumberFormat("pt-BR", {
+  return <article className="com-client-row com-client-finance-record" aria-busy={deleting}><CircleDollarSign size={15} /><div><b>{item.description || (expense ? "Despesa" : "Receita")}</b><small>{item.category || "Ficha do cliente"} · {item.date || item.dueDate || "Sem data"}{item.settledAt && ` · baixa ${new Date(item.settledAt).toLocaleDateString("pt-BR")}`}</small></div><strong>{new Intl.NumberFormat("pt-BR", {
         style: "currency",
         currency: "BRL"
-      }).format(Number(item.amount) || 0)}</strong><Badge tone={paid ? "green" : cancelled ? "neutral" : "amber"}>{paid ? expense ? "Paga" : "Recebida" : cancelled ? "Cancelada" : item.status || "Pendente"}</Badge><div className="com-client-finance-row-actions"><button type="button" className="com-secondary" onClick={() => setEditing(true)}>Editar</button>{settlement && <button type="button" className="com-secondary" onClick={() => onUpdate(settlement)}>{expense ? "Dar baixa" : "Marcar recebida"}</button>}<button type="button" className="com-secondary com-delete-action" onClick={onDelete}>Excluir</button></div></article>;
+      }).format(Number(item.amount) || 0)}</strong><Badge tone={paid ? "green" : cancelled ? "neutral" : "amber"}>{paid ? expense ? "Paga" : "Recebida" : cancelled ? "Cancelada" : item.status || "Pendente"}</Badge><div className="com-client-finance-row-actions"><button type="button" className="com-secondary" disabled={deleting} onClick={() => setEditing(true)}>Editar</button>{settlement && <button type="button" className="com-secondary" disabled={deleting} onClick={() => onUpdate(settlement)}>{expense ? "Dar baixa" : "Marcar recebida"}</button>}<button type="button" className="com-secondary com-delete-action" disabled={deleting} onClick={onDelete}>{deleting ? "Excluindo..." : "Excluir"}</button></div></article>;
 }
 function ClientPlannedChargeRecord({
   charge,
@@ -1503,6 +1505,8 @@ function ClientProfileModal({
   const [financeSaving, setFinanceSaving] = useState(false);
   const [billingRefreshingId, setBillingRefreshingId] = useState("");
   const [subscriptionActionId, setSubscriptionActionId] = useState("");
+  const [deletingFinanceKeys, setDeletingFinanceKeys] = useState(() => new Set());
+  const financeDeleteLocks = useRef(new Set());
   const [financeDraft, setFinanceDraft] = useState({
     kind: "single",
     description: "",
@@ -1961,18 +1965,30 @@ function ClientProfileModal({
     }
   };
   const deleteManualFinance = async (resource, item) => {
-    if (!confirmWorkspaceDelete(`Excluir o lançamento “${item.description || "sem descrição"}” do financeiro deste cliente?`, preferences)) return;
+    const key = `${resource}:${String(item?.id ?? "")}`;
+    if (!item?.id || financeDeleteLocks.current.has(key)) return;
+    financeDeleteLocks.current.add(key);
+    if (!confirmWorkspaceDelete(`Excluir o lançamento “${item.description || "sem descrição"}” do financeiro deste cliente? Esta ação não pode ser desfeita.`, preferences)) {
+      financeDeleteLocks.current.delete(key);
+      return;
+    }
+    setDeletingFinanceKeys(current => new Set(current).add(key));
     try {
-      await apiRequest(`/api/workspace/${resource}/${item.id}`, {
-        method: "DELETE"
-      });
+      await apiRequest(`/api/workspace/${resource}/${item.id}`, { method: "DELETE" });
       setRelated(current => ({
         ...current,
-        [resource]: (current[resource] || []).filter(row => row.id !== item.id)
+        [resource]: (current[resource] || []).filter(row => String(row.id) !== String(item.id))
       }));
       onAction("Lançamento removido do financeiro do cliente.");
     } catch (error) {
       onAction(error.message || "Não foi possível excluir o lançamento.");
+    } finally {
+      financeDeleteLocks.current.delete(key);
+      setDeletingFinanceKeys(current => {
+        const next = new Set(current);
+        next.delete(key);
+        return next;
+      });
     }
   };
   const cancelClientBilling = async item => {
@@ -2197,7 +2213,7 @@ function ClientProfileModal({
             }))} onAction={onAction} onOpenTab={openTab} />)}{["all", "contracts"].includes(financeFilter) && contracts.map((contract, index) => <ClientContractRecord key={contract.id ?? index} item={contract} onSaved={updated => setRelated(current => ({
               ...current,
               contracts: (current.contracts || []).map(row => row.id === updated.id ? updated : row)
-            }))} onAction={onAction} />)}{["all", "subscriptions"].includes(financeFilter) && subscriptions.map((subscription, index) => <ClientSubscriptionRecord key={subscription.id ?? index} item={subscription} busyId={subscriptionActionId} onToggle={changeClientSubscription} onCancel={item => changeClientSubscription(item, "canceled")} />)}{["all", "billing"].includes(financeFilter) && billing.map((bill, index) => <ClientBillingRecord key={bill.id ?? index} item={bill} onAction={onAction} onCancel={cancelClientBilling} onRefresh={refreshClientBilling} refreshing={billingRefreshingId === bill.id} localDemo={localDemo} />)}{["all", "revenues"].includes(financeFilter) && revenues.map((item, index) => <ClientFinancialRecord key={item.id ?? index} item={item} resource="revenues" onUpdate={patch => updateManualFinance("revenues", item, patch)} onDelete={() => deleteManualFinance("revenues", item)} />)}{["all", "expenses"].includes(financeFilter) && expenses.map((item, index) => <ClientFinancialRecord key={item.id ?? index} item={item} resource="expenses" onUpdate={patch => updateManualFinance("expenses", item, patch)} onDelete={() => deleteManualFinance("expenses", item)} />)}{!relatedLoading && !financeFilterCounts[financeFilter] && !financeFailedResources.length && <EmptyState noun="registros financeiros" onClear={() => setFinanceFilter("all")} />}{relatedLoading && financeFilterCounts[financeFilter] === 0 && <p role="status">Conferindo os registros financeiros...</p>}</section>}{tab === "Comunicação" && <section className="com-client-info"><div className="com-client-section-heading"><div><h3>Comunicação</h3><p>Conversas e aprovações relacionadas.</p></div><button className="com-primary" onClick={() => openTab("Caixa de entrada", {
+            }))} onAction={onAction} />)}{["all", "subscriptions"].includes(financeFilter) && subscriptions.map((subscription, index) => <ClientSubscriptionRecord key={subscription.id ?? index} item={subscription} busyId={subscriptionActionId} onToggle={changeClientSubscription} onCancel={item => changeClientSubscription(item, "canceled")} />)}{["all", "billing"].includes(financeFilter) && billing.map((bill, index) => <ClientBillingRecord key={bill.id ?? index} item={bill} onAction={onAction} onCancel={cancelClientBilling} onRefresh={refreshClientBilling} refreshing={billingRefreshingId === bill.id} localDemo={localDemo} />)}{["all", "revenues"].includes(financeFilter) && revenues.map((item, index) => <ClientFinancialRecord key={item.id ?? index} item={item} resource="revenues" onUpdate={patch => updateManualFinance("revenues", item, patch)} onDelete={() => deleteManualFinance("revenues", item)} deleting={deletingFinanceKeys.has(`revenues:${String(item.id ?? "")}`)} />)}{["all", "expenses"].includes(financeFilter) && expenses.map((item, index) => <ClientFinancialRecord key={item.id ?? index} item={item} resource="expenses" onUpdate={patch => updateManualFinance("expenses", item, patch)} onDelete={() => deleteManualFinance("expenses", item)} deleting={deletingFinanceKeys.has(`expenses:${String(item.id ?? "")}`)} />)}{!relatedLoading && !financeFilterCounts[financeFilter] && !financeFailedResources.length && <EmptyState noun="registros financeiros" onClear={() => setFinanceFilter("all")} />}{relatedLoading && financeFilterCounts[financeFilter] === 0 && <p role="status">Conferindo os registros financeiros...</p>}</section>}{tab === "Comunicação" && <section className="com-client-info"><div className="com-client-section-heading"><div><h3>Comunicação</h3><p>Conversas e aprovações relacionadas.</p></div><button className="com-primary" onClick={() => openTab("Caixa de entrada", {
                 clientId: client.id,
                 clientName: client.name,
                 clientEmail: client.email,
@@ -2297,9 +2313,16 @@ function ListView({
   totalItems = 0,
   preferences,
   openClientId = "",
-  onClientOpened = () => {}
+  onClientOpened = () => {},
+  openLeadId = "",
+  leadRecords = [],
+  leadRecordsLoading = false,
+  leadRecordsLoadError = "",
+  onLeadOpened = () => {}
 }) {
   const [selectedItem, setSelectedItem] = useState(null);
+  const handledLeadNavigation = useRef("");
+  const listPageRef = useRef(page);
   const [recordDraft, setRecordDraft] = useState({});
   const [editorBaseline, setEditorBaseline] = useState({});
   const [recordSaving, setRecordSaving] = useState(false);
@@ -2314,6 +2337,8 @@ function ListView({
   const [sendingContract, setSendingContract] = useState(false);
   const [syncingContract, setSyncingContract] = useState(false);
   useEffect(() => {
+    if (listPageRef.current === page) return;
+    listPageRef.current = page;
     setSelectedItem(null);
     setRecordDraft({});
     setEditorBaseline({});
@@ -2376,6 +2401,29 @@ function ListView({
     setStatusDraft(client.status || "Ativo");
     onClientOpened();
   }, [page, items, openClientId, onClientOpened]);
+  useEffect(() => {
+    if (page !== "leads" || !openLeadId) {
+      handledLeadNavigation.current = "";
+      return;
+    }
+    const id = String(openLeadId);
+    if (handledLeadNavigation.current === id) return;
+
+    const resolution = resolveLeadNavigation(leadRecords, id, {
+      loading: leadRecordsLoading,
+      loadError: leadRecordsLoadError,
+    });
+    if (resolution.status === "waiting" || resolution.status === "none") return;
+
+    handledLeadNavigation.current = id;
+    if (resolution.status === "found") {
+      setSelectedItem(resolution.lead);
+      setStatusDraft(resolution.lead.stage || resolution.lead.status || "Novo lead");
+    } else {
+      onAction?.("NÃ£o encontrei este lead na carteira disponÃ­vel para sua conta.");
+    }
+    onLeadOpened();
+  }, [page, openLeadId, leadRecords, leadRecordsLoading, leadRecordsLoadError, onAction, onLeadOpened]);
   const sendContract = async () => {
     if (localDemo) {
       onAction("Assinatura digital externa desativada no modo de demonstração local.");
@@ -2937,7 +2985,7 @@ function ServicesView({
     if (saving) return;
     setSaving(true);
     try {
-      if (!confirmWorkspaceDelete(`Excluir o serviço "${selected.name}"?`, preferences)) return;
+      if (!confirmWorkspaceDelete(`Excluir o serviço "${selected?.name || "sem nome"}" do catálogo?`, preferences)) return;
       const deleted = await onDelete(selected);
       if (deleted !== false) setSelected(null);
     } catch (error) {

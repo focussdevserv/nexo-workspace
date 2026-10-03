@@ -4,7 +4,7 @@ import {
   Activity, ArrowDownRight, ArrowRight, ArrowUpRight, Bell, BriefcaseBusiness,
   CalendarDays, Check, CheckSquare, ChevronDown, ChevronRight, CircleDollarSign,
   Clock3, FileText, FolderKanban, House, Inbox, Instagram, LayoutDashboard,
-  LogOut, Mail, MessageCircle, Menu, MoreVertical, Paperclip, Phone, Plus, Search, Send,
+  LogOut, Mail, MessageCircle, Menu, MoreVertical, Paperclip, Phone, Plus, RefreshCw, Search, Send,
   Settings, Sparkles, Sun, Moon, Users, Video, X,
 } from 'lucide-react';
 const CommercialScreen = lazy(() => import('./screens/CommercialScreens.jsx'));
@@ -29,6 +29,8 @@ import { notificationNavigationTarget } from './lib/notification-navigation.js';
 import { filterDashboardTasks } from './lib/dashboard-task-filter.js';
 import { filterDashboardActiveProjects } from './lib/dashboard-active-projects.js';
 import { dashboardMetricPresentation } from './lib/dashboard-metric-presentation.js';
+import { selectDashboardHighlightedEvent } from './lib/dashboard-highlighted-event.js';
+import { dashboardInboxConversations } from './lib/dashboard-inbox.js';
 import { calendarDateInTimeZone, calendarDateKeyForValue, calendarDateKeyInTimeZone, calendarTimeInTimeZone } from './lib/calendar-preferences.js';
 import { isWithinWorkspaceQuietHours, shouldSendActivityBrowserAlert, taskReminderCandidates } from './lib/browser-alerts.js';
 import { dispatchBeforeWorkspaceNavigation, workspaceRouteDestination } from './lib/navigation-guards.js';
@@ -286,6 +288,7 @@ function WorkspaceShell() {
   const [dashboardLoading, setDashboardLoading] = useState(true);
   const dashboardRefreshId = useRef(0);
   const [updatingTaskIds, setUpdatingTaskIds] = useState(() => new Set());
+  const taskMutationLock = useRef(new Set());
   const [dashboardError, setDashboardError] = useState('');
   const [chatOpen, setChatOpen] = useState(true);
   const [chatExpanded, setChatExpanded] = useState(false);
@@ -316,15 +319,16 @@ function WorkspaceShell() {
   const minutesOfDay = (time) => { const [hours, minutes] = String(time || '').split(':').map(Number); return Number.isFinite(hours) && Number.isFinite(minutes) ? hours * 60 + minutes : -1; };
   const currentMinutes = minutesOfDay(now);
   const activeTodayEvent = todayEvents.find((event) => { const start = minutesOfDay(eventStartTime(event)); return start >= 0 && currentMinutes >= start && currentMinutes < start + (Number(event.durationMinutes ?? event.duration) || 60); });
-  const upcomingTodayEvent = todayEvents.find((event) => minutesOfDay(eventStartTime(event)) > currentMinutes);
-  const highlightedTodayEvent = activeTodayEvent || upcomingTodayEvent;
+  const highlightedTodayEventState = selectDashboardHighlightedEvent(todayEvents, { now: new Date(), timeZone: preferences.timezone });
+  const highlightedTodayEvent = highlightedTodayEventState.event;
+  const dashboardInbox = dashboardInboxConversations(dashboardRecords.inbox, 3);
   const dueDate = (bill) => calendarDateKeyForValue(bill.dueAt || bill.due, preferences.timezone);
   const overdueBills = openBills.filter((bill) => (dueDate(bill) && dueDate(bill) < todayIso) || ['vencida', 'atrasada', 'overdue'].includes(String(bill.status || '').toLowerCase()));
   const upcomingBills = openBills.filter((bill) => dueDate(bill) && dueDate(bill) >= todayIso && dueDate(bill) <= nextMonthIso);
   const upcomingAmount = upcomingBills.reduce((sum, bill) => sum + Number(bill.amount || amountValue(bill.value)), 0);
   const activeProjects = filterDashboardActiveProjects(dashboardProjects);
   const dashboardRestricted = (source) => dashboardRestrictedSources.includes(source);
-  const restrictedWorkspaceModules = [...new Set(dashboardRestrictedSources.map((source) => ({ leads: 'CRM', projects: 'Projetos', tasks: 'Tarefas', events: 'Agenda', proposals: 'CRM', bills: 'Financeiro' })[source]).filter(Boolean))];
+  const restrictedWorkspaceModules = [...new Set(dashboardRestrictedSources.map((source) => ({ leads: 'CRM', projects: 'Projetos', tasks: 'Tarefas', events: 'Agenda', proposals: 'CRM', bills: 'Financeiro', inbox: 'Caixa de entrada' })[source]).filter(Boolean))];
   const deliveryPermission = currentUser?.permissions?.delivery;
   const canEditTasks = currentUser?.role === 'owner' || (deliveryPermission ? deliveryPermission.write === true : true);
 
@@ -352,7 +356,7 @@ function WorkspaceShell() {
       { key: 'events', load: fetchAllRecords('/api/workspace/events') },
       { key: 'proposals', load: isMember ? Promise.resolve([]) : fetchAllRecords('/api/workspace/proposals') },
       { key: 'bills', load: isMember ? Promise.resolve([]) : fetchAllRecords('/api/billing/orders') },
-      { key: 'inbox', load: localDemo ? fetchAllRecords('/api/workspace/inbox') : Promise.resolve([]) },
+      { key: 'inbox', load: fetchAllRecords('/api/workspace/inbox') },
     ];
     const results = await Promise.all(sources.map(async ({ key, load }) => {
       try { return { key, records: await load }; }
@@ -599,7 +603,8 @@ function WorkspaceShell() {
   };
 
   const toggleTask = async (id) => {
-    if (updatingTaskIds.has(id)) return;
+    const taskKey = String(id);
+    if (taskMutationLock.current.has(taskKey)) return;
     const task = tasks.find((item) => String(item.id) === String(id));
     if (!task) return;
     const blocker = dashboardTaskCompletionBlocker(tasks, task);
@@ -608,7 +613,8 @@ function WorkspaceShell() {
     const state = reopening ? 'Pendente' : 'Conclu\u00edda';
     const transition = completeTaskOccurrence(tasks, id);
     const occurrence = reopening ? null : transition.occurrence;
-    setUpdatingTaskIds((current) => new Set(current).add(id));
+    taskMutationLock.current.add(taskKey);
+    setUpdatingTaskIds((current) => new Set(current).add(taskKey));
     try {
       const result = await apiRequest(`/api/workspace/tasks/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ data: { state, status: state } }) });
       const savedTask = { ...task, ...result.data, state, status: state };
@@ -626,11 +632,16 @@ function WorkspaceShell() {
     } catch (error) {
       setDashboardError(error.message || 'Nao foi possivel atualizar a tarefa.');
     } finally {
-      setUpdatingTaskIds((current) => { const next = new Set(current); next.delete(id); return next; });
+      taskMutationLock.current.delete(taskKey);
+      setUpdatingTaskIds((current) => { const next = new Set(current); next.delete(taskKey); return next; });
     }
   };
 
-  const handleLeadAction = (lead) => { const destination = /proposta/i.test(lead.action) ? 'Propostas' : /reunião|agendar|apresentação/i.test(lead.action) ? 'Agenda' : 'Pipeline'; if (navigateToPage(destination)) notify(`${lead.name} · abrindo ${destination.toLowerCase()}`); };
+  const handleLeadAction = (lead) => {
+    const destination = /proposta/i.test(lead.action) ? 'Propostas' : /reunião|agendar|apresentação/i.test(lead.action) ? 'Agenda' : 'Leads';
+    const context = destination === 'Leads' ? { leadId: lead.id } : null;
+    if (navigateToPage(destination, context)) notify(`${lead.name} · abrindo ${destination.toLowerCase()}`);
+  };
 
   const handleLogout = async () => {
     if (loggingOut) return;
@@ -669,7 +680,7 @@ function WorkspaceShell() {
         <header className="topbar">
           <div className="day-strip">
             <div className="strip-title"><span className="strip-caption">{activeNav}</span><span className="date-chip"><CalendarDays size={13} /> {dateChip}</span></div>
-            <div className={`strip-event ${highlightedTodayEvent ? 'strip-current' : 'strip-idle'}`}><span className="time-pin">{activeTodayEvent ? 'Em andamento' : highlightedTodayEvent ? 'Próximo' : 'Agora'}{!highlightedTodayEvent && ` ${now}`}</span><strong>{highlightedTodayEvent?.title || highlightedTodayEvent?.name || "Agenda livre"}</strong>{!highlightedTodayEvent && <span className="strip-empty">Sem compromissos marcados.</span>}</div>
+            <button type="button" className={`strip-event ${highlightedTodayEventState.status === 'active' ? 'strip-current' : 'strip-idle'}`} aria-label={highlightedTodayEvent ? `Abrir ${highlightedTodayEvent.title || highlightedTodayEvent.name || 'compromisso'} na Agenda` : 'Abrir Agenda'} onClick={() => { const context = highlightedTodayEvent && dashboardEventNavigationContext(highlightedTodayEvent); navigateToPage('Agenda', context); }}><span className="time-pin">{highlightedTodayEventState.status === 'active' ? 'Em andamento' : highlightedTodayEventState.status === 'upcoming' ? 'Próximo' : highlightedTodayEventState.status === 'all-day' ? 'Dia inteiro' : highlightedTodayEventState.status === 'unscheduled' ? 'Sem horário' : `Agora ${now}`}</span><strong>{highlightedTodayEvent?.title || highlightedTodayEvent?.name || "Agenda livre"}</strong>{!highlightedTodayEvent && <span className="strip-empty">Sem compromissos marcados.</span>}</button>
           </div>
           {mobileMenuOpen && <button className="mobile-nav-backdrop" type="button" aria-label="Fechar menu" onClick={() => setMobileMenuOpen(false)} />}
           <div className="top-actions"><button className="icon-button mobile-menu-toggle" aria-label={mobileMenuOpen ? "Menu de navega\u00e7\u00e3o aberto" : "Abrir menu"} aria-expanded={mobileMenuOpen} aria-controls="workspace-mobile-navigation" onClick={() => setMobileMenuOpen((open) => !open)}><Menu size={19} /></button><button className="icon-button" aria-label="Buscar" aria-expanded={searchOpen} onClick={() => { setSearchOpen((open) => !open); setSearchQuery(''); }}><Search size={19} /></button><button className="icon-button theme-toggle-button" type="button" aria-label={preferences.darkMode ? 'Ativar modo claro' : 'Ativar modo escuro'} title={preferences.darkMode ? 'Ativar modo claro' : 'Ativar modo escuro'} onClick={toggleTheme}>{preferences.darkMode ? <Sun size={19} /> : <Moon size={19} />}</button><button className="icon-button notification-button" aria-label={`Notificações${notificationUnread ? `, ${notificationUnread} não lidas` : ''}`} aria-expanded={notificationOpen} aria-haspopup="dialog" onClick={() => { setNotificationOpen((open) => !open); refreshNotifications(); }}><Bell size={19} />{notificationUnread > 0 && <span className="notification-count">{notificationUnread > 99 ? '99+' : notificationUnread}</span>}</button><Avatar initials={initials || "—"} color="teal" online />{notificationOpen && <section className="notification-panel" role="dialog" aria-label="Central de notificações"><header><div><b>Notificações</b><span>{notificationUnread ? `${notificationUnread} não lidas` : 'Atualizadas com os dados do workspace'}</span></div><button type="button" className="notification-mark-read" onClick={markNotificationsRead} disabled={!notificationUnread}>Marcar como lidas</button></header>{notificationError ? <div className="notification-state error" role="alert"><span>{notificationError}</span><button type="button" onClick={refreshNotifications}>Tentar novamente</button></div> : notificationLoading ? <div className="notification-state">Carregando notificações...</div> : notificationItems.length === 0 ? <div className="notification-state"><Bell size={21} /><b>Tudo em dia</b><span>Quando houver atualizações em clientes, projetos, tarefas ou cobranças, elas aparecerão aqui.</span></div> : <div className="notification-list">{notificationItems.map((item) => <button type="button" className={`notification-item ${item.unread ? 'unread' : ''}`} key={item.id} onClick={() => openNotification(item)}><span className="notification-item-dot" /><span className="notification-item-copy"><b>{item.title}</b><span>{item.detail}</span><small>{new Date(item.createdAt).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}</small></span><ArrowRight size={15} /></button>)}</div>}</section>}{searchOpen && <div className="quick-search-panel"><label><Search size={15} /><input autoFocus value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Buscar no Focusshub" /></label>{navGroups.flatMap((group) => group.items).filter((item) => roleCanOpenPage(currentUser?.role, item.label, currentUser?.permissions) && (!searchQuery || item.label.toLocaleLowerCase('pt-BR').includes(searchQuery.toLocaleLowerCase('pt-BR')))).slice(0, 8).map((item) => <button type="button" key={item.label} onClick={() => navigateToPage(item.label)}>{item.label}<ArrowRight size={14} /></button>)}</div>}</div>
@@ -680,7 +691,7 @@ function WorkspaceShell() {
           {activeNav === 'Meu Dia' ? <main className="dashboard-view">
           <div className="welcome-row">
             <div><p className="eyebrow">{dashboardDate.toLocaleUpperCase('pt-BR')}</p><h1>Meu dia</h1><p className="welcome-subtitle">Aqui está o que merece sua atenção hoje.</p></div>
-            <div className="dashboard-create-wrap"><button className="primary-button" aria-expanded={createOpen} aria-haspopup="menu" onClick={() => setCreateOpen((open) => !open)}><Plus size={17} /> Criar novo <ChevronDown size={15} /></button>{createOpen && <div className="dashboard-create-menu" role="menu">{availableCreateActions.map(([label, page, action]) => <button type="button" role="menuitem" key={page} onClick={() => { const intentId = globalThis.crypto?.randomUUID?.() || `dashboard-create-${Date.now()}`; navigateToPage(page, dashboardCreateContext(action, intentId)); }}>{label}<ArrowRight size={14} /></button>)}</div>}</div>
+            <div className="dashboard-header-actions"><button type="button" className="dashboard-refresh-button" onClick={refreshDashboard} disabled={dashboardLoading} aria-label="Atualizar Meu Dia"><RefreshCw size={16} className={dashboardLoading ? 'is-spinning' : ''} />{dashboardLoading ? 'Atualizando' : 'Atualizar'}</button><div className="dashboard-create-wrap"><button className="primary-button" aria-expanded={createOpen} aria-haspopup="menu" onClick={() => setCreateOpen((open) => !open)}><Plus size={17} /> Criar novo <ChevronDown size={15} /></button>{createOpen && <div className="dashboard-create-menu" role="menu">{availableCreateActions.map(([label, page, action]) => <button type="button" role="menuitem" key={page} onClick={() => { const intentId = globalThis.crypto?.randomUUID?.() || `dashboard-create-${Date.now()}`; navigateToPage(page, dashboardCreateContext(action, intentId)); }}>{label}<ArrowRight size={14} /></button>)}</div>}</div></div>
           </div>
 
           {currentUser?.role !== 'member' && !localDemo && <FirstRunSetup notify={notify} onNavigate={(page, context) => navigateToPage(page, context)} />}
@@ -721,8 +732,8 @@ function WorkspaceShell() {
             </div>
             </div>
             {chatOpen && <aside className={`attention-panel ${chatExpanded ? 'expanded' : ''}`} aria-label="Painel de atendimento">
-              <div className="attention-header"><div><span className="online-dot" /><h2>Atendimento</h2><span className="online-label">Online agora</span></div><div className="panel-controls"><button aria-label="Expandir atendimento" onClick={() => setChatExpanded(!chatExpanded)}><ArrowUpRight size={16} /></button><button aria-label="Fechar atendimento" onClick={() => setChatOpen(false)}><X size={16} /></button></div></div>
-              {localDemo && dashboardRecords.inbox.length ? <div className="attention-demo-list"><span className="attention-demo-label">Conversas de demonstração</span>{dashboardRecords.inbox.slice(0, 3).map((message) => <button type="button" className="attention-demo-message" key={message.id} onClick={() => navigateToPage('Caixa de entrada')}><span className="attention-demo-avatar">{message.name?.split(/\s+/).map((part) => part[0]).slice(0, 2).join('')}</span><span><b>{message.name}</b><small>{message.text}</small></span><time>{message.time}</time></button>)}<button className="attention-demo-open" onClick={() => navigateToPage('Caixa de entrada')}>Abrir caixa de entrada <ChevronRight size={14}/></button></div> : <div className="attention-empty"><Inbox size={24} /><b>Nenhuma conversa registrada</b><span>Abra a caixa de entrada para continuar o atendimento.</span><button onClick={() => navigateToPage('Caixa de entrada')}>Abrir caixa de entrada</button></div>}
+              <div className="attention-header"><div><h2>Atendimento</h2><span className="online-label">{dashboardLoading ? 'Atualizando…' : `${dashboardRecords.inbox.length} conversas`}</span></div><div className="panel-controls"><button aria-label="Expandir atendimento" onClick={() => setChatExpanded(!chatExpanded)}><ArrowUpRight size={16} /></button><button aria-label="Fechar atendimento" onClick={() => setChatOpen(false)}><X size={16} /></button></div></div>
+              {dashboardRestricted('inbox') ? <div className="attention-empty"><Inbox size={24} /><b>Caixa de entrada restrita</b><span>Seu perfil não tem acesso às conversas deste workspace.</span></div> : dashboardLoading && !dashboardRecords.inbox.length ? <div className="attention-empty" aria-live="polite">Carregando conversas…</div> : dashboardFailedSources.includes('inbox') ? <div className="attention-empty" role="alert"><Inbox size={24} /><b>Não foi possível carregar conversas</b><span>Verifique o acesso e tente atualizar o Meu Dia.</span><button type="button" onClick={refreshDashboard}>Tentar novamente</button></div> : dashboardInbox.length ? <div className="attention-demo-list"><span className="attention-demo-label">Conversas recentes</span>{dashboardInbox.map((message) => <button type="button" className="attention-demo-message" key={message.id} onClick={() => navigateToPage('Caixa de entrada', { conversationId: message.id, channel: message.channel === 'E-mail' ? 'E-mail' : 'WhatsApp', intentId: globalThis.crypto?.randomUUID?.() || `dashboard-inbox-${Date.now()}` })}><span className="attention-demo-avatar">{(message.name || message.contactName || message.from || 'C').split(/\s+/).map((part) => part[0]).slice(0, 2).join('')}</span><span><b>{message.name || message.contactName || message.from || 'Contato'}</b><small>{message.text || message.lastMessage || message.subject || 'Abrir conversa'}</small></span><time>{message.time || ''}</time></button>)}<button type="button" className="attention-demo-open" onClick={() => navigateToPage('Caixa de entrada')}>Abrir caixa de entrada <ChevronRight size={14}/></button></div> : <div className="attention-empty"><Inbox size={24} /><b>Nenhuma conversa registrada</b><span>As conversas disponíveis aparecerão aqui.</span><button type="button" onClick={() => navigateToPage('Caixa de entrada')}>Abrir caixa de entrada</button></div>}
             </aside>}{!chatOpen && <button type="button" className="attention-reopen" onClick={() => setChatOpen(true)}><Inbox size={16} /> Reabrir atendimento</button>}
           </section>
 
@@ -733,9 +744,9 @@ function WorkspaceShell() {
             </div>
             {dashboardRestricted('events') ? <p className="dashboard-agenda-empty">Seu perfil não tem acesso à Agenda.</p> : dashboardLoading ? <p className="dashboard-agenda-empty" aria-live="polite">Carregando compromissos…</p> : dashboardFailedSources.includes('events') ? <div className="dashboard-agenda-error" role="alert">Não foi possível carregar os compromissos. <button type="button" onClick={refreshDashboard} disabled={dashboardLoading}>Tentar novamente</button></div> : todayEvents.length ? <ol className="dashboard-agenda-list">{todayEvents.slice(0, 5).map((event, index) => {
               const context = dashboardEventNavigationContext(event);
-              const startTime = eventStartTime(event) || 'Horário não definido';
+              const startTime = event.allDay === true ? 'Dia inteiro' : eventStartTime(event) || 'Horário não definido';
               const eventMinutes = minutesOfDay(eventStartTime(event));
-              const phase = event === activeTodayEvent ? 'Em andamento' : eventMinutes < 0 ? 'Sem horário' : eventMinutes < currentMinutes ? 'Concluído' : 'Próximo';
+              const phase = event.allDay === true ? 'Dia inteiro' : event === activeTodayEvent ? 'Em andamento' : eventMinutes < 0 ? 'Sem horário' : eventMinutes < currentMinutes ? 'Concluído' : 'Próximo';
               return <li key={event.id || `${event.title}-${index}`}><button type="button" className={`dashboard-agenda-event ${phase === 'Em andamento' ? 'is-current' : ''}`} onClick={() => context ? navigateToPage('Agenda', context) : navigateToPage('Agenda')} aria-label={`Abrir ${event.title || event.name || 'compromisso'} na Agenda`}><time>{startTime}</time><span className="dashboard-agenda-copy"><b>{event.title || event.name || 'Compromisso'}</b><small>{event.client || event.project || event.type || 'Compromisso da equipe'}</small></span><span className={`dashboard-agenda-phase ${phase === 'Em andamento' ? 'is-current' : ''}`}>{phase}</span><ChevronRight size={16} /></button></li>;
             })}</ol> : <div className="dashboard-agenda-empty"><CalendarDays size={18} /><span>Nenhum compromisso para hoje.</span><button type="button" onClick={() => navigateToPage('Agenda', dashboardCreateContext('event', globalThis.crypto?.randomUUID?.() || `dashboard-event-${Date.now()}`))}>Agendar evento <ArrowRight size={14} /></button></div>}
             {todayEvents.length > 5 && <p className="dashboard-agenda-more">+ {todayEvents.length - 5} compromissos. <button type="button" onClick={() => navigateToPage('Agenda')}>Ver todos</button></p>}

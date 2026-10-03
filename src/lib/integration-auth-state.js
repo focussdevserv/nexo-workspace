@@ -43,6 +43,13 @@ export function integrationStatusTone(state, { loading = false, error = false } 
         : 'pending';
 }
 
+/** Avoid presenting a cached account label as current during refresh or API failure. */
+export function integrationStatusLabel(state, { loading = false, error = false } = {}) {
+  if (loading) return 'Consultando status…';
+  if (error || !state) return 'Status indisponível';
+  return null;
+}
+
 /** OAuth consent routes are restricted by the API to the workspace owner. */
 export function canAuthorizeOAuthIntegrations(role) {
   return role === 'owner';

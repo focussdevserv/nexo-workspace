@@ -1556,3 +1556,47 @@ html[data-theme] #root .app-shell .dashboard-view .stat-card-link:active { trans
   }
   html[data-theme] .workspace-access-card .workspace-access-retry { min-height: 44px; }
 }
+
+/* Meu Dia actions and schedule strip */
+html[data-theme] #root .app-shell .dashboard-view > .welcome-row .dashboard-header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex: none;
+}
+html[data-theme] #root .app-shell .dashboard-view .dashboard-refresh-button {
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 14px;
+  border: 1px solid var(--nexo-border);
+  border-radius: 12px;
+  background: var(--nexo-surface);
+  color: var(--nexo-text);
+  font: 600 13px/1 var(--nexo-font-body);
+  box-shadow: var(--nexo-shadow-card);
+  transition: background .16s ease, border-color .16s ease, transform .16s ease;
+}
+html[data-theme] #root .app-shell .dashboard-view .dashboard-refresh-button:hover:not(:disabled) {
+  background: var(--nexo-hover);
+  border-color: var(--nexo-muted);
+}
+html[data-theme] #root .app-shell .dashboard-view .dashboard-refresh-button:active:not(:disabled) { transform: translateY(1px); }
+html[data-theme] #root .app-shell .dashboard-view .dashboard-refresh-button:disabled { cursor: wait; opacity: .72; }
+html[data-theme] #root .app-shell .dashboard-view .dashboard-refresh-button .is-spinning { animation: dashboard-refresh-spin .8s linear infinite; }
+@keyframes dashboard-refresh-spin { to { transform: rotate(360deg); } }
+html[data-theme] #root .app-shell .day-strip .strip-event {
+  appearance: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+html[data-theme] #root .app-shell .day-strip .strip-idle { border-left: 1px solid var(--nexo-border); }
+@media (max-width: 760px) {
+  html[data-theme] #root .app-shell .dashboard-view > .welcome-row .dashboard-header-actions { gap: 6px; }
+  html[data-theme] #root .app-shell .dashboard-view .dashboard-refresh-button { width: 42px; padding: 0; font-size: 0; }
+  html[data-theme] #root .app-shell .dashboard-view .dashboard-refresh-button svg { flex: none; }
+}

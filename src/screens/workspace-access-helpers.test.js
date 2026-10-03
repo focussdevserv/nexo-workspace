@@ -31,6 +31,8 @@ test('access mode follows browser history between login, recovery, and reset lin
   assert.equal(readWorkspaceAccessMode(''), 'login');
   assert.equal(readWorkspaceAccessMode('#access=reset-request'), 'reset-request');
   assert.equal(readWorkspaceAccessMode('#reset=one-time-token'), 'reset-complete');
+  assert.equal(readWorkspaceAccessMode('#reset='), 'reset-invalid');
+  assert.equal(readWorkspaceAccessMode('#reset=&access=reset-request'), 'reset-invalid');
   assert.equal(readWorkspaceAccessMode('#access=invalid'), 'login');
   assert.equal(workspaceAccessModeUrl('https://focusshub.example/app?tab=login#section=auth', 'reset-request'), 'https://focusshub.example/app?tab=login#section=auth&access=reset-request');
   assert.equal(workspaceAccessModeUrl('https://focusshub.example/app?invite=secret#reset=secret&section=auth', 'login'), 'https://focusshub.example/app#section=auth');
