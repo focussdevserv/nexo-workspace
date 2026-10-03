@@ -1,3 +1,16 @@
+import { formatWorkspaceDate } from './workspace-formatting.js';
+import { calendarDateKeyForValue, calendarDateInTimeZone, normalizeCalendarTimeZone } from './calendar-preferences.js';
+const reportDateValue = (item, field = 'default') => {
+  const candidates = field === 'created' ? [item.createdAt, item.created_at, item.date, item.updatedAt, item.updated_at]
+    : field === 'expense' ? [item.date, item.createdAt, item.created_at, item.updatedAt, item.updated_at]
+    : field === 'paid' ? [item.settledAt, item.settled_at, item.paymentDetails?.settledAt, item.paymentDetails?.settled_at, item.paidAt, item.paid_at, item.paymentDetails?.paidAt, item.paymentDetails?.paid_at, item.updatedAt, item.updated_at, item.createdAt, item.created_at]
+      : field === 'revenue-paid' ? [item.settledAt, item.settled_at, item.paymentDetails?.settledAt, item.paymentDetails?.settled_at, item.paidAt, item.paid_at, item.paymentDetails?.paidAt, item.paymentDetails?.paid_at, item.date, item.updatedAt, item.updated_at, item.createdAt, item.created_at]
+      : field === 'completed' ? [item.completedAt, item.completed_at, item.updatedAt, item.updated_at, item.createdAt, item.created_at]
+        : field === 'work' ? [item.startedAt, item.started_at, item.endedAt, item.ended_at, item.createdAt, item.created_at, item.date]
+          : field === 'task' ? [item.due, item.dueAt, item.due_at, item.createdAt, item.created_at, item.date, item.updatedAt, item.updated_at]
+            : [item.date, item.createdAt, item.created_at, item.paidAt, item.paid_at, item.updatedAt, item.updated_at, item.dueAt, item.due_at];
+  return candidates.find((candidate) => candidate !== null && candidate !== undefined && candidate !== '');
+};
 export const dateOf = (item, field = 'default') => {
   const candidates = field === 'created' ? [item.createdAt, item.created_at, item.date, item.updatedAt, item.updated_at]
     : field === 'expense' ? [item.date, item.createdAt, item.created_at, item.updatedAt, item.updated_at]
@@ -13,15 +26,26 @@ export const dateOf = (item, field = 'default') => {
   return value === undefined ? new Date(Number.NaN) : new Date(value);
 };
 
-export const periodStart = (periodId, now = new Date()) => periodId === 'year'
-  ? new Date(now.getFullYear(), 0, 1)
-  : periodId === 'quarter'
-    ? new Date(now.getFullYear(), now.getMonth(), now.getDate() - 89, 0, 0, 0, 0)
-    : new Date(now.getFullYear(), now.getMonth(), 1);
+const reportDateKey = (value, timeZone) => calendarDateKeyForValue(value, timeZone);
+const dateKeyFromCalendarDate = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+const reportTimeZone = (preferences = {}) => normalizeCalendarTimeZone(preferences.timeZone || preferences.timezone);
 
-export const inPeriod = (item, periodId, now = new Date(), field = 'default') => {
-  const date = dateOf(item, field);
-  return !Number.isNaN(date.getTime()) && date >= periodStart(periodId, now) && date <= now;
+export const periodStart = (periodId, now = new Date(), preferences = {}) => {
+  const today = calendarDateInTimeZone(now, reportTimeZone(preferences));
+  return periodId === 'year'
+    ? new Date(today.getFullYear(), 0, 1)
+    : periodId === 'quarter'
+      ? new Date(today.getFullYear(), today.getMonth(), today.getDate() - 89)
+      : new Date(today.getFullYear(), today.getMonth(), 1);
+};
+
+export const inPeriod = (item, periodId, now = new Date(), field = 'default', preferences = {}) => {
+  const value = reportDateValue(item, field);
+  const zone = reportTimeZone(preferences);
+  const key = reportDateKey(value, zone);
+  if (!key) return false;
+  return key >= dateKeyFromCalendarDate(periodStart(periodId, now, preferences))
+    && key <= dateKeyFromCalendarDate(calendarDateInTimeZone(now, zone));
 };
 
 const normalizedStatus = (value) => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
@@ -30,22 +54,22 @@ const isPaidReportRecord = (item) => paidReportStatuses.has(normalizedStatus(ite
 
 // Billing providers and imported financial records use several equivalent
 // paid states. Keep report totals, rows, and charts on the same status rules.
-export function paidReportPayments(records = [], periodId, now = new Date()) {
-  return records.filter((item) => isPaidReportRecord(item) && inPeriod(item, periodId, now, 'paid'));
+export function paidReportPayments(records = [], periodId, now = new Date(), preferences = {}) {
+  return records.filter((item) => isPaidReportRecord(item) && inPeriod(item, periodId, now, 'paid', preferences));
 }
 
 // Manual receipts belong to the period in which they were settled, not the
 // period when the revenue row was first created or its original due date.
-export function paidReportRevenues(records = [], periodId, now = new Date()) {
-  return records.filter((item) => isPaidReportRecord(item) && inPeriod(item, periodId, now, 'revenue-paid'));
+export function paidReportRevenues(records = [], periodId, now = new Date(), preferences = {}) {
+  return records.filter((item) => isPaidReportRecord(item) && inPeriod(item, periodId, now, 'revenue-paid', preferences));
 }
 
 // A received revenue belongs to the period in which it was settled. Open and
 // other non-paid entries remain grouped by their accounting date.
-export function revenueRecordsForReport(records = [], periodId, now = new Date()) {
+export function revenueRecordsForReport(records = [], periodId, now = new Date(), preferences = {}) {
   return records.filter((item) => isPaidReportRecord(item)
-    ? inPeriod(item, periodId, now, 'revenue-paid')
-    : inPeriod(item, periodId, now, 'expense'));
+    ? inPeriod(item, periodId, now, 'revenue-paid', preferences)
+    : inPeriod(item, periodId, now, 'expense', preferences));
 }
 
 export function reportRevenueDate(item = {}) {
@@ -150,17 +174,17 @@ export const reportDateLabel = (value, preferences = {}) => formatWorkspaceDate(
 
 export function buildProjectReportRows(projects = [], tasks = [], hours = [], periodId, now = new Date(), preferences = {}) {
   const rows = [
-    ...projects.filter((item) => inPeriod(item, periodId, now)).map((item) => [
+    ...projects.filter((item) => inPeriod(item, periodId, now, 'default', preferences)).map((item) => [
       item.name || item.title || 'Projeto', `Projeto · ${item.client || 'Cliente não informado'}`,
       item.status || 'Em andamento', reportDateLabel(item.date || item.createdAt || item.created_at, preferences),
       dateOf(item).getTime(),
     ]),
-    ...tasks.filter((item) => inPeriod(item, periodId, now, 'task')).map((item) => [
+    ...tasks.filter((item) => inPeriod(item, periodId, now, 'task', preferences)).map((item) => [
       item.title || item.name || 'Tarefa', `Tarefa · ${item.project || item.client || 'Projeto não informado'}`,
       item.status || item.state || 'Em andamento', reportDateLabel(item.due || item.dueAt || item.due_at || item.createdAt || item.created_at, preferences),
       dateOf(item, 'task').getTime(),
     ]),
-    ...hours.filter((item) => inPeriod(item, periodId, now, 'work')).map((item) => [
+    ...hours.filter((item) => inPeriod(item, periodId, now, 'work', preferences)).map((item) => [
       item.title || item.project || 'Registro de horas', `Horas · ${item.project || item.client || 'Projeto não informado'}`,
       `${reportHours(item)}h · ${item.status || 'Registradas'}`, reportDateLabel(item.date || item.startedAt || item.started_at || item.createdAt || item.created_at, preferences),
       dateOf(item, 'work').getTime(),
@@ -170,20 +194,27 @@ export function buildProjectReportRows(projects = [], tasks = [], hours = [], pe
 }
 
 export function buildChartBuckets(periodId, now, rows, valueOf, dateField = 'default', preferences = {}) {
+  const timeZone = reportTimeZone(preferences);
+  const today = calendarDateInTimeZone(now, timeZone);
   const starts = periodId === 'year'
-    ? Array.from({ length: 12 }, (_, index) => new Date(now.getFullYear(), index, 1))
+    ? Array.from({ length: 12 }, (_, index) => new Date(today.getFullYear(), index, 1))
     : periodId === 'quarter'
-      ? Array.from({ length: 13 }, (_, index) => { const date = new Date(now); date.setHours(0, 0, 0, 0); date.setDate(date.getDate() - 89 + index * 7); return date; })
-      : Array.from({ length: Math.ceil(new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate() / 7) }, (_, index) => new Date(now.getFullYear(), now.getMonth(), 1 + index * 7));
+      ? Array.from({ length: 13 }, (_, index) => new Date(today.getFullYear(), today.getMonth(), today.getDate() - 89 + index * 7))
+      : Array.from({ length: Math.ceil(new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate() / 7) }, (_, index) => new Date(today.getFullYear(), today.getMonth(), 1 + index * 7));
+  const endOfToday = dateKeyFromCalendarDate(today);
   return starts.map((start, index) => {
+    const startKey = dateKeyFromCalendarDate(start);
     const end = periodId === 'year'
       ? new Date(start.getFullYear(), start.getMonth() + 1, 1)
       : new Date(start.getFullYear(), start.getMonth(), start.getDate() + 7);
-    const value = rows.filter((row) => { const date = dateOf(row, dateField); return date >= start && date < end && date <= now; }).reduce((sum, row) => sum + valueOf(row), 0);
+    const endKey = dateKeyFromCalendarDate(end);
+    const value = rows.filter((row) => {
+      const key = reportDateKey(reportDateValue(row, dateField), timeZone);
+      return key >= startKey && key < endKey && key <= endOfToday;
+    }).reduce((sum, row) => sum + valueOf(row), 0);
     const label = periodId !== 'year'
-      ? formatWorkspaceDate(start, preferences, { day: '2-digit', month: 'short' }).replace('.', '')
-      : formatWorkspaceDate(start, preferences, { month: 'short' }).replace('.', '');
-    return { key: `${start.toISOString()}-${index}`, label, value };
+      ? formatWorkspaceDate(startKey, preferences, { day: '2-digit', month: 'short' }).replace('.', '')
+      : formatWorkspaceDate(startKey, preferences, { month: 'short' }).replace('.', '');
+    return { key: `${startKey}-${index}`, label, value };
   });
 }
-import { formatWorkspaceDate } from './workspace-formatting.js';

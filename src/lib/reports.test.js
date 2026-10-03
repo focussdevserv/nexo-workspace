@@ -14,6 +14,17 @@ test('report amounts parse Brazilian and US mixed thousands and decimal separato
   assert.equal(parseReportAmount('valor inválido'), 0);
 });
 
+test('report period filtering follows the workspace timezone across month boundaries', () => {
+  const now = new Date('2026-10-01T04:00:00.000Z');
+  const records = [
+    { id: 'previous-local-day', createdAt: '2026-10-01T01:00:00.000Z' },
+    { id: 'current-local-day', createdAt: '2026-10-01T04:00:00.000Z' },
+    { id: 'date-only', createdAt: '2026-10-01' },
+  ];
+
+  assert.deepEqual(records.filter((item) => inPeriod(item, 'month', now, 'created', { timezone: 'America/Sao_Paulo' })).map(({ id }) => id), ['current-local-day', 'date-only']);
+  assert.deepEqual(records.filter((item) => inPeriod(item, 'month', now, 'created', { timezone: 'UTC' })).map(({ id }) => id), ['previous-local-day', 'current-local-day', 'date-only']);
+});
 test('year period starts on January 1 instead of a rolling 12-month window', () => {
   const now = new Date(2026, 9, 30, 12);
   assert.equal(periodStart('year', now).getTime(), new Date(2026, 0, 1).getTime());
