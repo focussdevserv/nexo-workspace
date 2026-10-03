@@ -33,6 +33,7 @@ import { classifyGoogleDriveListFailure, googleDriveFileMetadataUrl, googleDrive
 import { classifyGoogleOAuthRefreshFailure, googleOAuthRefreshNetworkFailure } from './integrations/google-oauth-error.js';
 import { isWahaChatIdBoundToConversation } from './integrations/waha-chat-scope.js';
 import { validateClientServiceCharges } from './integrations/client-service-charges.js';
+import { canonicalTicketClientData, ticketClientIdFromDraft } from './support/ticket-client.js';
 import { clientApprovalDecisionHasValidComment, clientPortalApprovalDecisionRecord, isClientApprovalPending, portalApprovalRecord } from './integrations/client-approvals.js';
 import { recordBelongsToPortalClient } from './security/client-portal-record-scope.js';
 import { clientPortalVisibleSections, isClientPortalSectionVisible } from './security/client-portal-visibility.js';
@@ -4027,8 +4028,20 @@ app.post('/api/workspace/:resource', { preHandler: app.authenticate }, async (re
     ? z.string().uuid().safeParse(body.data.siteAssetId)
     : null;
   if (params.success && params.data.resource === 'monitors' && !monitorAssetId?.success) return reply.code(400).send({ error: 'monitor_site_asset_required', message: 'Vincule o agendamento a um ativo valido.' });
+  const ticketClientId = params.data.resource === 'tickets' ? ticketClientIdFromDraft(body.data) : null;
+  if (params.data.resource === 'tickets' && !ticketClientId) return reply.code(400).send({ error: 'ticket_client_required', message: 'Selecione um cliente cadastrado para este ticket.' });
   const recordScope = request.user.permissions?.scope;
    if (params.data.resource === 'finance-accounts' && Object.hasOwn(body.data, 'balance') && !isCurrencyBalance(body.data.balance)) return reply.code(400).send({ error: 'finance_account_balance_invalid', message: 'O saldo deve ter no máximo duas casas decimais.' });
+  if (['revenues', 'expenses'].includes(params.data.resource) && body.data.clientId != null && body.data.clientId !== '') {
+    const clientId = z.string().uuid().safeParse(body.data.clientId);
+    if (!clientId.success) return reply.code(400).send({ error: 'finance_client_invalid', message: 'O cliente vinculado não é válido.' });
+    const [client] = await db.select({ id: workspaceRecords.id }).from(workspaceRecords).where(and(
+      eq(workspaceRecords.id, clientId.data), eq(workspaceRecords.organizationId, request.user.organizationId),
+      eq(workspaceRecords.resource, 'clients'), isNull(workspaceRecords.archivedAt),
+    )).limit(1);
+    if (!client) return reply.code(400).send({ error: 'finance_client_invalid', message: 'O cliente vinculado não existe ou não está ativo neste workspace.' });
+    if (!recordMatchesWorkspaceScope('clients', client.id, {}, recordScope)) return reply.code(403).send({ error: 'record_scope_denied', message: 'O cliente vinculado não pertence ao seu escopo.' });
+  }
   const scopedProjectClientLinks = workspaceClientReferenceFields.map((field) => body.data[field]).filter((value): value is string => typeof value === 'string' && value.length > 0);
   const scopedProjectCreationAllowed = scopedProjectClientLinks.length > 0
     && scopedProjectClientLinks.every((id) => recordScope?.mode === 'selected' && recordScope.clientIds.map(String).includes(id));
@@ -4077,6 +4090,16 @@ app.post('/api/workspace/:resource', { preHandler: app.authenticate }, async (re
       if (!recordMatchesWorkspaceScope('site-assets', linkedAsset.id, linkedAsset.data, recordScope)) return { created: [], monitorAssetScopeDenied: true as const };
       monitorAsset = linkedAsset;
     }
+    let ticketClient: { id: string; data: Record<string, unknown> } | undefined;
+    if (params.data.resource === 'tickets' && ticketClientId) {
+      const [linkedClient] = await tx.select({ id: workspaceRecords.id, data: workspaceRecords.data }).from(workspaceRecords).where(and(
+        eq(workspaceRecords.id, ticketClientId), eq(workspaceRecords.organizationId, request.user.organizationId),
+        eq(workspaceRecords.resource, 'clients'), isNull(workspaceRecords.archivedAt),
+      )).for('share').limit(1);
+      if (!linkedClient) return { created: [], ticketClientMissing: true as const };
+      if (!recordMatchesWorkspaceScope('clients', linkedClient.id, linkedClient.data, recordScope)) return { created: [], ticketClientScopeDenied: true as const };
+      ticketClient = linkedClient;
+    }
     if (params.data.resource === 'leads') {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${request.user.organizationId}))`);
       const existingLeads = await tx.select({ id: workspaceRecords.id, data: workspaceRecords.data }).from(workspaceRecords).where(and(
@@ -4085,7 +4108,9 @@ app.post('/api/workspace/:resource', { preHandler: app.authenticate }, async (re
       const duplicate = findDuplicateLead(existingLeads.map((lead) => ({ ...lead.data, id: lead.id })), body.data);
       if (duplicate) return { created: [], duplicateId: duplicate.id };
     }
-    const recordData = params.data.resource === 'monitors' && monitorAsset ? { ...body.data, siteAssetId: monitorAsset.id, clientId: monitorAsset.data.clientId || null, name: monitorAsset.data.name || body.data.name } : body.data;
+    const recordData = params.data.resource === 'monitors' && monitorAsset
+      ? { ...body.data, siteAssetId: monitorAsset.id, clientId: monitorAsset.data.clientId || null, name: monitorAsset.data.name || body.data.name }
+      : params.data.resource === 'tickets' && ticketClient ? canonicalTicketClientData(body.data, ticketClient) : body.data;
     const created = await tx.insert(workspaceRecords).values({ organizationId: request.user.organizationId, createdBy: request.user.sub, resource: params.data.resource, data: recordData }).returning();
     await tx.insert(activityEvents).values({ organizationId: request.user.organizationId, actorUserId: request.user.sub, entityType: params.data.resource, entityId: created[0]!.id, action: 'created', payload: { label: body.data.name ?? body.data.title ?? body.data.clientName ?? '' } });
     if (params.data.resource === 'leads') {
@@ -4109,6 +4134,8 @@ app.post('/api/workspace/:resource', { preHandler: app.authenticate }, async (re
   if ('duplicateId' in outcome) return reply.code(409).send({ error: 'duplicate_lead', message: 'Ja existe uma oportunidade com este e-mail ou telefone.', duplicateId: outcome.duplicateId });
   if ('monitorAssetMissing' in outcome && outcome.monitorAssetMissing) return reply.code(409).send({ error: 'monitor_site_asset_missing', message: 'O ativo foi removido ou nao esta mais disponivel.' });
   if ('monitorAssetScopeDenied' in outcome && outcome.monitorAssetScopeDenied) return reply.code(403).send({ error: 'record_scope_denied', message: 'O ativo vinculado esta fora do seu escopo.' });
+  if ('ticketClientMissing' in outcome && outcome.ticketClientMissing) return reply.code(400).send({ error: 'ticket_client_invalid', message: 'O cliente selecionado nao existe neste workspace.' });
+  if ('ticketClientScopeDenied' in outcome && outcome.ticketClientScopeDenied) return reply.code(403).send({ error: 'record_scope_denied', message: 'O cliente selecionado esta fora do seu escopo.' });
   const saved = outcome.created[0]!;
   if (params.data.resource === 'leads') await enqueueN8nEvent(request.user.organizationId, 'lead.created', { ...saved!.data, id: saved!.id });
   if (params.data.resource === 'tickets') await enqueueN8nEvent(request.user.organizationId, 'ticket.created', { ...saved!.data, id: saved!.id });
@@ -4122,6 +4149,16 @@ app.patch('/api/workspace/:resource/:id', { preHandler: app.authenticate }, asyn
   if (!body) return;
   let invalidClientBilling = '';
    if (params.data.resource === 'finance-accounts' && Object.hasOwn(body.data, 'balance') && !isCurrencyBalance(body.data.balance)) return reply.code(400).send({ error: 'finance_account_balance_invalid', message: 'O saldo deve ter no máximo duas casas decimais.' });
+  if (['revenues', 'expenses'].includes(params.data.resource) && Object.hasOwn(body.data, 'clientId') && body.data.clientId != null && body.data.clientId !== '') {
+    const clientId = z.string().uuid().safeParse(body.data.clientId);
+    if (!clientId.success) return reply.code(400).send({ error: 'finance_client_invalid', message: 'O cliente vinculado não é válido.' });
+    const [client] = await db.select({ id: workspaceRecords.id }).from(workspaceRecords).where(and(
+      eq(workspaceRecords.id, clientId.data), eq(workspaceRecords.organizationId, request.user.organizationId),
+      eq(workspaceRecords.resource, 'clients'), isNull(workspaceRecords.archivedAt),
+    )).limit(1);
+    if (!client) return reply.code(400).send({ error: 'finance_client_invalid', message: 'O cliente vinculado não existe ou não está ativo neste workspace.' });
+    if (!recordMatchesWorkspaceScope('clients', client.id, {}, request.user.permissions?.scope)) return reply.code(403).send({ error: 'record_scope_denied', message: 'O cliente vinculado não pertence ao seu escopo.' });
+  }
   let previousData: Record<string, unknown> | undefined;
   let rejectedContractTransition = false;
   let rejectedManagedSignatureMutation = false;
