@@ -51,6 +51,7 @@ import { createServiceProjectOnce } from "../lib/service-project-creation.js";
 import { resolveLeadNavigation } from "../lib/lead-navigation-context.js";
 import { resolveClientBillingCancellation } from "../lib/client-billing-cancellation.js";
 import { clientProfileSelectionKey } from "../lib/client-profile-selection.js";
+import { clientProfileNavigationContext } from "../lib/client-profile-navigation.js";
 import { belongsToClientProfileRecord } from "../lib/client-profile-record-scope.js";
 import { applyClientProfileRetryResults, clientProfileActiveProjectsLabel, clientProfileFailedResources, clientProfileRelatedPaths, clientProfileResourceLabels, clientProfileSectionIsEmpty } from "../lib/client-profile-related-state.js";
 import { commercialRecordTargetMatches } from "../lib/commercial-record-target.js";
@@ -1695,7 +1696,7 @@ function ClientProfileModal({
     window.dispatchEvent(new CustomEvent("nexo:navigate", {
       detail: {
         page,
-        context: context || null
+        context: clientProfileNavigationContext(client, context)
       }
     }));
   };

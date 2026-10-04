@@ -307,7 +307,7 @@ export function PaymentConsole({ kind = 'orders', notify = () => {}, navigationC
     setCancelingId(item.id);
     try {
       const response = await request(`/api/billing/orders/${encodeURIComponent(item.id)}/cancel`, { method: 'POST' });
-      const cancellationError = paymentCancellationError(response);
+      const cancellationError = paymentCancellationError(response, item.id);
       if (cancellationError) throw new Error(cancellationError);
       if (response.data) setItems((current) => replacePaymentRecord(current, response.data));
       await refresh();

@@ -18,5 +18,5 @@ test('ignores malformed update responses without changing the payment list', () 
 test('payment console applies the confirmed cancel response before attempting a list refresh', async () => {
   const source = await readFile(new URL('../screens/PaymentScreens.jsx', import.meta.url), 'utf8');
   const cancel = source.slice(source.indexOf('const cancelOrder = async'), source.indexOf('const refreshOrder = async'));
-  assert.match(cancel, /const response = await request\([^;]+;\s*const cancellationError = paymentCancellationError\(response\);\s*if \(cancellationError\) throw new Error\(cancellationError\);\s*if \(response\.data\) setItems\(\(current\) => replacePaymentRecord\(current, response\.data\)\);\s*await refresh\(\);/);
+  assert.match(cancel, /const response = await request\([^;]+;\s*const cancellationError = paymentCancellationError\(response, item\.id\);\s*if \(cancellationError\) throw new Error\(cancellationError\);\s*if \(response\.data\) setItems\(\(current\) => replacePaymentRecord\(current, response\.data\)\);\s*await refresh\(\);/);
 });

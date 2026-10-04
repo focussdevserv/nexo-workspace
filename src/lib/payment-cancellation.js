@@ -1,6 +1,10 @@
 import { normalizePaymentStatus } from './payment-status.js';
 
-export function paymentCancellationError(response) {
+export function paymentCancellationError(response, expectedId) {
+  const receivedId = response?.data?.id == null ? '' : String(response.data.id);
+  if (expectedId && receivedId !== String(expectedId)) {
+    return 'O cancelamento n\u00e3o foi confirmado para esta cobran\u00e7a. Atualize a lista antes de tentar novamente.';
+  }
   const status = normalizePaymentStatus(response?.data?.status);
   if (status === 'canceled') return '';
   if (response?.status === 'demo_only' && response?.message) return String(response.message);

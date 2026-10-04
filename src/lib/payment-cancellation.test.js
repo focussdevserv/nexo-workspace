@@ -5,8 +5,13 @@ import { paymentCancellationError, subscriptionCancellationError, subscriptionSt
 import { handleLocalDemoRequest } from './local-demo.js';
 
 test('accepts an already-cancelled provider result, including legacy Portuguese status', () => {
-  assert.equal(paymentCancellationError({ data: { status: 'cancelled' } }), '');
-  assert.equal(paymentCancellationError({ data: { status: 'Cancelada' }, alreadyCanceled: true }), '');
+  assert.equal(paymentCancellationError({ data: { id: 'order-1', status: 'cancelled' } }, 'order-1'), '');
+  assert.equal(paymentCancellationError({ data: { id: 'order-1', status: 'Cancelada' }, alreadyCanceled: true }, 'order-1'), '');
+});
+
+test('payment cancellation requires the selected record ID when supplied', () => {
+  assert.match(paymentCancellationError({ data: { id: 'other-order', status: 'canceled' } }, 'order-1'), /n\u00e3o foi confirmado para esta cobran/);
+  assert.match(paymentCancellationError({ data: { status: 'canceled' } }, 'order-1'), /n\u00e3o foi confirmado para esta cobran/);
 });
 
 test('does not report success when local demo declines cancellation or the record is missing', () => {
@@ -44,6 +49,16 @@ test('subscription cancellation UI only reports success after validating the ret
   assert.ok(action.indexOf('if (cancellationError) throw new Error(cancellationError)') < action.indexOf("notify('Assinatura cancelada no Mercado Pago.')"));
 });
 
+test('payment cancellation UI validates the returned record against the selected payment', async () => {
+  const source = await readFile(new URL('../screens/PaymentScreens.jsx', import.meta.url), 'utf8');
+  const start = source.indexOf('const cancelOrder = async (item) =>');
+  const end = source.indexOf('const refreshOrder = async (item) =>', start);
+  assert.ok(start >= 0 && end > start);
+  const action = source.slice(start, end);
+  assert.match(action, /paymentCancellationError\(response, item\.id\)/);
+  assert.ok(action.indexOf('if (cancellationError) throw new Error(cancellationError)') < action.indexOf("notify(demoMode ? 'Cobrança fictícia cancelada"));
+});
+
 test('subscription pause, resume, and demo authorization validate the server result before refresh or success notice', async () => {
   const source = await readFile(new URL('../screens/PaymentScreens.jsx', import.meta.url), 'utf8');
   const toggleStart = source.indexOf('const toggleSubscription = async (item) =>');
@@ -71,9 +86,9 @@ test('local demo cancellation checks the returned state before reporting success
   globalThis.window = { location: { origin: 'http://localhost' }, dispatchEvent: () => {} };
   try {
     const canceled = handleLocalDemoRequest('/api/billing/orders/demo-open/cancel', { method: 'POST' });
-    assert.equal(paymentCancellationError(canceled), '');
+    assert.equal(paymentCancellationError(canceled, 'demo-open'), '');
     const declined = handleLocalDemoRequest('/api/billing/orders/demo-paid/cancel', { method: 'POST' });
-    assert.match(paymentCancellationError(declined), /Apenas cobranças fictícias/);
+    assert.match(paymentCancellationError(declined, 'demo-paid'), /Apenas cobranças fictícias/);
     assert.equal(JSON.parse(values.get('focusshub.local-demo.v1'))['billing-orders'][1].status, 'paid');
   } finally {
     if (originalWindow === undefined) delete globalThis.window;

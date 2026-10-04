@@ -1193,3 +1193,11 @@ As migracoes 0000-0007 foram aplicadas em PostgreSQL temporario isolado. Login o
 - Atendimento: criar ticket a partir da conversa exige cliente vinculado e a mesma conversa/thread/canal não pode criar outro ticket duplicado; o fluxo mantém permissões e origem.
 - Validação integrada: 978 testes frontend e 349 API passaram; ESLint, builds Vite/TypeScript da API, diff-check e renderização das 36 telas passaram. Deploy de `e166df8` confirmado em produção com health OK, banco conectado e revisão correspondente.
 - Escopo restante: este registro cobre correções específicas, não declara completos os módulos nem encerra as lacunas externas de OAuth, WAHA, Gmail/Hostinger e outras integrações listadas acima.
+## Rodada coordenada Focusshub - CRM contextual, Tarefas e Financeiro - 2026-10-04
+
+- CRM: ações abertas pela ficha carregam o cliente selecionado junto com o ID/intent específico da ação. Ainda faltam ações diretas para abrir projeto/tarefa na própria ficha; vou fechar esse caminho em rodada coordenada com WorkScreens.
+- Tarefas: o prazo da edição passou a usar data real; registros antigos em texto continuam visíveis até a migração explícita e o vencimento agora ancora corretamente as próximas ocorrências semanais/mensais.
+- Financeiro: cancelar cobrança só confirma sucesso quando a resposta aponta para o mesmo registro escolhido e estado cancelado; IDs ausentes ou de outra cobrança pedem atualização da lista.
+- Validação integrada: 988 testes frontend e 349 API passaram; ESLint, builds Vite/TypeScript, diff-check e renderização das 36 telas passaram.
+- Em produção, a rodada anterior (4c3234e) foi confirmada com API saudável, banco conectado e revisão correspondente. As alterações desta rodada ainda não foram publicadas no deploy.
+- Lacunas externas: cancelar/criar cobranças reais depende da conta e sandbox do Mercado Pago; conciliação depende de provedor Open Finance. Responsáveis por tarefa ainda não são selecionados por membro; alertas de atraso e edição de séries do calendário continuam pendentes.
