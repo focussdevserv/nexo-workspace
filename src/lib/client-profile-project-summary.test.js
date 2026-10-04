@@ -26,6 +26,6 @@ test('commercial client portfolio uses the same active status rules as the clien
 test('CRM client summary uses the shared active-project definition', async () => {
   const source = await readFile(new URL('../screens/CommercialScreens.jsx', import.meta.url), 'utf8');
   assert.match(source, /import \{ countActiveWorkProjects, isWorkProjectActive \} from "\.\.\/lib\/work-project-activity\.js"/);
-  assert.match(source, /<small>Projetos ativos<\/small><b>\{countActiveWorkProjects\(projects\)\}<\/b>/);
+  assert.match(source, /clientProfileActiveProjectsLabel\(\{ count: countActiveWorkProjects\(projects\), errors: relatedErrors, loading: relatedLoading \}\)/);
   assert.match(source, /relatedProjects\.filter\(project => isWorkProjectActive\(project\)/);
 });

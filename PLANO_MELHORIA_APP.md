@@ -1185,3 +1185,11 @@ As migracoes 0000-0007 foram aplicadas em PostgreSQL temporario isolado. Login o
 - Validacao Focusshub atual: 963 testes frontend e 349 API passaram; lint, Vite build, API TypeScript build e validacao de 36 telas passaram. Chrome headless local conferiu 37 destinos de menu e a rota publica de captura.
 - CRM/captura publica: eventos lead.created agora entram no outbox n8n na mesma transacao do lead e da tarefa; o worker inicia depois do commit. A API nao confirma um lead sem persistir tambem a automacao aplicavel.
 - Limite desta validacao: a rota de intake foi revisada por testes de contrato estaticos e helpers, sem banco real. O erro reportado em Contatos na sessao real nao foi reproduzido no ambiente local. Deploy continua bloqueado pela indisponibilidade do acesso/secrets Coolify descrita acima.
+
+## Rodada coordenada Focusshub - Meu Dia, CRM e Atendimento - 2026-10-04
+
+- Meu Dia: contagens de leads, tarefas e conversas agora diferenciam carregamento, restrição de acesso e falha da fonte; dados reais e permissões atuais permanecem. Ainda pendem contexto/filtro de propostas no atalho e duplicidade de Projetos no resumo de membro.
+- CRM/ficha: falha de carregamento de projetos, tarefas e histórico agora aparece explicitamente; o botão de nova tentativa recarrega as fontes afetadas, a métrica não afirma zero quando indisponível e o estado vazio não esconde falhas. Ainda faltam ações de abertura contextual de projetos/tarefas e preservar cliente em alguns atalhos de tickets/aprovações.
+- Atendimento: criar ticket a partir da conversa exige cliente vinculado e a mesma conversa/thread/canal não pode criar outro ticket duplicado; o fluxo mantém permissões e origem.
+- Validação integrada: 978 testes frontend e 349 API passaram; ESLint, builds Vite/TypeScript da API, diff-check e renderização das 36 telas passaram. Deploy de `e166df8` confirmado em produção com health OK, banco conectado e revisão correspondente.
+- Escopo restante: este registro cobre correções específicas, não declara completos os módulos nem encerra as lacunas externas de OAuth, WAHA, Gmail/Hostinger e outras integrações listadas acima.

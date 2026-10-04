@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildInboxTicket, canCreateInboxTicket } from './inbox-ticket.js';
+import { buildInboxTicket, canCreateInboxTicket, findInboxSourceTicket } from './inbox-ticket.js';
 
 test('ticket creation follows support write access and keeps local demo available', () => {
   assert.equal(canCreateInboxTicket({ role: 'member', permissions: { support: { read: true, write: true } } }), true);
@@ -22,4 +22,15 @@ test('ticket draft links the matched client and records channel, source, SLA and
   assert.equal(ticket.slaDueAt, '2026-10-04T10:00:00.000Z');
   assert.match(ticket.detail, /Não consigo entrar/);
   assert.equal(buildInboxTicket({ id: 'unlinked' }, { channel: 'WhatsApp' }), null);
+});
+
+test('a converted conversation resolves to its existing ticket without crossing channels', () => {
+  const tickets = [
+    { id: 'wa-ticket', code: 'NX-WA', sourceChannel: 'WhatsApp', sourceConversationId: 'conversation-1' },
+    { id: 'email-ticket', code: 'NX-EMAIL', sourceChannel: 'Hostinger', sourceThreadId: 'thread-1', sourceConversationId: 'message-1' },
+  ];
+  assert.equal(findInboxSourceTicket(tickets, { id: 'conversation-1' }, 'WhatsApp')?.id, 'wa-ticket');
+  assert.equal(findInboxSourceTicket(tickets, { id: 'message-1', threadId: 'thread-1' }, 'E-mail')?.id, 'email-ticket');
+  assert.equal(findInboxSourceTicket(tickets, { id: 'thread-1' }, 'WhatsApp'), null);
+  assert.equal(findInboxSourceTicket(tickets, { id: 'different-thread' }, 'E-mail'), null);
 });

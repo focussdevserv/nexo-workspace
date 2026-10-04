@@ -4,6 +4,24 @@ export function canCreateInboxTicket(user, localDemo = false) {
   return (user?.role === 'admin' && !support) || (support?.read === true && support?.write === true);
 }
 
+export function findInboxSourceTicket(tickets, conversation, channel) {
+  if (!conversation) return null;
+  const source = channel === 'E-mail'
+    ? String(conversation.threadId || conversation.id || '')
+    : String(conversation.id || '');
+  if (!source) return null;
+  return (Array.isArray(tickets) ? tickets : []).find((ticket) => {
+    const ticketChannel = String(ticket.sourceChannel || '').toLowerCase();
+    const channelMatches = channel === 'E-mail'
+      ? ticketChannel === 'e-mail' || ticketChannel === 'hostinger'
+      : ticketChannel === 'whatsapp';
+    if (!channelMatches) return false;
+    return channel === 'E-mail'
+      ? String(ticket.sourceThreadId || ticket.sourceConversationId || '') === source
+      : String(ticket.sourceConversationId || '') === source;
+  }) || null;
+}
+
 export function buildInboxTicket(conversation, { channel, client, assignee, author, now = new Date(), slaHours = 24 } = {}) {
   if (!conversation || !client?.id || !String(client.name || '').trim()) return null;
   const source = channel === 'E-mail' ? (conversation.provider === 'hostinger' ? 'Hostinger' : 'E-mail') : 'WhatsApp';
