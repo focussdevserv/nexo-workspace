@@ -1182,3 +1182,6 @@ As migracoes 0000-0007 foram aplicadas em PostgreSQL temporario isolado. Login o
 - Metas: receita recebida usa `paidAt`/`paymentDetails.paidAt` para cobran?as e `settledAt` para receitas manuais antes de `updatedAt`/`date`; testes de Metas/Relat?rios 23/23.
 - Marca: mensagens de erro e e-mails voltados ao usu?rio da API agora identificam o app como Focusshub; nomes de protocolo e cabe?alhos internos permanecem compat?veis.
 - Valida??o integrada atual: 313 testes frontend e 188 API passaram; ESLint, build Vite, build TypeScript da API e `git diff --check` passaram. Segue sem deploy pelos secrets Coolify ausentes no GitHub Actions.
+- Validacao Focusshub atual: 963 testes frontend e 349 API passaram; lint, Vite build, API TypeScript build e validacao de 36 telas passaram. Chrome headless local conferiu 37 destinos de menu e a rota publica de captura.
+- CRM/captura publica: eventos lead.created agora entram no outbox n8n na mesma transacao do lead e da tarefa; o worker inicia depois do commit. A API nao confirma um lead sem persistir tambem a automacao aplicavel.
+- Limite desta validacao: a rota de intake foi revisada por testes de contrato estaticos e helpers, sem banco real. O erro reportado em Contatos na sessao real nao foi reproduzido no ambiente local. Deploy continua bloqueado pela indisponibilidade do acesso/secrets Coolify descrita acima.

@@ -22,6 +22,7 @@ import { activityEvents, billingOrders, billingOverdueEvents, billingSubscriptio
 import { isSafeWorkspaceData } from './security/workspace-data.js';
 import { buildWorkspaceBackup, parseWorkspaceBackup } from './workspace-backup.js';
 import { findDuplicateLead, findLeadDuplicateMatch } from './crm/lead-identity.js';
+import { firstActiveLeadStage, normalizePublicLeadContact, publicLeadIsSpam, publicLeadPayloadSchema, publicLeadTaskData } from './crm/public-lead.js';
 import { pipelineStageConfigAllows, validatePipelineStageConfig } from './crm/pipeline-stages.js';
 import { buildClientFromLead, mergeLeadServiceIntoClient } from './crm/lead-conversion.js';
 import { teamAccessStatus } from './team/account-status.js';
@@ -141,7 +142,7 @@ await app.register(jwt, { secret: env.JWT_SECRET, cookie: { cookieName: 'nexo_se
 const allowedOrigins = env.APP_ORIGIN.split(',').map((origin) => z.string().url().parse(origin.trim()));
 let ownerAccountId: string | null = null;
 app.addHook('onRequest', async (request, reply) => {
-  if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method) || request.url.startsWith('/api/integrations/mercadopago/webhook') || request.url === '/api/integrations/waha/webhook' || request.url === '/api/integrations/n8n/actions' || request.url === '/api/integrations/clicksign/webhook') return;
+  if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method) || request.url.startsWith('/api/public/crm/leads/') || request.url.startsWith('/api/integrations/mercadopago/webhook') || request.url === '/api/integrations/waha/webhook' || request.url === '/api/integrations/n8n/actions' || request.url === '/api/integrations/clicksign/webhook') return;
   const origin = request.headers.origin;
   if (!origin || !allowedOrigins.includes(origin)) return reply.code(403).send({ error: 'origin_forbidden', message: 'Origem da solicitacao nao autorizada.' });
 });
@@ -3362,6 +3363,98 @@ app.post('/api/workspace/backup/restore', { preHandler: app.authenticate, bodyLi
     request.log.warn({ error: error instanceof Error ? error.name : 'unknown' }, 'Workspace backup restore failed');
     return reply.code(409).send({ error: 'backup_restore_conflict', message: 'A restauracao foi cancelada sem salvar alteracoes. Verifique os IDs e vinculos do backup ou use o suporte.' });
   }
+});
+
+app.get('/api/workspace/crm/public-lead-form', { preHandler: app.authenticate }, async (request, reply) => {
+  if (request.user.role !== 'owner') return reply.code(403).send({ error: 'owner_required' });
+  const [row] = await db.select({ data: workspaceRecords.data }).from(workspaceRecords).where(and(
+    eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'settings'), isNull(workspaceRecords.archivedAt), sql`${workspaceRecords.data}->>'key' = 'public-lead-form'`,
+  )).limit(1);
+  const data = row?.data ?? {};
+  return { data: { enabled: data.enabled === true, slug: typeof data.slug === 'string' ? data.slug : null } };
+});
+
+app.put('/api/workspace/crm/public-lead-form', { preHandler: app.authenticate, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
+  if (request.user.role !== 'owner') return reply.code(403).send({ error: 'owner_required' });
+  const body = z.object({ enabled: z.boolean() }).strict().safeParse(request.body);
+  if (!body.success) return reply.code(400).send({ error: 'validation_error' });
+  const saved = await db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${request.user.organizationId}), hashtext('public-lead-form'))`);
+    const [existing] = await tx.select().from(workspaceRecords).where(and(eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'settings'), isNull(workspaceRecords.archivedAt), sql`${workspaceRecords.data}->>'key' = 'public-lead-form'`)).limit(1);
+    const slug = typeof existing?.data.slug === 'string' ? existing.data.slug : randomBytes(24).toString('base64url');
+    if (existing) return (await tx.update(workspaceRecords).set({ data: { key: 'public-lead-form', slug, enabled: body.data.enabled }, updatedAt: new Date() }).where(eq(workspaceRecords.id, existing.id)).returning())[0]!;
+    return (await tx.insert(workspaceRecords).values({ organizationId: request.user.organizationId, createdBy: request.user.sub, resource: 'settings', data: { key: 'public-lead-form', slug, enabled: body.data.enabled } }).returning())[0]!;
+  });
+  return { data: { enabled: saved.data.enabled === true, slug: saved.data.slug } };
+});
+
+app.post('/api/public/crm/leads/:slug', { config: { rateLimit: { max: 6, timeWindow: '1 minute' } } }, async (request, reply) => {
+  const params = z.object({ slug: z.string().regex(/^[A-Za-z0-9_-]{24,64}$/) }).safeParse(request.params);
+  const payload = publicLeadPayloadSchema.safeParse(request.body);
+  if (!params.success || !payload.success) return reply.code(400).send({ error: 'validation_error', message: 'Confira os campos obrigatorios.' });
+  if (publicLeadIsSpam(payload.data)) return reply.code(202).send({ accepted: true });
+  const [config] = await db.select({ organizationId: workspaceRecords.organizationId }).from(workspaceRecords).where(and(
+    eq(workspaceRecords.resource, 'settings'), isNull(workspaceRecords.archivedAt), sql`${workspaceRecords.data}->>'key' = 'public-lead-form'`,
+    sql`${workspaceRecords.data}->>'slug' = ${params.data.slug}`, sql`${workspaceRecords.data}->>'enabled' = 'true'`,
+  )).limit(1);
+  if (!config) return reply.code(404).send({ error: 'form_unavailable' });
+  const idempotency = request.headers['idempotency-key'];
+  const key = typeof idempotency === 'string' && /^[A-Za-z0-9._:-]{8,128}$/.test(idempotency) ? idempotency : randomUUID();
+  const normalized = normalizePublicLeadContact(payload.data);
+  const requestHash = createHash('sha256').update(JSON.stringify({
+    name: normalized.name, email: normalized.email, phone: normalized.phone, company: normalized.company,
+    message: normalized.message, contactConsent: normalized.contactConsent, marketingConsent: normalized.marketingConsent,
+  })).digest('hex');
+  const [stageConfig] = await db.select({ data: workspaceRecords.data }).from(workspaceRecords).where(and(
+    eq(workspaceRecords.organizationId, config.organizationId), eq(workspaceRecords.resource, 'pipeline-stages'), isNull(workspaceRecords.archivedAt), sql`${workspaceRecords.data}->>'key' = 'pipeline-stages'`,
+  )).limit(1);
+  let createdLead: { id: string; data: Record<string, unknown> } | undefined;
+  let leadCreatedEventQueued = false;
+  const leadCreatedEventId = randomUUID();
+  const submitResult = await db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${config.organizationId}), hashtext('public-lead-contact-dedupe'))`);
+    const [prior] = await tx.select({ createRequestHash: workspaceRecords.createRequestHash }).from(workspaceRecords).where(and(
+      eq(workspaceRecords.organizationId, config.organizationId), eq(workspaceRecords.resource, 'leads'), eq(workspaceRecords.createIdempotencyKey, key),
+    )).limit(1);
+    if (prior) return prior.createRequestHash === requestHash ? 'replay' as const : 'key_conflict' as const;
+    const leads = await tx.select({ id: workspaceRecords.id, data: workspaceRecords.data }).from(workspaceRecords).where(and(eq(workspaceRecords.organizationId, config.organizationId), eq(workspaceRecords.resource, 'leads'), isNull(workspaceRecords.archivedAt)));
+    const existingClients = await tx.select({ id: workspaceRecords.id, data: workspaceRecords.data }).from(workspaceRecords).where(and(eq(workspaceRecords.organizationId, config.organizationId), eq(workspaceRecords.resource, 'clients'), isNull(workspaceRecords.archivedAt)));
+    const legacyClients = await tx.select({ id: clients.id, name: clients.name, contactName: clients.contactName, email: clients.email, phone: clients.phone }).from(clients).where(and(eq(clients.organizationId, config.organizationId), eq(clients.status, 'active')));
+    if (findDuplicateLead([
+      ...leads.map((row) => ({ ...row.data, id: row.id })),
+      ...existingClients.map((row) => ({ ...row.data, id: row.id })),
+      ...legacyClients.map((row) => ({ ...row, email: row.email || '', phone: row.phone || '' })),
+    ], normalized)) return 'duplicate' as const;
+    const [lead] = await tx.insert(workspaceRecords).values({ organizationId: config.organizationId, createdBy: null, resource: 'leads', createIdempotencyKey: key, createRequestHash: requestHash, data: {
+      name: normalized.name, email: normalized.email || '', phone: normalized.phone || '', company: normalized.company || '', notes: normalized.message || '', source: 'Formulario público', stage: firstActiveLeadStage(stageConfig?.data),
+      contactConsent: true, contactConsentAt: new Date().toISOString(), marketingConsent: normalized.marketingConsent, marketingConsentAt: normalized.marketingConsent ? new Date().toISOString() : null,
+    } }).returning();
+    if (!lead) throw new Error('Public lead insert returned no record');
+    createdLead = lead;
+    await tx.insert(workspaceRecords).values({ organizationId: config.organizationId, createdBy: null, resource: 'tasks', data: publicLeadTaskData(normalized.name, lead.id, normalized.message) });
+    // Persist the automation event with the lead and task to avoid losing it after commit.
+    const [n8nControl] = await tx.select({ data: workspaceRecords.data }).from(workspaceRecords).where(and(
+      eq(workspaceRecords.organizationId, config.organizationId), eq(workspaceRecords.resource, 'integration-controls'),
+      sql`${workspaceRecords.data}->>'provider' = 'n8n'`, isNull(workspaceRecords.archivedAt),
+    )).limit(1);
+    if (integrationControlAllowsUse(n8nControl?.data)) {
+      const automations = await tx.select({ id: workspaceRecords.id }).from(workspaceRecords).where(and(
+        eq(workspaceRecords.organizationId, config.organizationId), eq(workspaceRecords.resource, 'automations'), isNull(workspaceRecords.archivedAt),
+        sql`${workspaceRecords.data}->>'eventKey' = 'lead.created'`, sql`${workspaceRecords.data}->>'active' = 'true'`,
+      ));
+      if (automations.length) {
+        await tx.insert(n8nEventDeliveries).values(automations.map((automation) => ({
+          organizationId: config.organizationId, automationId: automation.id, eventId: leadCreatedEventId,
+          eventKey: 'lead.created', record: { ...lead.data, id: lead.id },
+        }))).onConflictDoNothing({ target: [n8nEventDeliveries.automationId, n8nEventDeliveries.eventId] });
+        leadCreatedEventQueued = true;
+      }
+    }
+    return 'created' as const;
+  });
+  if (submitResult === 'key_conflict') return reply.code(409).send({ error: 'submission_conflict', message: 'A chave desta tentativa já foi utilizada. Inicie um novo envio.' });
+  if (submitResult === 'created' && createdLead && leadCreatedEventQueued) void processN8nEventDeliveries();
+  return reply.code(202).send({ accepted: true });
 });
 
 app.get('/api/workspace/assignees', { preHandler: app.authenticate }, async (request) => {

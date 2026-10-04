@@ -16,6 +16,8 @@ const lazyWorkspaceModule = createRetryableLazyModuleRegistry(lazy, {
 import { PublicClientPortal } from './screens/ClientPortalScreens.jsx';
 import WorkspaceAccess from './screens/WorkspaceAccess.jsx';
 import PublicLegalPage from './screens/PublicLegalPages.jsx';
+import PublicLeadForm from './screens/PublicLeadForm.jsx';
+import { publicLeadSlugFromPath } from './lib/public-lead-form.js';
 import { apiRequest, fetchAllRecords } from './lib/workspace-api.js';
 import { applyWorkspaceTheme, mergeServerWorkspacePreferences, publishWorkspacePreferences, readCachedWorkspacePreferences, rememberWorkspaceThemePreference, useWorkspacePreferences } from './lib/workspace-preferences.js';
 import { formatWorkspaceCurrency, formatWorkspaceDate, formatWorkspaceDateTime } from './lib/workspace-formatting.js';
@@ -826,6 +828,7 @@ export default function App() {
   if (window.location.pathname.startsWith('/portal/')) return <PublicClientPortal slug={window.location.pathname.split('/').filter(Boolean).at(-1)} />;
   if (window.location.pathname === '/privacy') return <PublicLegalPage type="privacy" />;
   if (window.location.pathname === '/terms') return <PublicLegalPage type="terms" />;
+  if (window.location.pathname.startsWith('/captura/')) return <PublicLeadForm slug={publicLeadSlugFromPath(window.location.pathname) || ''} />;
   return <WorkspaceAccess><WorkspaceShell /></WorkspaceAccess>;
 }
 

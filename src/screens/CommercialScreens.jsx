@@ -54,6 +54,7 @@ import { clientProfileSelectionKey } from "../lib/client-profile-selection.js";
 import { belongsToClientProfileRecord } from "../lib/client-profile-record-scope.js";
 import { commercialRecordTargetMatches } from "../lib/commercial-record-target.js";
 import { countActiveWorkProjects, isWorkProjectActive } from "../lib/work-project-activity.js";
+import PublicLeadFormManager from "./PublicLeadFormManager.jsx";
 const datasets = {
   leads: [],
   clients: [],
@@ -1084,7 +1085,7 @@ export default function CommercialScreen({
       return false;
     }
   };
-  return <main className="commercial-screen"><header className="com-page-heading"><div><div className="com-breadcrumb">FOCUSSHUB <ChevronRight size={13} /> COMERCIAL <ChevronRight size={13} /> {current.tab.toUpperCase()}</div><p className="com-eyebrow">{current.eyebrow}</p><h1>{current.title}</h1><p className="com-description">{current.description}</p></div><button className="com-primary" disabled={["leads", "pipeline", "crm"].includes(key) && pipelineConfigUnavailable} onClick={() => {
+  return <main className="commercial-screen"><header className="com-page-heading"><div><div className="com-breadcrumb">FOCUSSHUB <ChevronRight size={13} /> COMERCIAL <ChevronRight size={13} /> {current.tab.toUpperCase()}</div><p className="com-eyebrow">{current.eyebrow}</p><h1>{current.title}</h1><p className="com-description">{current.description}</p></div>{["leads", "crm"].includes(key) && <PublicLeadFormManager isOwner={currentWorkspaceUser?.role === "owner"} localDemo={localDemo} />}<button className="com-primary" disabled={["leads", "pipeline", "crm"].includes(key) && pipelineConfigUnavailable} onClick={() => {
         setDraft({
           ...emptyDraft,
           ...(["leads", "pipeline", "crm"].includes(key) ? { stage: pipelineConfig.stages[0] || DEFAULT_PIPELINE_STAGES[0] } : {})

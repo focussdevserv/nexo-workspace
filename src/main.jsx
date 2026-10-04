@@ -8,6 +8,7 @@ import './navigation.css';
 import './dark-mode.css';
 import './notifications.css';
 import './premium-design.css';
+import './screens/mobile-touch-targets.css';
 
 const sentryDsn = import.meta.env.VITE_SENTRY_DSN;
 Sentry.init({

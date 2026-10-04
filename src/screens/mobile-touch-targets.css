@@ -1,0 +1,32 @@
+/* Keep controls comfortably tappable on phones without changing desktop density. */
+@media (max-width: 760px) {
+  html[data-theme] .app-shell :is(button, [role='button'], select,
+    input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']):not([type='file'])),
+  html[data-theme] .workspace-access-page :is(button, select,
+    input:not([type='checkbox']):not([type='radio']):not([type='range'])),
+  html[data-theme] .cp-public-page :is(button, select,
+    input:not([type='checkbox']):not([type='radio']):not([type='range'])) {
+    min-height: 44px !important;
+  }
+
+  html[data-theme] .app-shell :is(
+    .icon-button,
+    .ns-icon-button,
+    .com-icon-action,
+    .admin-icon-button,
+    .work-icon-button,
+    .team-row-menu button,
+    .goal-item-menu button,
+    .ns-sub-actions button,
+    .ns-automation-row-actions button
+  ) {
+    width: 44px !important;
+    min-width: 44px !important;
+    height: 44px !important;
+    padding: 0 !important;
+  }
+
+  html[data-theme] .app-shell :is(.side-nav-link, .rail-link, .work-tabs button, .com-tabs button) {
+    min-height: 44px !important;
+  }
+}
