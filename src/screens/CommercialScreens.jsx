@@ -12,6 +12,7 @@ import { resolveProposalServices, summarizeProposalServices } from "../data/prop
 import { belongsToClient, clientTicketPresentation } from "../data/client-link.js";
 import { contractText, downloadContract, editableContractStatuses, isLockedContractStatus } from "../data/contract-document.js";
 import { moveLeadById } from "../lib/pipeline-stage.js";
+import { DEFAULT_PIPELINE_STAGES, nextPipelineStageConfig, pipelineColumnsForRecords, resolvePipelineStageConfig } from "../lib/pipeline-config.js";
 import { leadConversionPayload, leadFieldsBeforeConversion } from "../lib/lead-conversion-payload.js";
 import { persistPipelineLeadDeal } from "../lib/pipeline-deal-save.js";
 import { proposalDeletionBlockReason } from "../lib/proposal-deletion.js";
@@ -353,6 +354,24 @@ export default function CommercialScreen({
   const [toast, setToast] = useState("");
   const [period, setPeriod] = useState("all");
   const [records, persistRecords, refreshRecords, servicesLoading, servicesError, persistServices, recordsLoading, recordErrors, refreshOneRecord, recordLoadings] = useCommercialRecords();
+  const pipelineConfigStore = useWorkspaceRecords("pipeline-stages");
+  const pipelineConfigRecord = pipelineConfigStore.records.find((record) => record.key === "pipeline-stages");
+  const pipelineConfig = useMemo(() => resolvePipelineStageConfig(pipelineConfigRecord), [pipelineConfigRecord?.id, pipelineConfigRecord?.updatedAt, pipelineConfigRecord?.stages, pipelineConfigRecord?.inactiveStages]);
+  const pipelineCreationStages = pipelineConfig.stages.filter((stage) => !["Fechado", "Perdido"].includes(stage));
+  const currentWorkspaceUser = (() => { try { return typeof window === "undefined" ? null : JSON.parse(window.sessionStorage.getItem("nexo.api.user") || "null"); } catch { return null; } })();
+  const crmPermission = currentWorkspaceUser?.permissions?.crm;
+  const canManagePipeline = localDemo || currentWorkspaceUser?.role === "owner"
+    || (crmPermission && crmPermission.read === true && crmPermission.write === true)
+    || (currentWorkspaceUser?.role === "admin" && !crmPermission);
+  const pipelineConfigUnavailable = !localDemo && (pipelineConfigStore.loading || Boolean(pipelineConfigStore.error));
+  const savePipelineStages = async (next) => {
+    if (!canManagePipeline) return false;
+    const data = nextPipelineStageConfig(pipelineConfig, next.stages, next.inactiveStages);
+    if (pipelineConfigRecord) await pipelineConfigStore.update(pipelineConfigRecord.id, data);
+    else await pipelineConfigStore.create(data);
+    notify("Etapas do Pipeline salvas no workspace.");
+    return true;
+  };
   const [relatedSubscriptions, setRelatedSubscriptions] = useState([]);
   useEffect(() => {
     if (key !== "clientes") {
@@ -491,7 +510,7 @@ export default function CommercialScreen({
   }, [key, navigationContext?.intentId, navigationContext?.search, recordsLoading, onNavigationContextConsumed]);
   useEffect(() => {
     if (key !== "leads" || navigationContext?.quickCreate !== "lead" || !navigationContext?.intentId || recordsLoading) return;
-    setDraft({ ...emptyDraft, stage: "Novo lead" });
+    setDraft({ ...emptyDraft, stage: pipelineConfig.stages[0] || DEFAULT_PIPELINE_STAGES[0] });
     setComposer(true);
     onNavigationContextConsumed();
   }, [key, navigationContext?.intentId, navigationContext?.quickCreate, recordsLoading, onNavigationContextConsumed]);
@@ -647,6 +666,10 @@ export default function CommercialScreen({
   }, [key, servicesLoading, servicesError, records.services]);
   const createRecord = async event => {
     event.preventDefault();
+    if (["leads", "pipeline", "crm"].includes(key) && pipelineConfigUnavailable) {
+      notify("As etapas do Pipeline ainda não foram carregadas. Tente novamente.");
+      return;
+    }
     if (!draft.title.trim()) return;
     const title = draft.title.trim();
     const id = Date.now();
@@ -835,14 +858,16 @@ export default function CommercialScreen({
       });
       setComposer(false);
       setDraft({
-        ...emptyDraft
+        ...emptyDraft,
+        stage: pipelineConfig.stages[0] || DEFAULT_PIPELINE_STAGES[0]
       });
       notify(`${createLabel.replace(/^(Novo |Adicionar |Criar )/, "")} salvo no workspace.`);
     } catch (error) {
       if (error.code === "duplicate_lead") {
         setComposer(false);
         setDraft({
-          ...emptyDraft
+          ...emptyDraft,
+          stage: pipelineConfig.stages[0] || DEFAULT_PIPELINE_STAGES[0]
         });
         setFilter("Todos");
         setSearch(draft.email.trim() || draft.phone.trim());
@@ -1059,9 +1084,10 @@ export default function CommercialScreen({
       return false;
     }
   };
-  return <main className="commercial-screen"><header className="com-page-heading"><div><div className="com-breadcrumb">FOCUSSHUB <ChevronRight size={13} /> COMERCIAL <ChevronRight size={13} /> {current.tab.toUpperCase()}</div><p className="com-eyebrow">{current.eyebrow}</p><h1>{current.title}</h1><p className="com-description">{current.description}</p></div><button className="com-primary" onClick={() => {
+  return <main className="commercial-screen"><header className="com-page-heading"><div><div className="com-breadcrumb">FOCUSSHUB <ChevronRight size={13} /> COMERCIAL <ChevronRight size={13} /> {current.tab.toUpperCase()}</div><p className="com-eyebrow">{current.eyebrow}</p><h1>{current.title}</h1><p className="com-description">{current.description}</p></div><button className="com-primary" disabled={["leads", "pipeline", "crm"].includes(key) && pipelineConfigUnavailable} onClick={() => {
         setDraft({
-          ...emptyDraft
+          ...emptyDraft,
+          ...(["leads", "pipeline", "crm"].includes(key) ? { stage: pipelineConfig.stages[0] || DEFAULT_PIPELINE_STAGES[0] } : {})
         });
         setProposalServiceSearch("");
         setShowAllProposalServices(false);
@@ -1079,13 +1105,13 @@ export default function CommercialScreen({
         stage
       });
       setComposer(true);
-    }} onSearch={setSearch} search={search} mode={key} period={period} setPeriod={setPeriod} localDemo={localDemo} /> : key === "servicos" ? <ServicesView items={visible} totalItems={records.services?.length || 0} clients={displayRows.clients} onCreateProject={async (project, tasks) => {
+      }} onSearch={setSearch} search={search} mode={key} period={period} setPeriod={setPeriod} localDemo={localDemo} pipelineConfig={pipelineConfig} canManagePipeline={canManagePipeline} onSavePipelineStages={savePipelineStages} pipelineConfigLoading={pipelineConfigUnavailable} pipelineConfigError={pipelineConfigStore.error} onRetryPipelineConfig={pipelineConfigStore.refresh} /> : key === "servicos" ? <ServicesView items={visible} totalItems={records.services?.length || 0} clients={displayRows.clients} onCreateProject={async (project, tasks) => {
       await persistRecords({
         ...records,
         projects: [project, ...(records.projects || [])],
         tasks: [...tasks, ...(records.tasks || [])]
       });
-        }} onAction={notify} onUpdate={updateServiceRecord} onDelete={deleteServiceRecord} onImportCatalog={importCatalog} catalogImporting={catalogSeedState === "loading" || servicesLoading} catalogSeedState={catalogSeedState} search={search} setSearch={setSearch} preferences={preferences} /> : <ListView page={key} items={visible} relatedProjects={records.projects || []} relatedSubscriptions={relatedSubscriptions} relatedContracts={displayRows.contracts} onArchive={archiveClient} openClientId={key === "clientes" ? navigationContext?.clientId : ""} onClientOpened={onNavigationContextConsumed} openLeadId={key === "leads" ? navigationContext?.leadId : ""} leadRecords={displayRows.leads} leadRecordsLoading={recordLoadings.leads} leadRecordsLoadError={recordErrors.leads} onLeadOpened={onNavigationContextConsumed} search={search} setSearch={setSearch} filter={filter} setFilter={setFilter} extraFilterFields={extraFilterFields} extraFilters={extraFilters} setExtraFilters={setExtraFilters} onAction={notify} onAccept={acceptProposal} onSendProposal={sendProposal} localDemo={localDemo} onRefreshRecords={refreshRecords} onUpdate={updateCommercialRecord} onDelete={deleteCommercialRecord} clients={displayRows.clients} companies={displayRows.companies} contacts={displayRows.contacts} services={displayRows.services} tasks={records.tasks || []} totalItems={data.length} preferences={preferences} />}{composer && <div className="com-modal-backdrop" onMouseDown={event => {
+        }} onAction={notify} onUpdate={updateServiceRecord} onDelete={deleteServiceRecord} onImportCatalog={importCatalog} catalogImporting={catalogSeedState === "loading" || servicesLoading} catalogSeedState={catalogSeedState} search={search} setSearch={setSearch} preferences={preferences} /> : <ListView page={key} items={visible} relatedProjects={records.projects || []} relatedSubscriptions={relatedSubscriptions} relatedContracts={displayRows.contracts} onArchive={archiveClient} openClientId={key === "clientes" ? navigationContext?.clientId : ""} onClientOpened={onNavigationContextConsumed} openLeadId={key === "leads" ? navigationContext?.leadId : ""} leadRecords={displayRows.leads} leadRecordsLoading={recordLoadings.leads} leadRecordsLoadError={recordErrors.leads} onLeadOpened={onNavigationContextConsumed} search={search} setSearch={setSearch} filter={filter} setFilter={setFilter} extraFilterFields={extraFilterFields} extraFilters={extraFilters} setExtraFilters={setExtraFilters} onAction={notify} onAccept={acceptProposal} onSendProposal={sendProposal} localDemo={localDemo} onRefreshRecords={refreshRecords} onUpdate={updateCommercialRecord} onDelete={deleteCommercialRecord} clients={displayRows.clients} companies={displayRows.companies} contacts={displayRows.contacts} services={displayRows.services} tasks={records.tasks || []} totalItems={data.length} preferences={preferences} pipelineStages={pipelineConfig.stages} pipelineConfigUnavailable={pipelineConfigUnavailable} />}{composer && <div className="com-modal-backdrop" onMouseDown={event => {
       if (event.target === event.currentTarget) setComposer(false);
     }}><form className="com-create-modal" role="dialog" aria-modal="true" aria-labelledby="commercial-create-title" onSubmit={createRecord}><header><div><small>{current.eyebrow}</small><h2 id="commercial-create-title">{createLabel}</h2></div><button type="button" aria-label="Fechar" onClick={() => setComposer(false)}><X size={15} /></button></header>{key === "clientes" && <label>Tipo de cadastro<select value={draft.clientType} onChange={e => setDraft({
             ...draft,
@@ -1148,7 +1174,7 @@ export default function CommercialScreen({
           })} placeholder="cliente@empresa.com" /></label>}{["leads", "contatos"].includes(key) && <label>Telefone<input value={draft.phone} onChange={e => setDraft({
             ...draft,
             phone: e.target.value
-          })} /></label>}{["leads", "pipeline", "crm"].includes(key) && <Fragment><label>Origem<select value={draft.source} onChange={e => setDraft({
+          })} /></label>}{["leads", "pipeline", "crm"].includes(key) && <label>Etapa<select value={draft.stage || pipelineCreationStages[0]} onChange={event => setDraft(current => ({ ...current, stage: event.target.value }))}>{pipelineCreationStages.map(stage => <option key={stage}>{stage}</option>)}</select></label>}{["leads", "pipeline", "crm"].includes(key) && <Fragment><label>Origem<select value={draft.source} onChange={e => setDraft({
               ...draft,
               source: e.target.value
               })}><option value="">Manual</option><option>Indicação</option><option>Site</option><option>WhatsApp</option><option>E-mail</option><option>Instagram</option><option>Campanha</option><option>Outro</option></select></label><label>Chance de fechamento (%)<input type="number" min="0" max="100" step="1" value={draft.chance ?? 50} onChange={e => setDraft(current => ({ ...current, chance: Number(e.target.value) }))} /></label><label>Próxima ação<input value={draft.nextAction} onChange={e => setDraft({
@@ -1226,12 +1252,13 @@ function StatusControl({
   page,
   statusDraft,
   setStatusDraft,
-  disabled = false
+  disabled = false,
+  pipelineStages = DEFAULT_PIPELINE_STAGES
 }) {
-  const options = page === "leads" ? ["Novo lead", "Contato realizado", "Reunião agendada", "Diagnóstico", "Proposta enviada", "Negociação", "Fechado", "Perdido"] : page === "propostas" ? ["Rascunho", "Enviada", "Visualizada", "Em negociação", "Recusada", "Expirada"] : page === "contratos" ? editableContractStatuses : page === "empresas" ? ["Prospect", "Cliente", "Inativo"] : page === "contatos" ? ["Decisor", "Influenciador", "Contato"] : ["Ativo", "Em atenção", "Inativo"];
+  const options = page === "leads" ? pipelineStages : page === "propostas" ? ["Rascunho", "Enviada", "Visualizada", "Em negociação", "Recusada", "Expirada"] : page === "contratos" ? editableContractStatuses : page === "empresas" ? ["Prospect", "Cliente", "Inativo"] : page === "contatos" ? ["Decisor", "Influenciador", "Contato"] : ["Ativo", "Em atenção", "Inativo"];
   const existingSigningState = page === "contratos" && isLockedContractStatus(statusDraft) && !options.includes(statusDraft);
   const existingApprovedProposalState = page === "propostas" && proposalAcceptanceState(statusDraft) === "accepted";
-  return <label>Status / etapa<select disabled={disabled || existingApprovedProposalState} value={statusDraft} onChange={event => setStatusDraft(event.target.value)}>{existingSigningState && <option value={statusDraft} disabled={true}>{statusDraft} · estado já registrado</option>}{existingApprovedProposalState && <option value={statusDraft} disabled={true}>Aprovada · convertida</option>}{options.map(option => <option>{option}</option>)}</select>{page === "contratos" && <small>Sem provedor de assinatura conectado, o Focusshub não permite marcar um contrato como assinado ou ativo.</small>}{existingApprovedProposalState && <small>A aprovação cria o contrato, o projeto e suas tarefas em conjunto; esse status não pode ser definido manualmente.</small>}</label>;
+  return <label>Status / etapa<select disabled={disabled || existingApprovedProposalState} value={statusDraft} onChange={event => setStatusDraft(event.target.value)}>{page === "leads" && !pipelineStages.includes(statusDraft) && <option value={statusDraft} disabled={true}>{statusDraft} · etapa arquivada</option>}{existingSigningState && <option value={statusDraft} disabled={true}>{statusDraft} · estado já registrado</option>}{existingApprovedProposalState && <option value={statusDraft} disabled={true}>Aprovada · convertida</option>}{options.map(option => <option>{option}</option>)}</select>{page === "contratos" && <small>Sem provedor de assinatura conectado, o Focusshub não permite marcar um contrato como assinado ou ativo.</small>}{existingApprovedProposalState && <small>A aprovação cria o contrato, o projeto e suas tarefas em conjunto; esse status não pode ser definido manualmente.</small>}</label>;
 }
 function Toolbar({
   search,
@@ -2469,7 +2496,8 @@ function ListView({
   leadRecords = [],
   leadRecordsLoading = false,
   leadRecordsLoadError = "",
-  onLeadOpened = () => {}
+  onLeadOpened = () => {},
+  pipelineStages = DEFAULT_PIPELINE_STAGES
 }) {
   const [selectedItem, setSelectedItem] = useState(null);
   const handledLeadNavigation = useRef("");
@@ -2679,7 +2707,7 @@ function ListView({
     propostas: "propostas",
     contratos: "contratos"
   }[page];
-  const filterDefaults = page === "leads" ? ["Novo lead", "Contato realizado", "Reunião agendada", "Diagnóstico", "Proposta enviada", "Negociação", "Fechado", "Perdido", "Site", "Instagram", "Indicação", "Tráfego pago"] : page === "propostas" ? ["Em negociação", "Aprovada", "Rascunho", "Enviada", "Visualizada", "Recusada", "Expirada"] : page === "contratos" ? ["Ativo", "Assinado", "Aguardando assinatura", "Rascunho", "Concluído", "Cancelado"] : page === "clientes" ? ["Ativo", "Em atenção", "Inativo", "Arquivado"] : page === "empresas" ? ["Cliente", "Prospect", "Inativo"] : ["Decisor", "Influenciador", "Contato"];
+  const filterDefaults = page === "leads" ? [...pipelineStages, "Site", "Instagram", "Indicação", "Tráfego pago"] : page === "propostas" ? ["Em negociação", "Aprovada", "Rascunho", "Enviada", "Visualizada", "Recusada", "Expirada"] : page === "contratos" ? ["Ativo", "Assinado", "Aguardando assinatura", "Rascunho", "Concluído", "Cancelado"] : page === "clientes" ? ["Ativo", "Em atenção", "Inativo", "Arquivado"] : page === "empresas" ? ["Cliente", "Prospect", "Inativo"] : ["Decisor", "Influenciador", "Contato"];
   const filters = ["Todos", ...(page === "leads" ? ["Sem pr\u00f3xima a\u00e7\u00e3o"] : []), ...new Set([...filterDefaults, ...items.flatMap(item => page === "leads" ? [item.stage, item.source] : [item.archivedAt && page === "clientes" ? "Arquivado" : item.status])].filter(Boolean))];
   const clientRevenueAmount = client => {
     const linked = relatedSubscriptions.filter(subscription => belongsToClient(subscription, client, subscription.clientName || subscription.client));
@@ -2776,7 +2804,7 @@ function ListView({
           setSearch("");
           setFilter("Todos");
           setExtraFilters({});
-        }} />}</div><div className="com-table-footer"><span>Mostrando <b>{items.length}</b> de <b>{totalItems}</b> {items.length === 1 ? label.replace(/s$/, "") : label} após busca e filtros.</span></div></section>{selectedItem && (page === "leads" ? <LeadRecordModal lead={selectedItem} onClose={() => setSelectedItem(null)} onSave={async patch => {
+        }} />}</div><div className="com-table-footer"><span>Mostrando <b>{items.length}</b> de <b>{totalItems}</b> {items.length === 1 ? label.replace(/s$/, "") : label} após busca e filtros.</span></div></section>{selectedItem && (page === "leads" ? <LeadRecordModal pipelineStages={pipelineStages} lead={selectedItem} onClose={() => setSelectedItem(null)} onSave={async patch => {
       const saved = await onUpdate?.(selectedItem, patch);
       if (saved !== false) setSelectedItem(null);
     }} onDelete={async () => {
@@ -2831,13 +2859,14 @@ function ListView({
           }}><Send size={14} />{sendingProposal ? "Enviando..." : localDemo ? "Envio externo desativado na demonstração" : selectedItem.emailDelivery?.status === "sent" ? "Enviar novamente" : "Enviar proposta"}</button></div>}{page === "contratos" && <div className="com-contract-document"><strong>Documento base para assinatura</strong><p>Revise e complete o texto antes do envio. Campos entre colchetes bloqueiam a assinatura. O contrato só será enviado quando você clicar no botão. Alterar os dados acima não reescreve este documento; revise o texto antes da assinatura.</p><textarea rows={16} value={contractDocDraft} onChange={event => setContractDocDraft(event.target.value)} disabled={recordSaving || Boolean(selectedItem.clicksign?.envelopeId) || isLockedContractStatus(selectedItem.status)} aria-label="Texto integral do contrato" /><button type="button" className="com-secondary" onClick={() => downloadContract({
             ...selectedItem,
             documentText: contractDocDraft
-          })}><Download size={14} />Baixar modelo HTML para revisao</button>{selectedItem.clicksign?.envelopeId ? <div className="com-proposal-email"><b>Clicksign · {selectedItem.clicksign.status || "running"}</b><small>Signatario: {selectedItem.clicksign.signerEmail || signerEmail} · notificação: {selectedItem.clicksign.notificationStatus || "pendente"}</small><div className="com-toolbar-actions"><button type="button" className="com-secondary" disabled={syncingContract || recordDirty} onClick={syncContract}><RefreshCw size={14} />{syncingContract ? "Sincronizando..." : "Sincronizar status"}</button>{selectedItem.clicksign.notificationStatus !== "sent" && <button type="button" className="com-secondary" disabled={recordDirty} onClick={notifyContractSigner}><Send size={14} />Reenviar notificacao</button>}</div></div> : selectedItem.clicksign ? <div className="com-proposal-detail"><b>Envio interrompido</b><p>A solicitacao foi interrompida antes da confirmacao do ID do envelope. Consulte a conta Clicksign pelo codigo deste contrato antes de tentar novamente; o Focusshub bloqueia um segundo envio automatico para evitar duplicidade.</p></div> : <div className="com-proposal-email"><label>Nome completo do signatario<input required={true} value={signerName} onChange={event => setSignerName(event.target.value)} placeholder="Nome Sobrenome" /></label><label>E-mail do signatario<input required={true} type="email" value={signerEmail} onChange={event => setSignerEmail(event.target.value)} placeholder="cliente@empresa.com" /></label><button type="button" className="com-primary" disabled={recordSaving || sendingContract || !signerName.trim() || !signerEmail.trim() || contractDocDraft.length < 100 || localDemo || recordDirty || isLockedContractStatus(selectedItem.status)} onClick={sendContract}><Send size={14} />{sendingContract ? "Preparando envelope..." : localDemo ? "Assinatura externa desativada na demonstração" : "Enviar para assinatura Clicksign"}</button></div>}</div>}{page !== "servicos" && <StatusControl page={page} statusDraft={statusDraft} setStatusDraft={setStatusDraft} disabled={recordSaving || (page === "propostas" && selectedItem.status === "Aprovada") || (page === "contratos" && isLockedContractStatus(selectedItem.status))} />}<footer><button type="button" className="com-secondary com-delete-action" onClick={deleteSelectedRecord} disabled={recordSaving}>Excluir</button><span />{page === "propostas" && !["Aprovada", "Recusada", "Expirada"].includes(selectedItem.status) && <button type="button" className="com-secondary" disabled={recordDirty} onClick={async () => {
+          })}><Download size={14} />Baixar modelo HTML para revisao</button>{selectedItem.clicksign?.envelopeId ? <div className="com-proposal-email"><b>Clicksign · {selectedItem.clicksign.status || "running"}</b><small>Signatario: {selectedItem.clicksign.signerEmail || signerEmail} · notificação: {selectedItem.clicksign.notificationStatus || "pendente"}</small><div className="com-toolbar-actions"><button type="button" className="com-secondary" disabled={syncingContract || recordDirty} onClick={syncContract}><RefreshCw size={14} />{syncingContract ? "Sincronizando..." : "Sincronizar status"}</button>{selectedItem.clicksign.notificationStatus !== "sent" && <button type="button" className="com-secondary" disabled={recordDirty} onClick={notifyContractSigner}><Send size={14} />Reenviar notificacao</button>}</div></div> : selectedItem.clicksign ? <div className="com-proposal-detail"><b>Envio interrompido</b><p>A solicitacao foi interrompida antes da confirmacao do ID do envelope. Consulte a conta Clicksign pelo codigo deste contrato antes de tentar novamente; o Focusshub bloqueia um segundo envio automatico para evitar duplicidade.</p></div> : <div className="com-proposal-email"><label>Nome completo do signatario<input required={true} value={signerName} onChange={event => setSignerName(event.target.value)} placeholder="Nome Sobrenome" /></label><label>E-mail do signatario<input required={true} type="email" value={signerEmail} onChange={event => setSignerEmail(event.target.value)} placeholder="cliente@empresa.com" /></label><button type="button" className="com-primary" disabled={recordSaving || sendingContract || !signerName.trim() || !signerEmail.trim() || contractDocDraft.length < 100 || localDemo || recordDirty || isLockedContractStatus(selectedItem.status)} onClick={sendContract}><Send size={14} />{sendingContract ? "Preparando envelope..." : localDemo ? "Assinatura externa desativada na demonstração" : "Enviar para assinatura Clicksign"}</button></div>}</div>}{page !== "servicos" && <StatusControl pipelineStages={pipelineStages} page={page} statusDraft={statusDraft} setStatusDraft={setStatusDraft} disabled={recordSaving || (page === "propostas" && selectedItem.status === "Aprovada") || (page === "contratos" && isLockedContractStatus(selectedItem.status))} />}<footer><button type="button" className="com-secondary com-delete-action" onClick={deleteSelectedRecord} disabled={recordSaving}>Excluir</button><span />{page === "propostas" && !["Aprovada", "Recusada", "Expirada"].includes(selectedItem.status) && <button type="button" className="com-secondary" disabled={recordDirty} onClick={async () => {
             const accepted = await onAccept?.(selectedItem);
             if (accepted) setSelectedItem(null);
           }}>Aceitar e iniciar</button>}<button type="button" className="com-primary" onClick={saveRecordChanges} disabled={recordSaving || !recordDirty}>{recordSaving ? "Salvando..." : "Salvar alteração"}</button></footer></section></div>)}</Fragment>;
 }
 function LeadRecordModal({
   lead,
+  pipelineStages = DEFAULT_PIPELINE_STAGES,
   tasks = [],
   onClose,
   onSave,
@@ -2915,7 +2944,7 @@ function LeadRecordModal({
   };
   return <div className="com-modal-backdrop" onMouseDown={event => {
     if (event.target === event.currentTarget && !saving) onClose();
-  }}><form className="com-create-modal com-lead-record-modal" role="dialog" aria-modal="true" aria-labelledby="lead-record-title" onSubmit={save}><header><div><small>LEAD · EDIÇÃO</small><h2 id="lead-record-title">Editar lead</h2></div><button type="button" aria-label="Fechar" onClick={onClose} disabled={saving}><X size={15} /></button></header><div className="com-lead-edit-fields"><label>Nome<input required={true} maxLength={160} value={draft.name} onChange={event => update("name", event.target.value)} /></label><label>Cliente / empresa<input maxLength={200} value={draft.company} onChange={event => update("company", event.target.value)} /></label><label>E-mail<input type="email" maxLength={254} value={draft.email} onChange={event => update("email", event.target.value)} /></label><label>Telefone<input type="tel" maxLength={40} value={draft.phone} onChange={event => update("phone", event.target.value)} /></label><label>Origem<select value={draft.source} onChange={event => update("source", event.target.value)}>{["Manual", "Indicação", "Site", "WhatsApp", "E-mail", "Instagram", "Campanha", "Outro"].map(value => <option key={value}>{value}</option>)}</select></label><label>Etapa<select value={draft.stage} onChange={event => update("stage", event.target.value)}>{["Novo lead", "Contato realizado", "Reunião agendada", "Diagnóstico", "Proposta enviada", "Negociação", "Fechado", "Perdido"].map(value => <option key={value}>{value}</option>)}</select></label><label>Serviço / oportunidade<input maxLength={240} value={draft.service} onChange={event => update("service", event.target.value)} /></label><label>Valor estimado<input inputMode="decimal" maxLength={32} value={draft.amount} onChange={event => update("amount", event.target.value)} placeholder="Ex.: 2500,00" /></label><label>Chance de fechamento (%)<input type="number" min="0" max="100" step="1" value={draft.chance} onChange={event => update("chance", Number(event.target.value))} /></label><label>Responsável<input maxLength={160} value={draft.owner} onChange={event => update("owner", event.target.value)} /></label><label>Fechamento previsto<input type="date" value={draft.closeDate} onChange={event => update("closeDate", event.target.value)} /></label><label className="wide">Próxima ação<input maxLength={240} value={draft.nextAction} onChange={event => update("nextAction", event.target.value)} /></label>{canSchedule && <><label className="wide">Prazo da tarefa<input type="date" min={dateAfterDays(0)} value={followUpDue} onChange={event => setFollowUpDue(event.target.value)} /></label><p className="com-muted wide" role="status">{existingFollowUp ? "Uma tarefa aberta ja esta vinculada a este lead; ela sera atualizada." : "A acao sera adicionada a lista Tarefas e vinculada a este lead."}</p></> }<label className="wide">Observações<textarea rows={3} maxLength={5e3} value={draft.notes} onChange={event => update("notes", event.target.value)} /></label></div><footer><button type="button" className="com-secondary" onClick={onClose} disabled={saving}>Cancelar</button><button type="button" className="com-secondary com-delete-action" onClick={onDelete} disabled={saving}>Excluir</button><span />{canSchedule && <button type="button" className="com-secondary" onClick={saveAndSchedule} disabled={saving || !followUpDue}>{saving ? "Agendando..." : existingFollowUp ? "Salvar e atualizar tarefa" : "Salvar e agendar tarefa"}</button>}<button type="submit" className="com-primary" disabled={saving}>{saving ? "Salvando..." : "Salvar alterações"}</button></footer></form></div>;
+  }}><form className="com-create-modal com-lead-record-modal" role="dialog" aria-modal="true" aria-labelledby="lead-record-title" onSubmit={save}><header><div><small>LEAD · EDIÇÃO</small><h2 id="lead-record-title">Editar lead</h2></div><button type="button" aria-label="Fechar" onClick={onClose} disabled={saving}><X size={15} /></button></header><div className="com-lead-edit-fields"><label>Nome<input required={true} maxLength={160} value={draft.name} onChange={event => update("name", event.target.value)} /></label><label>Cliente / empresa<input maxLength={200} value={draft.company} onChange={event => update("company", event.target.value)} /></label><label>E-mail<input type="email" maxLength={254} value={draft.email} onChange={event => update("email", event.target.value)} /></label><label>Telefone<input type="tel" maxLength={40} value={draft.phone} onChange={event => update("phone", event.target.value)} /></label><label>Origem<select value={draft.source} onChange={event => update("source", event.target.value)}>{["Manual", "Indicação", "Site", "WhatsApp", "E-mail", "Instagram", "Campanha", "Outro"].map(value => <option key={value}>{value}</option>)}</select></label><label>Etapa<select value={draft.stage} onChange={event => update("stage", event.target.value)}>{!pipelineStages.includes(draft.stage) && <option value={draft.stage} disabled>{draft.stage} · etapa arquivada</option>}{pipelineStages.map(value => <option key={value}>{value}</option>)}</select></label><label>Serviço / oportunidade<input maxLength={240} value={draft.service} onChange={event => update("service", event.target.value)} /></label><label>Valor estimado<input inputMode="decimal" maxLength={32} value={draft.amount} onChange={event => update("amount", event.target.value)} placeholder="Ex.: 2500,00" /></label><label>Chance de fechamento (%)<input type="number" min="0" max="100" step="1" value={draft.chance} onChange={event => update("chance", Number(event.target.value))} /></label><label>Responsável<input maxLength={160} value={draft.owner} onChange={event => update("owner", event.target.value)} /></label><label>Fechamento previsto<input type="date" value={draft.closeDate} onChange={event => update("closeDate", event.target.value)} /></label><label className="wide">Próxima ação<input maxLength={240} value={draft.nextAction} onChange={event => update("nextAction", event.target.value)} /></label>{canSchedule && <><label className="wide">Prazo da tarefa<input type="date" min={dateAfterDays(0)} value={followUpDue} onChange={event => setFollowUpDue(event.target.value)} /></label><p className="com-muted wide" role="status">{existingFollowUp ? "Uma tarefa aberta ja esta vinculada a este lead; ela sera atualizada." : "A acao sera adicionada a lista Tarefas e vinculada a este lead."}</p></> }<label className="wide">Observações<textarea rows={3} maxLength={5e3} value={draft.notes} onChange={event => update("notes", event.target.value)} /></label></div><footer><button type="button" className="com-secondary" onClick={onClose} disabled={saving}>Cancelar</button><button type="button" className="com-secondary com-delete-action" onClick={onDelete} disabled={saving}>Excluir</button><span />{canSchedule && <button type="button" className="com-secondary" onClick={saveAndSchedule} disabled={saving || !followUpDue}>{saving ? "Agendando..." : existingFollowUp ? "Salvar e atualizar tarefa" : "Salvar e agendar tarefa"}</button>}<button type="submit" className="com-primary" disabled={saving}>{saving ? "Salvando..." : "Salvar alterações"}</button></footer></form></div>;
 }
 function Identity({
   name,
@@ -2958,7 +2987,13 @@ function PipelineView({
   mode,
   period,
   setPeriod,
-  localDemo = false
+  localDemo = false,
+  pipelineConfig = { stages: [...DEFAULT_PIPELINE_STAGES], inactiveStages: [] },
+  canManagePipeline = false,
+  onSavePipelineStages,
+  pipelineConfigLoading = false,
+  pipelineConfigError = "",
+  onRetryPipelineConfig = () => {}
 }) {
   const periodItems = filterLeadsByPeriod(items, period);
   const openItems = periodItems.filter(item => !["Fechado", "Perdido"].includes(item.stage));
@@ -2968,6 +3003,38 @@ function PipelineView({
   const [dropStage, setDropStage] = useState("");
   const [dealDraft, setDealDraft] = useState({});
   const [savingDeal, setSavingDeal] = useState(false);
+  const [showStageEditor, setShowStageEditor] = useState(false);
+  const [stageDraft, setStageDraft] = useState(pipelineConfig);
+  const [newStageName, setNewStageName] = useState("");
+  const [savingStages, setSavingStages] = useState(false);
+  const [stageSaveError, setStageSaveError] = useState("");
+  useEffect(() => { if (!showStageEditor) setStageDraft(pipelineConfig); }, [pipelineConfig, showStageEditor]);
+  const activeStages = pipelineConfig.stages;
+  const stagesFull = pipelineColumnsForRecords(pipelineConfig, periodItems);
+  const normalizeStageKey = value => String(value).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("pt-BR");
+  const terminalStage = value => ["Fechado", "Perdido"].includes(value);
+  const stageColors = ["blue", "purple", "amber", "blue", "green", "amber", "green", "red"];
+  const addStage = () => {
+    const name = newStageName.trim();
+    if (stageDraft.stages.length >= 12) { setStageSaveError("O Pipeline aceita até 12 etapas ativas."); return; }
+    if (name.length < 2 || name.length > 48 || /[<>\u0000-\u001f]/.test(name)) { setStageSaveError("Use um nome de etapa entre 2 e 48 caracteres, sem marcação HTML."); return; }
+    if ([...stageDraft.stages, ...stageDraft.inactiveStages].some(stage => normalizeStageKey(stage) === normalizeStageKey(name))) { setStageSaveError("Já existe uma etapa com esse nome."); return; }
+    setStageDraft(current => ({ ...current, stages: [...current.stages.slice(0, -2), name, ...current.stages.slice(-2)] }));
+    setNewStageName("");
+    setStageSaveError("");
+  };
+  const saveStages = async event => {
+    event.preventDefault();
+    if (savingStages || !canManagePipeline) return;
+    setSavingStages(true);
+    setStageSaveError("");
+    try {
+      const saved = await onSavePipelineStages?.(stageDraft);
+      if (saved) setShowStageEditor(false);
+      else setStageSaveError("Não foi possível salvar a configuração. Atualize e tente novamente.");
+    } catch (error) { setStageSaveError(error.message || "Não foi possível salvar as etapas."); }
+    finally { setSavingStages(false); }
+  };
   const openDeal = item => {
     setSelectedDeal(item);
     setDealDraft({
@@ -2993,28 +3060,26 @@ function PipelineView({
       setSavingDeal(false);
     }
   };
-  const stagesFull = ["Novo lead", "Contato realizado", "Reunião agendada", "Diagnóstico", "Proposta enviada", "Negociação", "Fechado", "Perdido"];
-  const stageColors = ["blue", "purple", "amber", "blue", "green", "amber", "green", "red"];
-  return <Fragment><div className="com-metrics"><Metric label="Oportunidades abertas" value={String(openItems.length)} detail="em acompanhamento" icon={Users} tone="blue" /><Metric label="Valor total" value={brl.format(openPipelineValue)} detail="valor potencial em aberto" icon={CircleDollarSign} tone="green" /><Metric label="Ticket médio" value={brl.format(openPipelineValue / Math.max(openItems.length, 1))} detail="por oportunidade" icon={Wallet} tone="purple" /><Metric label="Conversão" value={`${Math.round(periodItems.filter(item => item.stage === "Fechado").length / Math.max(periodItems.length, 1) * 100)}%`} detail="negócios ganhos" icon={ArrowUpRight} tone="amber" /></div><section className="com-pipeline-panel"><div className="com-panel-heading"><div><h2>{mode === "crm" ? "Resumo do pipeline" : "Oportunidades por etapa"}</h2><p>Visão do avanço comercial <span>·</span> <span className="com-live"><i /> {localDemo ? "demonstração local · alterações salvas neste navegador" : "sincronizado no workspace"}</span></p></div><div className="com-pipeline-actions"><label className="com-search"><Search size={16} /><input value={search} onChange={event => onSearch(event.target.value)} placeholder="Buscar oportunidade..." aria-label="Buscar oportunidade" /></label><label className="com-period-filter"><CalendarDays size={15} /><select aria-label="Filtrar oportunidades por periodo" value={period} onChange={event => setPeriod(event.target.value)}><option value="all">Todos os periodos</option><option value="last7">Ultimos 7 dias</option><option value="last30">Ultimos 30 dias</option><option value="last90">Ultimos 90 dias</option><option value="undated">Sem data</option></select></label><button className="com-primary compact" onClick={() => onCreateLead?.("Novo lead")}><Plus size={16} /> Oportunidade</button></div></div><div className="com-stage-grid com-stage-grid-full">{stagesFull.map((stageName, index) => {
+  return <Fragment><div className="com-metrics"><Metric label="Oportunidades abertas" value={String(openItems.length)} detail="em acompanhamento" icon={Users} tone="blue" /><Metric label="Valor total" value={brl.format(openPipelineValue)} detail="valor potencial em aberto" icon={CircleDollarSign} tone="green" /><Metric label="Ticket médio" value={brl.format(openPipelineValue / Math.max(openItems.length, 1))} detail="por oportunidade" icon={Wallet} tone="purple" /><Metric label="Conversão" value={`${Math.round(periodItems.filter(item => item.stage === "Fechado").length / Math.max(periodItems.length, 1) * 100)}%`} detail="negócios ganhos" icon={ArrowUpRight} tone="amber" /></div><section className="com-pipeline-panel"><div className="com-panel-heading"><div><h2>{mode === "crm" ? "Resumo do pipeline" : "Oportunidades por etapa"}</h2><p>Visão do avanço comercial <span>·</span> <span className="com-live"><i /> {localDemo ? "demonstração local · alterações salvas neste navegador" : "sincronizado no workspace"}</span></p></div><div className="com-pipeline-actions"><label className="com-search"><Search size={16} /><input value={search} onChange={event => onSearch(event.target.value)} placeholder="Buscar oportunidade..." aria-label="Buscar oportunidade" /></label><label className="com-period-filter"><CalendarDays size={15} /><select aria-label="Filtrar oportunidades por periodo" value={period} onChange={event => setPeriod(event.target.value)}><option value="all">Todos os periodos</option><option value="last7">Ultimos 7 dias</option><option value="last30">Ultimos 30 dias</option><option value="last90">Ultimos 90 dias</option><option value="undated">Sem data</option></select></label>{canManagePipeline && <button className="com-secondary" disabled={pipelineConfigLoading} onClick={() => { setStageDraft(pipelineConfig); setStageSaveError(""); setShowStageEditor(true); }}><SlidersHorizontal size={15} /> Etapas</button>}<button className="com-primary compact" disabled={pipelineConfigLoading || Boolean(pipelineConfigError)} onClick={() => onCreateLead?.(activeStages[0] || "Novo lead")}><Plus size={16} /> Oportunidade</button></div></div>{(pipelineConfigLoading || pipelineConfigError) && <div className="com-load-error" role={pipelineConfigError ? "alert" : "status"}><span>{pipelineConfigError ? `Não foi possível carregar as etapas do Pipeline: ${pipelineConfigError}` : "Carregando as etapas do Pipeline…"}</span>{pipelineConfigError && <button type="button" className="com-secondary" onClick={onRetryPipelineConfig}>Tentar novamente</button>}</div>}<div className="com-stage-grid com-stage-grid-full">{stagesFull.map((stageName, index) => {
           const stageItems = periodItems.filter(item => (item.stage || "Novo lead") === stageName && (!search.trim() || `${item.name} ${item.company} ${item.service}`.toLocaleLowerCase("pt-BR").includes(search.trim().toLocaleLowerCase("pt-BR"))));
           const sum = stageItems.reduce((amount, item) => amount + parseDisplayAmount(item.value), 0);
           return <section key={stageName} className={`com-stage ${dropStage === stageName ? "is-drop-target" : ""}`} onDragOver={event => {
-            if (draggingId) {
+            if (draggingId && activeStages.includes(stageName)) {
               event.preventDefault();
               event.dataTransfer.dropEffect = "move";
             }
           }} onDragEnter={() => {
-            if (draggingId) setDropStage(stageName);
+            if (draggingId && activeStages.includes(stageName)) setDropStage(stageName);
           }} onDragLeave={event => {
             if (!event.currentTarget.contains(event.relatedTarget)) setDropStage("");
           }} onDrop={event => {
             event.preventDefault();
             const leadId = event.dataTransfer.getData("text/plain");
             const lead = periodItems.find(candidate => String(candidate.id) === leadId);
-            if (lead && lead.stage !== stageName) onMove?.(lead, stageName);
+            if (lead && activeStages.includes(stageName) && lead.stage !== stageName) onMove?.(lead, stageName);
             setDraggingId("");
             setDropStage("");
-          }}><div className="com-stage-heading"><span className={`com-stage-dot ${stageColors[index]}`} /><b>{stageName}</b><span className="com-stage-count">{stageItems.length}</span>{index < 6 && <button aria-label={`Adicionar oportunidade em ${stageName}`} onClick={() => onCreateLead?.(stageName)}><Plus size={17} /></button>}</div><small className="com-stage-total">{sum ? brl.format(sum) : "Sem valor previsto"}</small>{stageItems.map(item => <article key={item.id} className={`com-deal-card ${draggingId === String(item.id) ? "is-dragging" : ""}`} draggable={Boolean(item.id)} onDragStart={event => {
+          }}><div className="com-stage-heading"><span className={`com-stage-dot ${stageColors[index % stageColors.length] || "blue"}`} /><b>{stageName}</b><span className="com-stage-count">{stageItems.length}</span>{activeStages.includes(stageName) && !terminalStage(stageName) && <button aria-label={`Adicionar oportunidade em ${stageName}`} disabled={pipelineConfigLoading || Boolean(pipelineConfigError)} onClick={() => onCreateLead?.(stageName)}><Plus size={17} /></button>}</div><small className="com-stage-total">{sum ? brl.format(sum) : "Sem valor previsto"}</small>{stageItems.map(item => <article key={item.id} className={`com-deal-card ${draggingId === String(item.id) ? "is-dragging" : ""}`} draggable={Boolean(item.id)} onDragStart={event => {
               if (!item.id) {
                 event.preventDefault();
                 return;
@@ -3025,15 +3090,15 @@ function PipelineView({
             }} onDragEnd={() => {
               setDraggingId("");
               setDropStage("");
-            }}><div className="com-deal-top"><Avatar initials={item.initials} tone={item.tone} small={true} /><button aria-label={`Ver oportunidade ${item.name}`} onClick={() => openDeal(item)}><MoreHorizontal size={16} /></button></div><b>{item.name}</b><small>{item.company}</small><div className="com-deal-service">{item.service}</div><div className="com-deal-bottom"><strong>{formatLeadAmount(item.value)}</strong><span>{item.date}</span></div><div className="com-deal-actions"><button className="com-deal-open" aria-label={`Abrir ficha de ${item.name}`} title={`Abrir ficha de ${item.name}`} onClick={() => openDeal(item)}>Abrir ficha <ArrowRight size={14} /></button>{index < 6 && <button className="com-deal-open com-deal-advance" aria-label={`Avançar ${item.name} para ${stagesFull[index + 1]}`} title={`Avançar para ${stagesFull[index + 1]}`} onClick={() => onMove?.(item, stagesFull[index + 1])}>Avançar <ArrowRight size={14} /></button>}</div></article>)}{!stageItems.length && <p className="com-stage-empty">Nenhuma oportunidade</p>}</section>;
+            }}><div className="com-deal-top"><Avatar initials={item.initials} tone={item.tone} small={true} /><button aria-label={`Ver oportunidade ${item.name}`} onClick={() => openDeal(item)}><MoreHorizontal size={16} /></button></div><b>{item.name}</b><small>{item.company}</small><div className="com-deal-service">{item.service}</div><div className="com-deal-bottom"><strong>{formatLeadAmount(item.value)}</strong><span>{item.date}</span></div><div className="com-deal-actions"><button className="com-deal-open" aria-label={`Abrir ficha de ${item.name}`} title={`Abrir ficha de ${item.name}`} onClick={() => openDeal(item)}>Abrir ficha <ArrowRight size={14} /></button>{activeStages.includes(stageName) && !terminalStage(stageName) && stagesFull[index + 1] && <button className="com-deal-open com-deal-advance" aria-label={`Avançar ${item.name} para ${stagesFull[index + 1]}`} title={`Avançar para ${stagesFull[index + 1]}`} onClick={() => onMove?.(item, stagesFull[index + 1])}>Avançar <ArrowRight size={14} /></button>}</div></article>)}{!stageItems.length && <p className="com-stage-empty">Nenhuma oportunidade</p>}</section>;
         })}</div></section><section className="com-insight"><span><Sparkles size={17} /></span><p><b>Pipeline da agência</b> As etapas, oportunidades e valores são atualizados conforme os registros salvos.</p><button onClick={() => window.dispatchEvent(new CustomEvent("nexo:navigate", {
         detail: "CRM"
-      }))}>Abrir visão geral <ArrowRight size={14} /></button></section>{selectedDeal && <div className="com-modal-backdrop" role="presentation" onMouseDown={event => {
+      }))}>Abrir visão geral <ArrowRight size={14} /></button></section>{showStageEditor && <div className="com-modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !savingStages) setShowStageEditor(false); }}><form className="com-create-modal com-pipeline-stage-editor" role="dialog" aria-modal="true" aria-labelledby="pipeline-stages-title" onSubmit={saveStages}><header><div><small>CRM · CONFIGURAÇÃO DO WORKSPACE</small><h2 id="pipeline-stages-title">Etapas do Pipeline</h2><p>Etapas desativadas continuam visíveis quando possuem oportunidades.</p></div><button type="button" aria-label="Fechar" disabled={savingStages} onClick={() => setShowStageEditor(false)}><X size={15} /></button></header><div className="com-stage-config-list"><b>Etapas ativas · {stageDraft.stages.length}/12</b>{stageDraft.stages.map((stage, index) => <div className="com-stage-config-row" key={stage}><span className={`com-stage-dot ${stageColors[index % stageColors.length]}`} /><b>{stage}</b>{terminalStage(stage) ? <small>Etapa terminal</small> : <><button type="button" className="com-icon-action" aria-label={`Mover ${stage} para cima`} disabled={index === 0 || savingStages} onClick={() => setStageDraft(current => { const next = [...current.stages]; [next[index - 1], next[index]] = [next[index], next[index - 1]]; return { ...current, stages: next }; })}><ArrowDown size={14} style={{ transform: "rotate(180deg)" }} /></button><button type="button" className="com-icon-action" aria-label={`Desativar ${stage}`} disabled={stageDraft.stages.length <= 3 || savingStages} onClick={() => setStageDraft(current => ({ stages: current.stages.filter(value => value !== stage), inactiveStages: [...current.inactiveStages, stage] }))}><X size={14} /></button></>}</div>)}</div>{stageDraft.inactiveStages.length > 0 && <div className="com-stage-config-list"><b>Desativadas · histórico preservado</b>{stageDraft.inactiveStages.map(stage => <div className="com-stage-config-row" key={stage}><span className="com-stage-dot purple" /><b>{stage}</b><small>Leads permanecem no histórico</small><button type="button" className="com-secondary" disabled={stageDraft.stages.length >= 12 || savingStages} onClick={() => setStageDraft(current => ({ stages: [...current.stages.slice(0, -2), stage, ...current.stages.slice(-2)], inactiveStages: current.inactiveStages.filter(value => value !== stage) }))}>Reativar</button></div>)}</div>}<div className="com-stage-config-add"><label>Nova etapa<input maxLength={48} value={newStageName} onChange={event => setNewStageName(event.target.value)} placeholder="Ex.: Aguardando aprovação" /></label><button type="button" className="com-secondary" disabled={stageDraft.stages.length >= 12 || savingStages} onClick={addStage}><Plus size={14} /> Adicionar</button></div>{stageSaveError && <p className="com-stage-config-error" role="alert">{stageSaveError}</p>}<footer><button type="button" className="com-secondary" disabled={savingStages} onClick={() => setShowStageEditor(false)}>Cancelar</button><button type="submit" className="com-primary" disabled={savingStages}>{savingStages ? "Salvando…" : "Salvar etapas"}</button></footer></form></div>}{selectedDeal && <div className="com-modal-backdrop" role="presentation" onMouseDown={event => {
       if (event.target === event.currentTarget && !savingDeal) setSelectedDeal(null);
     }}><form className="com-create-modal com-deal-modal" onSubmit={saveDeal}><header><div><small>OPORTUNIDADE · {selectedDeal.company}</small><h2>{selectedDeal.name}</h2></div><button type="button" aria-label="Fechar" onClick={() => setSelectedDeal(null)}><X size={15} /></button></header><div className="com-deal-edit-fields"><label>Etapa<select value={dealDraft.stage} onChange={event => setDealDraft({
               ...dealDraft,
               stage: event.target.value
-            })}>{stagesFull.map(stage => <option key={stage}>{stage}</option>)}</select></label><label>Valor estimado<input value={dealDraft.value} onChange={event => setDealDraft({
+            })}>{!activeStages.includes(dealDraft.stage) && <option value={dealDraft.stage} disabled>{dealDraft.stage} · etapa arquivada</option>}{activeStages.map(stage => <option key={stage}>{stage}</option>)}</select></label><label>Valor estimado<input value={dealDraft.value} onChange={event => setDealDraft({
               ...dealDraft,
               value: event.target.value
             })} /></label><label>Chance de fechamento (%)<input type="number" min="0" max="100" value={dealDraft.chance} onChange={event => setDealDraft({

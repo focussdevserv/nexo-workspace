@@ -13,7 +13,7 @@ export function canChangeProjectArchiveState(role: WorkspaceRole, currentStatus:
 
 function moduleForPath(path: string): PermissionModule | null {
   const resource = path.match(/^\/api\/workspace\/([a-z-]+)(?:\/|$)/)?.[1];
-  if (resource && ['clients', 'leads', 'companies', 'contacts', 'proposals', 'services', 'contracts'].includes(resource)) return 'crm';
+  if (resource && ['clients', 'leads', 'companies', 'contacts', 'proposals', 'services', 'contracts', 'pipeline-stages'].includes(resource)) return 'crm';
   if (resource && ['projects', 'tasks', 'events', 'hours', 'team'].includes(resource)) return 'delivery';
   if (resource && ['tickets', 'inbox', 'approvals', 'files', 'assignees'].includes(resource)) return 'support';
   if (resource && ['revenues', 'expenses', 'finance-accounts', 'finance-transactions', 'finance-transfers'].includes(resource)) return 'finance';

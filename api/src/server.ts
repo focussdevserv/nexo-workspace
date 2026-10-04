@@ -22,6 +22,7 @@ import { activityEvents, billingOrders, billingOverdueEvents, billingSubscriptio
 import { isSafeWorkspaceData } from './security/workspace-data.js';
 import { buildWorkspaceBackup, parseWorkspaceBackup } from './workspace-backup.js';
 import { findDuplicateLead, findLeadDuplicateMatch } from './crm/lead-identity.js';
+import { pipelineStageConfigAllows, validatePipelineStageConfig } from './crm/pipeline-stages.js';
 import { buildClientFromLead, mergeLeadServiceIntoClient } from './crm/lead-conversion.js';
 import { teamAccessStatus } from './team/account-status.js';
 import { detachCatalogServiceReference } from './crm/service-reference.js';
@@ -195,7 +196,7 @@ const workspaceResource = z.enum([
   'leads', 'clients', 'companies', 'contacts', 'proposals', 'services', 'contracts',
   'projects', 'tasks', 'events', 'approvals', 'files', 'hours', 'inbox',
   'tickets', 'site-assets', 'monitors', 'expenses', 'revenues', 'finance-accounts', 'finance-transactions',
-  'goals', 'team', 'repositories', 'automations', 'settings',
+  'goals', 'team', 'repositories', 'automations', 'settings', 'pipeline-stages',
 ]);
 const workspaceDataSchema = z.record(z.string().trim().min(1).max(100), z.unknown()).refine(isSafeWorkspaceData,
   'O registro contém uma chave privada/insegura, é profundo demais ou excede o limite permitido.');
@@ -4266,6 +4267,10 @@ app.post('/api/workspace/:resource', { preHandler: app.authenticate }, async (re
   const body = parseBody(z.object({ data: workspaceDataSchema }), request.body, reply);
   if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Recurso inválido.' });
   if (!body) return;
+  if (params.data.resource === 'pipeline-stages') {
+    const issue = validatePipelineStageConfig(body.data);
+    if (issue) return reply.code(400).send({ error: 'pipeline_stages_invalid', message: issue });
+  }
   const monitorAssetId = params.success && params.data.resource === 'monitors'
     ? z.string().uuid().safeParse(body.data.siteAssetId)
     : null;
@@ -4325,6 +4330,14 @@ app.post('/api/workspace/:resource', { preHandler: app.authenticate }, async (re
   if (params.data.resource === 'proposals' && proposalAcceptanceDisposition(body.data.status) === 'return_existing') return reply.code(409).send({ error: 'proposal_acceptance_required', message: 'Use a aprovacao para criar contrato, projeto e tarefas de forma atomica.' });
   if (params.data.resource === 'contracts' && requiresExternalSignature(body.data.status)) return reply.code(409).send({ error: 'contract_signature_required', message: 'Contrato so muda para Aguardando assinatura, Assinado ou Ativo apos confirmacao do provedor.' });
   const outcome = await db.transaction(async (tx) => {
+    if (params.data.resource === 'pipeline-stages') {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${request.user.organizationId}), hashtext('pipeline-stages-config'))`);
+      const [existingConfig] = await tx.select({ id: workspaceRecords.id }).from(workspaceRecords).where(and(
+        eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'pipeline-stages'),
+        isNull(workspaceRecords.archivedAt), sql`${workspaceRecords.data}->>'key' = 'pipeline-stages'`,
+      )).limit(1);
+      if (existingConfig) return { created: [], pipelineStagesAlreadyConfigured: true as const };
+    }
     if (financeEntryKey && financeEntryRequestHash) {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`${request.user.organizationId}:${params.data.resource}:finance-entry:${financeEntryKey}`}, 0))`);
       const [existingEntry] = await tx.select().from(workspaceRecords).where(and(
@@ -4374,6 +4387,12 @@ app.post('/api/workspace/:resource', { preHandler: app.authenticate }, async (re
       if (!recordMatchesWorkspaceScope('clients', linkedClient.id, linkedClient.data, recordScope)) return { created: [], projectClientScopeDenied: true as const };
     }
     if (params.data.resource === 'leads') {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${request.user.organizationId}), hashtext('pipeline-stages-config'))`);
+      const [configRecord] = await tx.select({ data: workspaceRecords.data }).from(workspaceRecords).where(and(
+        eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'pipeline-stages'),
+        isNull(workspaceRecords.archivedAt), sql`${workspaceRecords.data}->>'key' = 'pipeline-stages'`,
+      )).limit(1);
+      if (!pipelineStageConfigAllows(configRecord?.data, body.data.stage)) return { created: [], invalidLeadStage: true as const };
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${request.user.organizationId}))`);
       const existingLeads = await tx.select({ id: workspaceRecords.id, data: workspaceRecords.data }).from(workspaceRecords).where(and(
         eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'leads'), isNull(workspaceRecords.archivedAt),
@@ -4403,6 +4422,8 @@ app.post('/api/workspace/:resource', { preHandler: app.authenticate }, async (re
     }
     return { created, replayed: false as const };
   });
+  if ('invalidLeadStage' in outcome && outcome.invalidLeadStage) return reply.code(400).send({ error: 'lead_stage_invalid', message: 'Selecione uma etapa ativa deste pipeline.' });
+  if ('pipelineStagesAlreadyConfigured' in outcome && outcome.pipelineStagesAlreadyConfigured) return reply.code(409).send({ error: 'pipeline_stages_already_configured', message: 'A configuração do Pipeline já existe neste workspace. Atualize o registro atual.' });
   if ('activeTimerConflict' in outcome && outcome.activeTimerConflict) return reply.code(409).send({ error: 'hours_timer_already_running', message: 'Já existe um cronômetro em andamento neste workspace. Pare-o antes de iniciar outro.' });
   if ('duplicateId' in outcome) return reply.code(409).send({ error: 'duplicate_lead', message: 'Ja existe uma oportunidade com este e-mail ou telefone.', duplicateId: outcome.duplicateId });
   if ('monitorAssetMissing' in outcome && outcome.monitorAssetMissing) return reply.code(409).send({ error: 'monitor_site_asset_missing', message: 'O ativo foi removido ou nao esta mais disponivel.' });
@@ -4424,6 +4445,7 @@ app.patch('/api/workspace/:resource/:id', { preHandler: app.authenticate }, asyn
   const body = parseBody(z.object({ data: workspaceDataSchema }).refine((value) => Object.keys(value.data).length > 0), request.body, reply);
   if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Recurso ou identificador inválidos.' });
   if (!body) return;
+  if (params.data.resource === 'pipeline-stages' && Object.keys(body.data).some((key) => !['key', 'stages', 'inactiveStages'].includes(key))) return reply.code(400).send({ error: 'pipeline_stages_invalid', message: 'A configuração contém campos não permitidos.' });
   let invalidClientBilling = '';
   const financeEntryUpdate = ['revenues', 'expenses'].includes(params.data.resource);
   if (financeEntryUpdate && Object.hasOwn(body.data, 'amount') && !isValidFinanceEntryAmount(body.data.amount)) return reply.code(400).send({ error: 'finance_entry_amount_invalid', message: 'Informe um valor positivo com no máximo duas casas decimais.' });
@@ -4455,11 +4477,26 @@ app.patch('/api/workspace/:resource/:id', { preHandler: app.authenticate }, asyn
   let projectClientMissing = false;
   let projectClientScopeDenied = false;
   let activeHoursTimerConflict = false;
+  let invalidLeadStage = false;
+  let invalidPipelineStageConfig = '';
   const updated = await db.transaction(async (tx) => {
     const [current] = await tx.select().from(workspaceRecords).where(and(eq(workspaceRecords.id, params.data.id), eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, params.data.resource), isNull(workspaceRecords.archivedAt))).limit(1);
     if (!current) return undefined;
     if (!recordMatchesWorkspaceScope(params.data.resource, current.id, current.data, request.user.permissions?.scope)) return undefined;
     if (!recordMatchesWorkspaceScope(params.data.resource, current.id, { ...current.data, ...body.data }, request.user.permissions?.scope)) return undefined;
+    if (params.data.resource === 'pipeline-stages') {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${request.user.organizationId}), hashtext('pipeline-stages-config'))`);
+      const issue = validatePipelineStageConfig({ ...current.data, ...body.data });
+      if (issue) { invalidPipelineStageConfig = issue; return undefined; }
+    }
+    if (params.data.resource === 'leads' && Object.hasOwn(body.data, 'stage')) {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${request.user.organizationId}), hashtext('pipeline-stages-config'))`);
+      const [configRecord] = await tx.select({ data: workspaceRecords.data }).from(workspaceRecords).where(and(
+        eq(workspaceRecords.organizationId, request.user.organizationId), eq(workspaceRecords.resource, 'pipeline-stages'),
+        isNull(workspaceRecords.archivedAt), sql`${workspaceRecords.data}->>'key' = 'pipeline-stages'`,
+      )).limit(1);
+      if (!pipelineStageConfigAllows(configRecord?.data, body.data.stage, current.data.stage)) { invalidLeadStage = true; return undefined; }
+    }
     if (projectClientPatch?.success) {
       const [linkedClient] = await tx.select({ id: workspaceRecords.id, data: workspaceRecords.data }).from(workspaceRecords).where(and(
         eq(workspaceRecords.id, projectClientPatch.data), eq(workspaceRecords.organizationId, request.user.organizationId),
@@ -4531,6 +4568,8 @@ app.patch('/api/workspace/:resource/:id', { preHandler: app.authenticate }, asyn
     }
     return saved;
   });
+  if (invalidLeadStage) return reply.code(400).send({ error: 'lead_stage_invalid', message: 'Selecione uma etapa ativa deste pipeline. A etapa atual foi mantida porque já existe neste lead.' });
+  if (invalidPipelineStageConfig) return reply.code(400).send({ error: 'pipeline_stages_invalid', message: invalidPipelineStageConfig });
   if (activeHoursTimerConflict) return reply.code(409).send({ error: 'hours_timer_already_running', message: 'Já existe um cronômetro em andamento neste workspace. Pare-o antes de iniciar outro.' });
   if (invalidClientBilling) return reply.code(400).send({ error: 'client_billing_invalid', message: invalidClientBilling });
   if (rejectedContractTransition) return reply.code(409).send({ error: 'contract_signature_required', message: 'Contrato so muda para Aguardando assinatura, Assinado ou Ativo apos confirmacao do provedor.' });
@@ -4591,6 +4630,7 @@ app.delete('/api/workspace/finance-accounts/:id', { preHandler: app.authenticate
 app.delete('/api/workspace/:resource/:id', { preHandler: app.authenticate }, async (request, reply) => {
   const params = z.object({ resource: workspaceResource, id: z.string().uuid() }).safeParse(request.params);
   if (!params.success) return reply.code(400).send({ error: 'validation_error', message: 'Recurso ou identificador inválidos.' });
+  if (params.data.resource === 'pipeline-stages') return reply.code(409).send({ error: 'pipeline_stages_cannot_delete', message: 'A configuração do Pipeline não pode ser removida; desative etapas para manter o histórico.' });
   if (params.data.resource === 'site-assets') {
     const archived = await db.transaction(async (tx) => {
       const [asset] = await tx.select().from(workspaceRecords).where(and(

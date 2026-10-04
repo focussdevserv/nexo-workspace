@@ -7,6 +7,7 @@ const GET_CACHE_TTL_MS = 750;
 let mutationEpoch = 0;
 const workspaceResourceLabels = {
   leads: 'leads', clients: 'clientes', companies: 'empresas', contacts: 'contatos', proposals: 'propostas',
+  'pipeline-stages': 'etapas do Pipeline',
   services: 'serviços', contracts: 'contratos', projects: 'projetos', tasks: 'tarefas', events: 'agenda',
   settings: 'configurações', team: 'equipe', repositories: 'repositórios', automations: 'automações',
   goals: 'metas', tickets: 'tickets', hours: 'horas', files: 'arquivos', approvals: 'aprovações',

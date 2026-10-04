@@ -130,6 +130,9 @@ test('workspace module permissions can restrict or grant access within their mod
   assert.equal(isWorkspaceRequestAllowed('member', 'DELETE', '/api/workspace/tasks/123', { delivery: { read: true, write: true } }), false);
   assert.equal(isWorkspaceRequestAllowed('member', 'DELETE', '/api/workspace/tasks/123', { delivery: { read: true, write: true, delete: false } }), false);
   assert.equal(isWorkspaceRequestAllowed('member', 'DELETE', '/api/workspace/tasks/123', { delivery: { read: true, write: true, delete: true } }), true);
+  assert.equal(isWorkspaceRequestAllowed('member', 'GET', '/api/workspace/pipeline-stages', { crm: { read: true, write: false } }), true);
+  assert.equal(isWorkspaceRequestAllowed('member', 'POST', '/api/workspace/pipeline-stages', { crm: { read: true, write: false } }), false);
+  assert.equal(isWorkspaceRequestAllowed('member', 'PATCH', '/api/workspace/pipeline-stages/123', { crm: { read: true, write: true } }), true);
 });
 
 test('module permissions cannot grant account administration or provider credential controls', () => {
