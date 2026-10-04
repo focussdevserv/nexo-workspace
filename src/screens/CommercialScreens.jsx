@@ -14,7 +14,7 @@ import { contractText, downloadContract, editableContractStatuses, isLockedContr
 import { moveLeadById } from "../lib/pipeline-stage.js";
 import { DEFAULT_PIPELINE_STAGES, nextPipelineStageConfig, pipelineColumnsForRecords, resolvePipelineStageConfig } from "../lib/pipeline-config.js";
 import { leadConversionPayload, leadFieldsBeforeConversion } from "../lib/lead-conversion-payload.js";
-import { persistPipelineLeadDeal } from "../lib/pipeline-deal-save.js";
+import { persistPipelineLeadDeal, pipelineLeadEditDraft } from "../lib/pipeline-deal-save.js";
 import { proposalDeletionBlockReason } from "../lib/proposal-deletion.js";
 import { proposalAcceptanceState } from "../lib/proposal-acceptance-state.js";
 import { commercialContractCode } from "../lib/commercial-contract-code.js";
@@ -38,7 +38,7 @@ import { archiveClientRecord, isArchivedClient, restoreClientRecord } from "../l
 import { clientFileRecordForUpload } from "../lib/client-file-link.js";
 import { clientFileDeleteConfirmation, clientFileMetadataPatch, safeClientFileHref } from "../lib/client-file-actions.js";
 import { buildClientRelationshipHistory, clientRelationshipHistoryDateLabel } from "../lib/client-relationship-history.js";
-import { buildCommercialRecordEditorPatch, companyContactCount, commercialContactCompanySelection, commercialRecordEditorDraft, commercialRecordEditorFields, commercialRecordEditorIsDirty, resolveCommercialClient, synchronizeCompanyContactNames, unlinkCompanyContacts } from "../lib/commercial-record-editor.js";
+import { buildCommercialRecordEditorPatch, companyContactCount, commercialContactCompanyForCreate, commercialContactCompanySelection, commercialRecordEditorDraft, commercialRecordEditorFields, commercialRecordEditorIsDirty, resolveCommercialClient, synchronizeCompanyContactNames, unlinkCompanyContacts } from "../lib/commercial-record-editor.js";
 import { filterCommercialRecords } from "../lib/commercial-record-filter.js";
 import { commercialStageTone } from "../lib/commercial-stage-tone.js";
 import { averageProposalApprovalDays, countLeadsWithoutNextAction, formatElapsedDays } from "../lib/commercial-cycle-metrics.js";
@@ -761,8 +761,7 @@ export default function CommercialScreen({
     };else if (key === "contatos") entry = {
       ...common,
       role: draft.detail || "Contato",
-      company: draft.client || "Empresa nao informada",
-      companyId: draft.companyId || "",
+      ...commercialContactCompanyForCreate(draft, records.companies || []),
       email: draft.email,
       phone: draft.phone,
       status: "Contato",
@@ -3038,17 +3037,7 @@ function PipelineView({
   };
   const openDeal = item => {
     setSelectedDeal(item);
-    setDealDraft({
-      stage: item.stage || "Novo lead",
-      value: item.value || "",
-      chance: item.chance ?? 50,
-      source: item.source || "Manual",
-      service: item.service || "",
-      owner: item.owner || "GS",
-      closeDate: item.closeDate || "",
-      nextAction: item.nextAction || "",
-      notes: item.notes || ""
-    });
+    setDealDraft(pipelineLeadEditDraft(item));
   };
   const saveDeal = async event => {
     event.preventDefault();

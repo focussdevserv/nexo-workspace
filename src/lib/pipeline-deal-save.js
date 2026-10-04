@@ -4,3 +4,17 @@ export async function persistPipelineLeadDeal(onUpdate, lead, draft) {
   const saved = await onUpdate?.(lead, { ...fields, stage });
   return saved === true;
 }
+
+export function pipelineLeadEditDraft(lead = {}) {
+  return {
+    stage: lead.stage || 'Novo lead',
+    value: lead.value || '',
+    chance: lead.chance ?? 50,
+    source: lead.source || 'Manual',
+    service: lead.service || '',
+    owner: lead.owner || '',
+    closeDate: lead.closeDate || '',
+    nextAction: lead.nextAction || '',
+    notes: lead.notes || '',
+  };
+}

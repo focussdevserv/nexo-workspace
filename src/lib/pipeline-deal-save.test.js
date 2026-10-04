@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { persistPipelineLeadDeal } from './pipeline-deal-save.js';
+import { persistPipelineLeadDeal, pipelineLeadEditDraft } from './pipeline-deal-save.js';
 
 test('keeps a failed lead save distinguishable so the editor stays open', async () => {
   const lead = { id: 'lead-1' };
@@ -18,4 +18,9 @@ test('keeps a failed lead save distinguishable so the editor stays open', async 
 test('reports confirmed persistence so the editor can close only after success', async () => {
   assert.equal(await persistPipelineLeadDeal(async () => true, { id: 'lead-1' }, { stage: 'Negociação' }), true);
   assert.equal(await persistPipelineLeadDeal(undefined, { id: 'lead-1' }, { stage: 'Negociação' }), false);
+});
+
+test('does not invent an owner when opening an opportunity with no assigned responsible', () => {
+  assert.equal(pipelineLeadEditDraft({ id: 'lead-1', stage: 'Negociação' }).owner, '');
+  assert.equal(pipelineLeadEditDraft({ id: 'lead-2', owner: 'Ana' }).owner, 'Ana');
 });

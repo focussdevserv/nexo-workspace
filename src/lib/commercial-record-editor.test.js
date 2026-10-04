@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import {
   buildCommercialRecordEditorPatch,
   companyContactCount,
+  commercialContactCompanyForCreate,
   commercialContactCompanySelection,
   commercialRecordEditorDraft,
   commercialRecordEditorFields,
@@ -25,9 +26,28 @@ test('creating a contact clears both company ID and legacy name when its company
   });
 });
 
+test('creating a linked contact saves the registered company name and id', () => {
+  assert.deepEqual(commercialContactCompanyForCreate({ companyId: '34', client: '' }, companies), {
+    companyId: 34,
+    company: 'Acme Tecnologia',
+  });
+});
+
+test('creating a contact without a registered company preserves typed legacy text', () => {
+  assert.deepEqual(commercialContactCompanyForCreate({ companyId: '', client: '  Consultoria externa  ' }, companies), {
+    companyId: '',
+    company: 'Consultoria externa',
+  });
+  assert.deepEqual(commercialContactCompanyForCreate({ companyId: 'missing', client: 'Acme' }, companies), {
+    companyId: '',
+    company: 'Acme',
+  });
+});
+
 test('contact create selector replaces the company name even when the selection is cleared', async () => {
   const source = await readFile(new URL('../screens/CommercialScreens.jsx', import.meta.url), 'utf8');
   assert.match(source, /commercialContactCompanySelection\(records\.companies \|\| \[\], e\.target\.value\)/);
+  assert.match(source, /commercialContactCompanyForCreate\(draft, records\.companies \|\| \[\]\)/);
   assert.doesNotMatch(source, /company\?\.name \|\| current\.client/);
 });
 

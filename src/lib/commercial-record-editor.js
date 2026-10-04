@@ -106,6 +106,15 @@ export function commercialContactCompanySelection(companies = [], selectedCompan
   };
 }
 
+export function commercialContactCompanyForCreate(draft = {}, companies = []) {
+  const linkedCompany = commercialContactCompanySelection(companies, draft.companyId);
+  if (linkedCompany.companyId) return linkedCompany;
+  return {
+    companyId: '',
+    company: String(draft.client ?? '').trim(),
+  };
+}
+
 export function commercialRecordEditorDraft(page, record = {}, clients = [], companies = []) {
   return Object.fromEntries(commercialRecordEditorFields(page).map(({ key }) => {
     let value = record[key];
